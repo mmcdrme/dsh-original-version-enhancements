@@ -1,0 +1,4 @@
+- insert:
+    - id: work-steps-quick-switch
+      name: '@local/dsh-work-steps-quick-switch'
+      config: {}

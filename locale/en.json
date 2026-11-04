@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Work Steps Quick Switch",
+    "description": "Adds Compact, Standard, Detailed, and Verbose work-details icon controls to the left of Open in File Explorer in the session header and the file panel."
+  }
+}
