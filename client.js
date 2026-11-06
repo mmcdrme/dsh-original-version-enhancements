@@ -814,7 +814,7 @@ window.__ModuleLoader__.load({
       .ove-menu-row:disabled { opacity: .5; cursor: default; }
 
       .ove-tabs { display: flex; gap: 2px; margin-bottom: 12px; flex-wrap: wrap; }
-      .ove-select-bar { display: flex; align-items: flex-start; padding: 10px 12px 6px; }
+      .ove-select-bar { display: flex; align-items: flex-start; padding: 2px 12px 6px; }
       .ove-select-all { display: inline-flex; align-items: flex-start; gap: 12px; font-size: 12px; line-height: 20px; color: var(--dsw-alias-label-tertiary); cursor: pointer; white-space: nowrap; }
       .ove-select-all > span { line-height: 24px; }
       .ove-tab-count { margin-left: 6px; font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
@@ -840,17 +840,19 @@ window.__ModuleLoader__.load({
 
       /* One fixed-height strip: the selection bar, an error or a receipt share
          it, so acting on a task never changes the list's height. */
-      .ove-list-top { height: 36px; display: flex; align-items: center; overflow: hidden; }
-      .ove-list-top > * { width: 100%; }
+      .ove-list-top { height: 30px; display: flex; align-items: center; overflow: hidden; }
+      /* Selection bar and receipts size to their content, not the full row. */
+      .ove-list-top > * { max-width: 100%; }
       .ove-list-top .ove-notice, .ove-list-top .ove-error {
-        margin: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+        margin: 0; width: fit-content; max-width: 100%;
+        overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
       }
       .ove-bulk {
-        display: flex; flex-wrap: nowrap; align-items: center; gap: 8px;
-        padding: 0 12px; height: 36px; box-sizing: border-box; border-radius: 10px;
+        display: inline-flex; flex-wrap: nowrap; align-items: center; gap: 8px;
+        padding: 0 10px; height: 30px; max-width: 100%; box-sizing: border-box; border-radius: 9px;
         background: var(--dsw-alias-bg-layer-1); border: .5px solid var(--dsw-alias-border-l1);
       }
-      .ove-bulk-count { font-size: 12px; color: var(--dsw-alias-label-secondary); margin-right: auto; }
+      .ove-bulk-count { font-size: 12px; color: var(--dsw-alias-label-secondary); }
 
       .ove-task-list { display: grid; gap: 2px; }
       .ove-task { position: relative; display: flex; align-items: flex-start; gap: 12px; padding: 10px 12px; border-radius: 10px; cursor: pointer; }
@@ -2553,13 +2555,13 @@ window.__ModuleLoader__.load({
               }, busy === 'run' ? tr('auto.running') : tr('auto.run')),
               h('button', {
                 type: 'button',
-                className: 'ove-btn',
+                className: 'ove-btn ove-btn-warn',
                 disabled: busy !== '',
                 onClick: () => void toggleActive(panelTask),
-              }, panelTask.status === 'active' ? tr('auto.pause') : tr('auto.resume')),
+              }, panelTask.status === 'active' ? tr('auto.pauseTask') : tr('auto.resumeTask')),
               h('button', {
                 type: 'button',
-                className: 'ove-btn ove-btn-danger',
+                className: 'ove-btn ove-btn-danger-tint',
                 disabled: busy !== '',
                 onClick: () => setConfirm({ ids: [panelTask.id], title: panelTask.title }),
               }, tr('auto.deleteTask')))
