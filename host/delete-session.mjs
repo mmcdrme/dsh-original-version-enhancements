@@ -1,10 +1,10 @@
 // Adapted for 原版功能增强 from dsh-chat-manager v1.5.21 (MIT).
 // Copyright (c) 2026 WSL043 — https://github.com/WSL043/dsh-chat-manager
-// The original implementation and license text are retained in THIRD_PARTY_NOTICES.md.
+// MIT License text: https://github.com/WSL043/dsh-chat-manager/blob/main/LICENSE
 //
-// Difference from the original: this build never wraps the Host Agent lifecycle
-// services. A session that is still loaded is refused outright, which keeps the
-// destructive path limited to archived sessions the Host has already unloaded.
+// Difference from the original: this build retains the Agent lifecycle handles
+// process-wide so a plugin reload does not lose them, and it offers an explicit
+// "force delete" for a loaded session whose handle was never observed.
 
 import { lstat, mkdtemp, readdir, realpath, rename, rm } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'

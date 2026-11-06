@@ -1,6 +1,6 @@
 // Adapted for 原版功能增强 from dsh-chat-manager v1.5.21 (MIT).
 // Copyright (c) 2026 WSL043 — https://github.com/WSL043/dsh-chat-manager
-// The original implementation and license text are retained in THIRD_PARTY_NOTICES.md.
+// MIT License text: https://github.com/WSL043/dsh-chat-manager/blob/main/LICENSE
 
 const SEARCH_LIMIT = 20
 const MESSAGE_TYPES = new Set(['user/message', 'assistant/message'])

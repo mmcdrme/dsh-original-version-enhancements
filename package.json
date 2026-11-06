@@ -20,8 +20,7 @@
     "host/*.mjs",
     "locale/*.json",
     "icon.svg",
-    "README.md",
-    "THIRD_PARTY_NOTICES.md"
+    "README.md"
   ],
   "dsh": {
     "bundle": {
