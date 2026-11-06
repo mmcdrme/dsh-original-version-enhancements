@@ -317,49 +317,78 @@ export async function reconcileAutoClean({ service, state, save, warn = () => {}
 }
 
 /**
- * Create one copy of a task for each requested conversation.
+ * Create one copy of each requested task for every requested conversation.
+ *
+ * A conversation that already takes part in a task (its current target or any
+ * earlier copy) is skipped, so binding twice never duplicates a reminder, and a
+ * one-shot rule whose moment has already passed is refused instead of being
+ * cloned into a copy that would fire at once.
  * @param deps - service access.
- * @param request - `{id, sessionIds}`.
- * @returns created tasks and per-Session failures.
+ * @param request - `{ids, sessionIds}`.
+ * @returns created tasks, per-task failures, and the skipped conversations.
  */
 async function bindToSessions({ service, state, save }, request) {
   const tasks = await service.catalog()
-  const source = tasks.find(task => task.id === request.id)
-  if (source === undefined) {
-    return { ok: false, error: { code: 'schedule_not_found', message: '任务不存在或已删除。' } }
-  }
-  const timing = timingOf(source)
-  if (timing === undefined) {
-    return { ok: false, error: { code: 'timing-unsupported', message: '该任务的重复规则无法复制到其他会话。' } }
-  }
-  const current = source.target?.kind === 'session' ? source.target.sessionId : undefined
-  const wanted = []
+  const byId = new Map(tasks.map(task => [task.id, task]))
+  const sessionIds = []
   for (const sessionId of request.sessionIds) {
-    if (typeof sessionId !== 'string' || sessionId.length === 0 || sessionId === current) continue
-    if (!wanted.includes(sessionId)) wanted.push(sessionId)
+    if (typeof sessionId !== 'string' || sessionId.length === 0) continue
+    if (!sessionIds.includes(sessionId)) sessionIds.push(sessionId)
   }
-  if (wanted.length === 0) {
-    return { ok: false, error: { code: 'no-sessions', message: '请至少选择一个其他会话。' } }
+  if (sessionIds.length === 0) {
+    return { ok: false, error: { code: 'no-sessions', message: '请至少选择一个会话。' } }
   }
 
   const created = []
   const failed = []
-  for (const sessionId of wanted) {
-    try {
-      const record = await service.create({
-        title: source.title,
-        prompt: source.prompt,
-        timing,
-        target: { kind: 'session', sessionId },
-      })
-      created.push({ id: record.id, sessionId })
-      if (state.autoClean[source.id] === true) state.autoClean[record.id] = true
-    } catch (error) {
-      failed.push({ sessionId, message: error instanceof Error ? error.message : String(error) })
+  const skipped = []
+  for (const sourceId of request.ids) {
+    const source = byId.get(sourceId)
+    if (source === undefined) {
+      failed.push({ id: sourceId, message: '任务不存在或已删除。' })
+      continue
+    }
+    const timing = timingOf(source)
+    if (timing === undefined) {
+      failed.push({ id: sourceId, message: '该任务的重复规则无法复制到其他会话。' })
+      continue
+    }
+    if (timing.kind === 'at' && Number.isFinite(Date.parse(timing.at)) && Date.parse(timing.at) <= Date.now()) {
+      failed.push({ id: sourceId, message: '该一次性任务的时间已过，请先修改时间再绑定。' })
+      continue
+    }
+    const involved = new Set(Array.isArray(source.involvedSessionIds) ? source.involvedSessionIds : [])
+    if (source.target?.kind === 'session') involved.add(source.target.sessionId)
+    // A copy this feature created earlier keeps its own identity, so the source
+    // never learns about it: match the stored copies by title and instruction
+    // instead, or binding twice would pile up identical reminders.
+    for (const task of tasks) {
+      if (task.id === source.id) continue
+      if (task.title !== source.title || task.prompt !== source.prompt) continue
+      if (task.target?.kind !== 'session') continue
+      involved.add(task.target.sessionId)
+    }
+    for (const sessionId of sessionIds) {
+      if (involved.has(sessionId)) {
+        skipped.push({ id: sourceId, sessionId, reason: 'already-bound' })
+        continue
+      }
+      try {
+        const record = await service.create({
+          title: source.title,
+          prompt: source.prompt,
+          timing,
+          target: { kind: 'session', sessionId },
+        })
+        created.push({ id: record.id, sessionId, sourceId })
+        if (state.autoClean[source.id] === true) state.autoClean[record.id] = true
+      } catch (error) {
+        failed.push({ id: sourceId, sessionId, message: error instanceof Error ? error.message : String(error) })
+      }
     }
   }
   if (created.length > 0) save()
-  return { ok: true, value: { created, failed } }
+  return { ok: true, value: { created, failed, skipped } }
 }
 
 /**
@@ -520,12 +549,15 @@ export function createAutomationSurface(options) {
       }
       patch.target = target
     }
-    if (Object.keys(patch).length === 0) {
+    const wantsAutoClean = typeof body.autoClean === 'boolean'
+    if (Object.keys(patch).length === 0 && !wantsAutoClean) {
       sendJson(res, 400, failure('empty-patch', '没有需要保存的改动。'))
       return
     }
     try {
-      const result = await service.edit({ id, action: 'update', patch })
+      const result = Object.keys(patch).length === 0
+        ? await service.view({ id })
+        : await service.edit({ id, action: 'update', patch })
       if (result?.code === 'schedule_not_found') {
         sendJson(res, 404, failure('schedule_not_found', '任务不存在或已删除。'))
         return
@@ -533,6 +565,11 @@ export function createAutomationSurface(options) {
       if (result?.code === 'schedule_conflict') {
         sendJson(res, 409, failure('schedule_conflict', '任务已被其他位置修改，请刷新后重试。'))
         return
+      }
+      if (wantsAutoClean) {
+        if (body.autoClean) state.autoClean[id] = true
+        else delete state.autoClean[id]
+        save()
       }
       sendJson(res, 200, { ok: true, value: rowOf(result) })
     } catch (error) {
@@ -595,8 +632,17 @@ export function createAutomationSurface(options) {
   const bind = async (req, res) => {
     const body = await accept(req, res)
     if (body === undefined) return
-    if (typeof body?.id !== 'string' || body.id.length === 0 || !Array.isArray(body.sessionIds)) {
+    const rawIds = Array.isArray(body?.ids) ? body.ids : [body?.id]
+    const ids = []
+    for (const id of rawIds) {
+      if (typeof id === 'string' && id.length > 0 && !ids.includes(id)) ids.push(id)
+    }
+    if (ids.length === 0 || !Array.isArray(body?.sessionIds)) {
       sendJson(res, 400, failure('invalid-request', '请求参数无效。'))
+      return
+    }
+    if (ids.length > 100) {
+      sendJson(res, 400, failure('invalid-ids', '一次最多绑定 100 个任务。'))
       return
     }
     const sessionIds = body.sessionIds.filter(id => typeof id === 'string' && id.length > 0 && !id.includes('\0'))
@@ -605,7 +651,7 @@ export function createAutomationSurface(options) {
       return
     }
     try {
-      const result = await bindToSessions(deps, { id: body.id, sessionIds })
+      const result = await bindToSessions(deps, { ids, sessionIds })
       sendJson(res, result.ok ? 200 : 409, result)
       if (result.ok) void reconcile()
     } catch (error) {

@@ -197,7 +197,7 @@ window.__ModuleLoader__.load({
       'auto.next': '下次',
       'auto.delivered': '已投递',
       'auto.bindTitle': '绑定到其他会话',
-      'auto.bindDesc': '为每个选中的会话复制一份同标题、同指令、同重复规则的任务。',
+      'auto.bindDesc': '为每个选中的会话各复制一份任务（同标题、同指令、同重复规则）；已绑定过的会话会自动跳过。',
       'auto.bindCurrent': '当前目标会话不可重复选择。',
       'auto.bindEmpty': '没有其他可用会话',
       'auto.bindConfirm': '创建副本',
@@ -269,6 +269,13 @@ window.__ModuleLoader__.load({
       'auto.saving': '正在保存…',
       'auto.saved': '已保存',
       'auto.ran': '已开始投递',
+      'auto.run': '立即投递',
+      'auto.running': '投递中…',
+      'auto.lastDelivery': '上次投递',
+      'auto.notDelivered': '尚未投递',
+      'auto.cleanOnceOnly': '只有「一次」任务会在投递后清理',
+      'auto.bindSkipped': '已跳过 {count} 个已绑定的会话',
+      'auto.bindTasks': '任务：{names}',
       'auto.pause': '暂停',
       'auto.resume': '恢复',
       'auto.deleteTask': '删除任务',
@@ -351,7 +358,7 @@ window.__ModuleLoader__.load({
       'auto.next': 'Next',
       'auto.delivered': 'Delivered',
       'auto.bindTitle': 'Bind to other conversations',
-      'auto.bindDesc': 'Copies this task — same title, instruction and rule — into every selected conversation.',
+      'auto.bindDesc': 'Copies every selected task — same title, instruction and rule — into each conversation; conversations that already have it are skipped.',
       'auto.bindCurrent': 'The current target conversation cannot be selected again.',
       'auto.bindEmpty': 'No other conversation available',
       'auto.bindConfirm': 'Create copies',
@@ -423,6 +430,13 @@ window.__ModuleLoader__.load({
       'auto.saving': 'Saving…',
       'auto.saved': 'Saved',
       'auto.ran': 'Delivery started',
+      'auto.run': 'Deliver now',
+      'auto.running': 'Delivering…',
+      'auto.lastDelivery': 'Last delivery',
+      'auto.notDelivered': 'Not delivered yet',
+      'auto.cleanOnceOnly': 'Only one-shot tasks are cleaned after delivery',
+      'auto.bindSkipped': 'Skipped {count} conversations that already had the task',
+      'auto.bindTasks': 'Tasks: {names}',
       'auto.pause': 'Pause',
       'auto.resume': 'Resume',
       'auto.deleteTask': 'Delete task',
@@ -686,7 +700,13 @@ window.__ModuleLoader__.load({
       .ove-menu-row:disabled { opacity: .5; cursor: default; }
 
       .ove-tabs { display: flex; gap: 2px; margin-bottom: 12px; flex-wrap: wrap; }
-      .ove-select-all { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; font-size: 12px; line-height: 20px; color: var(--dsw-alias-label-tertiary); cursor: pointer; white-space: nowrap; }
+      .ove-select-bar { display: flex; align-items: center; padding: 0 12px 6px; }
+      .ove-select-all { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; line-height: 20px; color: var(--dsw-alias-label-tertiary); cursor: pointer; white-space: nowrap; }
+      .ove-tab-count { margin-left: 6px; font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
+      .ove-tone-active { color: #16a34a; }
+      .ove-tone-paused { color: #ca8a04; }
+      .ove-tone-ended { color: #dc2626; }
+      .ove-tone-all { color: var(--dsw-alias-label-primary, #111827); }
       .ove-tab {
         border: 0; background: transparent; font: inherit; font-size: 13px; line-height: 20px;
         color: var(--dsw-alias-label-tertiary); padding: 6px 12px; border-radius: 8px; cursor: pointer;
@@ -722,6 +742,12 @@ window.__ModuleLoader__.load({
       .ove-task-hover { display: flex; align-items: center; gap: 8px; opacity: 0; transition: opacity .12s; flex: none; }
       .ove-task:hover .ove-task-hover, .ove-task:focus-within .ove-task-hover, .ove-task[data-active="true"] .ove-task-hover { opacity: 1; }
       .ove-clean-toggle { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-tertiary); cursor: pointer; white-space: nowrap; }
+      .ove-hover-btn {
+        border: 0; background: transparent; font: inherit; font-size: 12px; line-height: 18px;
+        color: var(--dsw-alias-label-secondary); padding: 3px 8px; border-radius: 7px; cursor: pointer; white-space: nowrap;
+      }
+      .ove-hover-btn:hover { background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-label-primary); }
+      .ove-hover-btn:disabled { opacity: .45; cursor: default; }
       .ove-auto-check { width: 14px; height: 14px; accent-color: var(--dsw-alias-brand-primary, #4f7cff); cursor: pointer; }
 
       .ove-empty { display: grid; justify-items: center; gap: 14px; padding: 64px 0 48px; text-align: center; }
@@ -1480,9 +1506,10 @@ window.__ModuleLoader__.load({
     /**
      * Build the initial editor draft for a new task or an existing row.
      * @param task - the row being edited, or null for a new task.
+     * @param cleanFlags - the Host auto-clean map, keyed by task identity.
      * @returns the draft.
      */
-    const draftOf = (task) => {
+    const draftOf = (task, cleanFlags) => {
       const target = task?.target ?? { kind: 'new_once' };
       const draft = {
         id: task?.id ?? '',
@@ -1498,7 +1525,8 @@ window.__ModuleLoader__.load({
         targetKind: target.kind === 'session' ? 'session' : target.kind === 'new' ? 'new' : 'new_once',
         sessionId: target.kind === 'session' ? target.sessionId : '',
         cwd: target.cwd ?? '',
-        autoClean: false,
+        autoClean: task !== null && task !== undefined && cleanFlags !== undefined
+          && cleanFlags[task.id] === true,
         active: task?.status !== 'paused',
       };
       if (task?.kind === 'at' && typeof task.scheduledAt === 'string') {
@@ -1575,7 +1603,7 @@ window.__ModuleLoader__.load({
       const [draft, setDraft] = React.useState(null);
       const [draftError, setDraftError] = React.useState('');
       const [confirm, setConfirm] = React.useState(null);
-      const [bindTarget, setBindTarget] = React.useState(null);
+      const [bindTasks, setBindTasks] = React.useState([]);
       const [bindPicks, setBindPicks] = React.useState(() => new Set());
       const [cleanPending, setCleanPending] = React.useState(false);
 
@@ -1601,6 +1629,17 @@ window.__ModuleLoader__.load({
         const timer = setInterval(() => { void load(controller.signal); }, 20000);
         return () => { controller.abort(); clearInterval(timer); };
       }, [load]);
+
+      // A saved/deleted/delivered toast is a receipt, not a banner: clear it
+      // by itself so it never piles up on top of the next action.
+      React.useEffect(() => {
+        if (notice.length === 0 && actionError.length === 0) return undefined;
+        const timer = setTimeout(() => {
+          setNotice('');
+          setActionError('');
+        }, 4000);
+        return () => clearTimeout(timer);
+      }, [notice, actionError]);
 
       const sessionTitle = (id) => {
         if (typeof id !== 'string' || id.length === 0) return '';
@@ -1639,7 +1678,7 @@ window.__ModuleLoader__.load({
       };
 
       const openEdit = (task) => {
-        setDraft(draftOf(task));
+        setDraft(draftOf(task, autoClean));
         setDraftError('');
         setActionError('');
       };
@@ -1673,13 +1712,16 @@ window.__ModuleLoader__.load({
         }
         setBusy('save');
         setDraftError('');
+        // Only a one-shot rule ends on its own, so only it can be cleaned up
+        // after delivery; a recurring rule keeps the flag off.
+        const clean = draft.kind === 'at' && draft.autoClean === true;
         const result = draft.id === ''
           ? await automationCall('create', {
             title: draft.title.trim(),
             prompt: draft.prompt,
             timing,
             target,
-            autoClean: draft.autoClean,
+            autoClean: clean,
           })
           : await automationCall('update', {
             id: draft.id,
@@ -1688,14 +1730,21 @@ window.__ModuleLoader__.load({
             timing,
             target,
             active: draft.active,
+            autoClean: clean,
           });
         setBusy('');
         if (!result.ok) {
           setDraftError(result.error);
           return;
         }
-        if (draft.id === '' && draft.autoClean) {
-          await automationCall('auto-clean', { id: result.value.id, autoClean: true });
+        const savedId = draft.id === '' ? result.value?.id : draft.id;
+        if (typeof savedId === 'string' && savedId.length > 0) {
+          setAutoClean((current) => {
+            const next = { ...current };
+            if (clean) next[savedId] = true;
+            else delete next[savedId];
+            return next;
+          });
         }
         setNotice(tr('auto.saved'));
         setDraft(null);
@@ -1765,29 +1814,40 @@ window.__ModuleLoader__.load({
         }
       };
 
-      const openBind = (task) => {
-        setBindTarget(task);
+      const openBind = (tasks) => {
+        const list = Array.isArray(tasks) ? tasks.filter((task) => task !== null && task !== undefined) : [];
+        setBindTasks(list);
         setBindPicks(new Set());
         setActionError('');
         setNotice('');
       };
 
+      const closeBind = () => {
+        setBindTasks([]);
+        setBindPicks(new Set());
+      };
+
       const confirmBind = async () => {
-        if (bindTarget === null || bindPicks.size === 0 || busy !== '') return;
+        if (bindTasks.length === 0 || bindPicks.size === 0 || busy !== '') return;
         setBusy('bind');
         setActionError('');
-        const result = await automationCall('bind', { id: bindTarget.id, sessionIds: [...bindPicks] });
+        const result = await automationCall('bind', {
+          ids: bindTasks.map((task) => task.id),
+          sessionIds: [...bindPicks],
+        });
         setBusy('');
         if (!result.ok) {
           setActionError(result.error);
           return;
         }
         const created = result.value?.created?.length ?? 0;
+        const skipped = result.value?.skipped?.length ?? 0;
         const failed = result.value?.failed ?? [];
-        setBindTarget(null);
-        setBindPicks(new Set());
+        closeBind();
+        const done = tr('auto.bindDone').replace('{count}', String(created));
+        const skippedText = skipped > 0 ? `，${tr('auto.bindSkipped').replace('{count}', String(skipped))}` : '';
         if (failed.length === 0) {
-          setNotice(tr('auto.bindDone').replace('{count}', String(created)));
+          setNotice(`${done}${skippedText}`);
         } else {
           setActionError(tr('auto.bindFailed').replace('{names}', failed
             .map((entry) => (entry.message ? `${sessionTitle(entry.sessionId)}（${entry.message}）` : sessionTitle(entry.sessionId)))
@@ -1799,38 +1859,70 @@ window.__ModuleLoader__.load({
       const sessionOptions = React.useMemo(() => {
         const byId = sessions?.byId ?? {};
         const archived = new Set(Array.isArray(workspaces?.archivedSessionIds) ? workspaces.archivedSessionIds : []);
-        const list = Object.values(byId)
-          .filter((session) => session !== null && typeof session === 'object' && typeof session.id === 'string')
-          .map((session) => ({
-            id: session.id,
-            title: String(session.displayTitle || session.id),
-            archived: archived.has(session.id),
-          }))
-          .sort((a, b) => a.title.localeCompare(b.title));
-        // Several sessions routinely share a title (a workspace name, "新会话").
-        // Append the identity tail so a picker entry addresses exactly one row.
-        const counts = new Map();
-        for (const session of list) counts.set(session.title, (counts.get(session.title) ?? 0) + 1);
-        return list.map((session) => ({
-          ...session,
-          label: counts.get(session.title) > 1
-            ? `${session.title} · ${session.id.slice(-4)}`
-            : session.title,
-        }));
+        const items = Array.isArray(workspaces?.items) ? workspaces.items : [];
+        const recordOf = (id) => {
+          const record = byId[id];
+          return record !== null && typeof record === 'object' ? record : {};
+        };
+        const titleOf = (id) => String(recordOf(id).displayTitle || recordOf(id).title || '').trim();
+        const stampOf = (id) => {
+          const record = recordOf(id);
+          return Date.parse(record.updatedAt ?? record.createdAt ?? '') || 0;
+        };
+        // Every sidebar conversation, tagged with the workspace that owns it. A
+        // conversation still carrying its workspace's name is an untitled
+        // placeholder; those are what filled the picker with identical rows.
+        const candidates = [];
+        const seen = new Set();
+        for (const workspace of items) {
+          const workspaceTitle = String(workspace?.title || '').trim();
+          for (const id of Array.isArray(workspace?.sessionIds) ? workspace.sessionIds : []) {
+            if (typeof id !== 'string' || id.length === 0 || seen.has(id)) continue;
+            seen.add(id);
+            if (archived.has(id)) continue;
+            const title = titleOf(id);
+            if (title.length === 0) continue;
+            if (workspaceTitle.length > 0 && title === workspaceTitle) continue;
+            candidates.push({ id, title, stamp: stampOf(id) });
+          }
+        }
+        for (const id of Object.keys(byId)) {
+          if (seen.has(id) || archived.has(id)) continue;
+          const title = titleOf(id);
+          if (title.length === 0) continue;
+          candidates.push({ id, title, stamp: stampOf(id) });
+        }
+        // One row per title: the newest conversation wins, so duplicate names
+        // collapse instead of repeating down the list.
+        const newest = new Map();
+        for (const session of candidates) {
+          const current = newest.get(session.title);
+          if (current === undefined || session.stamp > current.stamp) newest.set(session.title, session);
+        }
+        return [...newest.values()]
+          .map((session) => ({ ...session, archived: false, label: session.title }))
+          .sort((a, b) => a.label.localeCompare(b.label));
       }, [sessions, workspaces]);
 
-      const bindCandidates = React.useMemo(() => {
-        const current = bindTarget?.target?.kind === 'session' ? bindTarget.target.sessionId : undefined;
-        return sessionOptions.filter((session) => session.id !== current && !session.archived);
-      }, [sessionOptions, bindTarget]);
-
-      /** Sessions a task may point at, plus its own (possibly archived) target. */
+      /** Sessions a task may point at, plus its own archived target when it has one. */
       const targetSessions = React.useMemo(() => {
         const current = draft?.sessionId;
-        const list = sessionOptions.filter((session) => !session.archived
-          || session.id === current);
-        return list;
-      }, [sessionOptions, draft?.sessionId]);
+        if (typeof current !== 'string' || current.length === 0) return sessionOptions;
+        if (sessionOptions.some((session) => session.id === current)) return sessionOptions;
+        const record = sessions?.byId?.[current];
+        const title = String(record?.displayTitle || current);
+        return [{ id: current, title, label: title, archived: true, stamp: 0 }, ...sessionOptions];
+      }, [sessionOptions, draft?.sessionId, sessions]);
+
+      /** Conversations that do not already take part in one of the tasks being bound. */
+      const bindCandidates = React.useMemo(() => {
+        const bound = new Set();
+        for (const task of bindTasks) {
+          if (task?.target?.kind === 'session') bound.add(task.target.sessionId);
+          for (const id of Array.isArray(task?.involvedSessionIds) ? task.involvedSessionIds : []) bound.add(id);
+        }
+        return sessionOptions.filter((session) => !bound.has(session.id));
+      }, [sessionOptions, bindTasks]);
 
       const workspaceOptions = React.useMemo(() => {
         const items = Array.isArray(workspaces?.items) ? workspaces.items : [];
@@ -1857,11 +1949,18 @@ window.__ModuleLoader__.load({
         : null;
 
       const tabs = [
-        ['active', tr('auto.tab.active')],
-        ['paused', tr('auto.tab.paused')],
-        ['ended', tr('auto.tab.ended')],
-        ['all', tr('auto.tab.all')],
+        ['active', tr('auto.tab.active'), 'ove-tone-active'],
+        ['paused', tr('auto.tab.paused'), 'ove-tone-paused'],
+        ['ended', tr('auto.tab.ended'), 'ove-tone-ended'],
+        ['all', tr('auto.tab.all'), 'ove-tone-all'],
       ];
+
+      const tabCounts = {
+        active: rows.filter((task) => task.status === 'active').length,
+        paused: rows.filter((task) => task.status === 'paused').length,
+        ended: rows.filter((task) => task.status === 'ended').length,
+        all: rows.length,
+      };
 
       const statusText = (status) => {
         const key = `auto.status.${status ?? 'unknown'}`;
@@ -2021,12 +2120,22 @@ window.__ModuleLoader__.load({
             h('input', {
               type: 'checkbox',
               className: 'ove-auto-check',
-              checked: draft.autoClean,
+              checked: draft.kind === 'at' && draft.autoClean,
+              disabled: draft.kind !== 'at',
               onChange: () => updateDraft({ autoClean: !draft.autoClean }),
             }),
-            h('span', { className: 'ove-label' }, tr('auto.clean'))),
+            h('span', { className: 'ove-label' }, tr('auto.clean')),
+            draft.kind === 'at'
+              ? null
+              : h('span', { className: 'ove-muted' }, tr('auto.cleanOnceOnly'))),
           panelTask !== null
             ? h('div', { className: 'ove-detail-actions-row' },
+              h('button', {
+                type: 'button',
+                className: 'ove-btn',
+                disabled: busy !== '',
+                onClick: () => void runNow(panelTask),
+              }, busy === 'run' ? tr('auto.running') : tr('auto.run')),
               h('button', {
                 type: 'button',
                 className: 'ove-btn',
@@ -2056,33 +2165,15 @@ window.__ModuleLoader__.load({
                 }, `+ ${tr('auto.new')}`)),
 
               h('div', { className: 'ove-tabs', role: 'tablist' },
-                tabs.map(([value, label]) => h('button', {
+                tabs.map(([value, label, tone]) => h('button', {
                   key: value,
                   type: 'button',
                   role: 'tab',
                   className: 'ove-tab',
                   'aria-selected': tab === value,
                   onClick: () => setTab(value),
-                }, label)),
-                h('label', { className: 'ove-select-all' },
-                  h('input', {
-                    type: 'checkbox',
-                    className: 'ove-auto-check',
-                    checked: filtered.length > 0 && filtered.every((task) => selected.has(task.id)),
-                    disabled: filtered.length === 0,
-                    onChange: () => {
-                      const all = filtered.every((task) => selected.has(task.id));
-                      setSelected((current) => {
-                        const next = new Set(current);
-                        for (const task of filtered) {
-                          if (all) next.delete(task.id);
-                          else next.add(task.id);
-                        }
-                        return next;
-                      });
-                    },
-                  }),
-                  tr('auto.selectAll'))),
+                }, label,
+                h('span', { className: `ove-tab-count ${tone}` }, String(tabCounts[value]))))),
 
               h('div', { className: 'ove-search-row' },
                 h('span', { className: 'ove-search-icon' },
@@ -2113,7 +2204,7 @@ window.__ModuleLoader__.load({
                   h('button', {
                     type: 'button',
                     className: 'ove-btn',
-                    onClick: () => openBind(selectedRows[0]),
+                    onClick: () => openBind(selectedRows),
                   }, tr('auto.bind')),
                   h('button', {
                     type: 'button',
@@ -2142,6 +2233,28 @@ window.__ModuleLoader__.load({
                   rows.length === 0
                     ? h('button', { type: 'button', className: 'ove-btn', onClick: openNew }, tr('auto.emptyAction'))
                     : null)
+                : null,
+
+              filtered.length > 0
+                ? h('div', { className: 'ove-select-bar' },
+                  h('label', { className: 'ove-select-all' },
+                    h('input', {
+                      type: 'checkbox',
+                      className: 'ove-auto-check',
+                      checked: filtered.every((task) => selected.has(task.id)),
+                      onChange: () => {
+                        const all = filtered.every((task) => selected.has(task.id));
+                        setSelected((current) => {
+                          const next = new Set(current);
+                          for (const task of filtered) {
+                            if (all) next.delete(task.id);
+                            else next.add(task.id);
+                          }
+                          return next;
+                        });
+                      },
+                    }),
+                    tr('auto.selectAll')))
                 : null,
 
               h('div', { className: 'ove-task-list' }, filtered.map((task) => h('div', {
@@ -2176,9 +2289,23 @@ window.__ModuleLoader__.load({
                     const when = task.scheduledAt
                       ? `${tr('auto.nextAt')}：${formatInstant(task.scheduledAt)}${relative.length > 0 ? `（${relative}）` : ''}`
                       : '';
-                    return [head, when].filter((part) => part.length > 0).join(' · ');
+                    const deliveredAt = task.lastDelivery?.deliveredAt;
+                    const delivered = typeof deliveredAt === 'string' && deliveredAt.length > 0
+                      ? `${tr('auto.lastDelivery')}：${formatInstant(deliveredAt)}`
+                      : '';
+                    return [head, when, delivered].filter((part) => part.length > 0).join(' · ');
                   })())),
               h('div', { className: 'ove-task-hover' },
+                h('button', {
+                  type: 'button',
+                  className: 'ove-hover-btn',
+                  title: tr('auto.run'),
+                  disabled: busy !== '',
+                  onClick: (event) => {
+                    event.stopPropagation();
+                    void runNow(task);
+                  },
+                }, busy === 'run' ? tr('auto.running') : tr('auto.run')),
                 h('label', {
                   className: 'ove-clean-toggle',
                   title: tr('auto.autoCleanHint'),
@@ -2218,12 +2345,13 @@ window.__ModuleLoader__.load({
                 }, busy === 'delete' ? tr('auto.deleting') : tr('auto.deleteConfirm')))))
           : null),
 
-        portal(bindTarget !== null
+        portal(bindTasks.length > 0
           ? h('div', { className: 'ove-overlay ove-overlay-portal' },
             h('div', { className: 'ove-dialog', role: 'dialog', 'aria-modal': 'true' },
               h('h2', { className: 'ove-dialog-title' }, tr('auto.bindTitle')),
               h('p', { className: 'ove-dialog-desc' }, tr('auto.bindDesc')),
-              h('p', { className: 'ove-dialog-target' }, bindTarget.title),
+              h('p', { className: 'ove-dialog-target' }, tr('auto.bindTasks')
+                .replace('{names}', bindTasks.map((task) => task.title).join('、'))),
               bindCandidates.length === 0
                 ? h('p', { className: 'ove-muted' }, tr('auto.bindEmpty'))
                 : h('div', { className: 'ove-session-pick' }, bindCandidates.map((session) => h('label', {
@@ -2247,7 +2375,7 @@ window.__ModuleLoader__.load({
                   type: 'button',
                   className: 'ove-btn',
                   disabled: busy !== '',
-                  onClick: () => { setBindTarget(null); setBindPicks(new Set()); },
+                  onClick: closeBind,
                 }, tr('cancel')),
                 h('button', {
                   type: 'button',
