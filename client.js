@@ -844,21 +844,21 @@ window.__ModuleLoader__.load({
       .ove-search-input:focus { outline: 2px solid var(--dsw-alias-brand-primary, #4f7cff); outline-offset: -1px; }
       .ove-search-icon { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: var(--dsw-alias-label-tertiary); display: flex; pointer-events: none; }
 
-      /* The selection bar and receipts float over the (empty) right half of the
-         select-all row: they take no vertical space, so the list sits right
-         under the search box and never moves when something appears. */
+      /* The selection bar and receipts float over the select-all row: the left
+         edge starts right after the select-all checkbox, the right edge uses
+         the full row. They take no vertical space, so the list stays put. */
       .ove-list-top { position: relative; height: 0; overflow: visible; }
-      .ove-list-top > * { position: absolute; top: 1px; right: 0; max-width: 100%; }
+      .ove-list-top > * { position: absolute; top: 1px; left: 72px; right: 0; max-width: calc(100% - 72px); }
       .ove-list-top .ove-notice, .ove-list-top .ove-error {
         margin: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
       }
       .ove-bulk {
-        display: inline-flex; flex-wrap: nowrap; align-items: center; gap: 8px;
+        display: flex; flex-wrap: nowrap; align-items: center; gap: 8px;
         padding: 0 10px; height: 26px; box-sizing: border-box; border-radius: 8px;
         background: var(--dsw-alias-bg-layer-2); border: .5px solid var(--dsw-alias-border-l1);
         box-shadow: 0 2px 8px rgba(0, 0, 0, .12);
       }
-      .ove-bulk-count { font-size: 12px; color: var(--dsw-alias-label-secondary); margin-right: 4px; }
+      .ove-bulk-count { font-size: 12px; color: var(--dsw-alias-label-secondary); margin-right: auto; }
 
       .ove-task-list { display: grid; gap: 2px; }
       .ove-task { position: relative; display: flex; align-items: flex-start; gap: 12px; padding: 10px 12px; border-radius: 10px; cursor: pointer; }
@@ -2172,6 +2172,8 @@ window.__ModuleLoader__.load({
         const skipped = result.value?.skipped?.length ?? 0;
         const failed = result.value?.failed ?? [];
         closeBind();
+        // A finished binding ends the batch: drop the selection it was made on.
+        setSelected(new Set());
         const done = tr('auto.bindDone').replace('{count}', String(created));
         const skippedText = skipped > 0 ? `，${tr('auto.bindSkipped').replace('{count}', String(skipped))}` : '';
         if (failed.length === 0) {
@@ -2642,7 +2644,12 @@ window.__ModuleLoader__.load({
                   role: 'tab',
                   className: 'ove-tab',
                   'aria-selected': tab === value,
-                  onClick: () => setTab(value),
+                  onClick: () => {
+                    setTab(value);
+                    // A different status filter starts a new batch, so the old
+                    // selection must not follow the tasks it no longer shows.
+                    setSelected(new Set());
+                  },
                 }, label,
                 h('span', { className: `ove-tab-count ${tone}` }, String(tabCounts[value]))))),
 
