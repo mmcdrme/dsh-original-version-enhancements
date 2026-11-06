@@ -820,7 +820,7 @@ window.__ModuleLoader__.load({
       .ove-menu-row:disabled { opacity: .5; cursor: default; }
 
       .ove-tabs { display: flex; gap: 2px; margin-bottom: 12px; flex-wrap: wrap; }
-      .ove-select-bar { display: flex; align-items: flex-start; padding: 0 12px 4px; }
+      .ove-select-bar { display: flex; align-items: flex-start; padding: 4px 12px 6px; }
       .ove-select-all { display: inline-flex; align-items: flex-start; gap: 12px; font-size: 12px; line-height: 20px; color: var(--dsw-alias-label-tertiary); cursor: pointer; white-space: nowrap; }
       .ove-select-all > span { line-height: 24px; }
       .ove-tab-count { margin-left: 6px; font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
@@ -844,20 +844,21 @@ window.__ModuleLoader__.load({
       .ove-search-input:focus { outline: 2px solid var(--dsw-alias-brand-primary, #4f7cff); outline-offset: -1px; }
       .ove-search-icon { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: var(--dsw-alias-label-tertiary); display: flex; pointer-events: none; }
 
-      /* One fixed-height strip: the selection bar, an error or a receipt share
-         it, so acting on a task never changes the list's height. */
-      .ove-list-top { height: 28px; display: flex; align-items: center; overflow: hidden; }
-      /* Full width on the right; only the vertical space is kept minimal. */
-      .ove-list-top > * { width: 100%; max-width: 100%; }
+      /* The selection bar and receipts float over the (empty) right half of the
+         select-all row: they take no vertical space, so the list sits right
+         under the search box and never moves when something appears. */
+      .ove-list-top { position: relative; height: 0; overflow: visible; }
+      .ove-list-top > * { position: absolute; top: 1px; right: 0; max-width: 100%; }
       .ove-list-top .ove-notice, .ove-list-top .ove-error {
         margin: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
       }
       .ove-bulk {
-        display: flex; flex-wrap: nowrap; align-items: center; gap: 8px;
-        padding: 0 10px; height: 28px; box-sizing: border-box; border-radius: 8px;
-        background: var(--dsw-alias-bg-layer-1); border: .5px solid var(--dsw-alias-border-l1);
+        display: inline-flex; flex-wrap: nowrap; align-items: center; gap: 8px;
+        padding: 0 10px; height: 26px; box-sizing: border-box; border-radius: 8px;
+        background: var(--dsw-alias-bg-layer-2); border: .5px solid var(--dsw-alias-border-l1);
+        box-shadow: 0 2px 8px rgba(0, 0, 0, .12);
       }
-      .ove-bulk-count { font-size: 12px; color: var(--dsw-alias-label-secondary); margin-right: auto; }
+      .ove-bulk-count { font-size: 12px; color: var(--dsw-alias-label-secondary); margin-right: 4px; }
 
       .ove-task-list { display: grid; gap: 2px; }
       .ove-task { position: relative; display: flex; align-items: flex-start; gap: 12px; padding: 10px 12px; border-radius: 10px; cursor: pointer; }
