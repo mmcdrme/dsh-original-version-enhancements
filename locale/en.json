@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Original Version Enhancements",
-    "description": "Adds Compact, Standard, Detailed, and Verbose work-details icon controls to the left of Open in File Explorer in the session header and the file panel."
+    "description": "A plugin page with feature switches for the work-details quick switcher and an archived-session manager with content search, unarchive, and confirmed permanent deletion."
   }
 }

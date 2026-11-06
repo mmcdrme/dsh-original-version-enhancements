@@ -1,0 +1,203 @@
+// Adapted for 原版功能增强 from dsh-chat-manager v1.5.21 (MIT).
+// Copyright (c) 2026 WSL043 — https://github.com/WSL043/dsh-chat-manager
+// The original implementation and license text are retained in THIRD_PARTY_NOTICES.md.
+
+const SEARCH_LIMIT = 20
+const MESSAGE_TYPES = new Set(['user/message', 'assistant/message'])
+const MAX_REQUEST_BYTES = 8 * 1024
+
+const archiveIds = workspaceRegistry => {
+  const ids = workspaceRegistry?.archivedSessionIds
+  if (!Array.isArray(ids) || ids.some(id => typeof id !== 'string')) {
+    throw new Error('unsupported workspace registry archive snapshot')
+  }
+  return [...ids]
+}
+
+const plainSnippet = (text, query) => {
+  const compact = text.replace(/\s+/g, ' ').trim()
+  if (compact.length <= 240) return compact
+  const matchAt = compact.toLowerCase().indexOf(query.toLowerCase())
+  const start = Math.max(0, (matchAt === -1 ? 0 : matchAt) - 80)
+  const end = Math.min(compact.length, start + 240)
+  return `${start > 0 ? '…' : ''}${compact.slice(start, end)}${end < compact.length ? '…' : ''}`
+}
+
+const scanArchivedEvents = async (sessionQuery, archivedSessionIds, query, signal) => {
+  if (typeof sessionQuery?.filterEvents !== 'function') {
+    throw new Error('archived history scan is unavailable')
+  }
+  const filters = [
+    { kind: 'type', values: ['user/message', 'assistant/message'] },
+    { kind: 'surface', values: ['current'] },
+    { kind: 'text', text: query },
+  ]
+  const items = []
+  for (let offset = 0; offset < archivedSessionIds.length && items.length <= SEARCH_LIMIT; offset += 4) {
+    signal?.throwIfAborted()
+    const batch = archivedSessionIds.slice(offset, offset + 4)
+    const matches = await Promise.all(batch.map(async sessionId => {
+      try {
+        return await sessionQuery.filterEvents(sessionId, filters)
+      } catch {
+        // One unreadable log must not hide every other archived session.
+        return undefined
+      }
+    }))
+    signal?.throwIfAborted()
+    for (let index = 0; index < batch.length; index += 1) {
+      const match = Array.isArray(matches[index])
+        ? matches[index].find(event => typeof event?.text === 'string' && event.text.trim().length > 0)
+        : undefined
+      if (match !== undefined) items.push({ sessionId: batch[index], snippet: plainSnippet(match.text, query) })
+      if (items.length > SEARCH_LIMIT) break
+    }
+  }
+  return { items: items.slice(0, SEARCH_LIMIT), hasMore: items.length > SEARCH_LIMIT }
+}
+
+/**
+ * Search current user/assistant message history inside the archive set only.
+ * @param root0 - the workspace registry and optional session query service.
+ * @param query - raw search text from the settings page.
+ * @param signal - aborts a slow scan.
+ * @returns up to 20 session ids with one snippet each.
+ */
+export async function searchArchivedSessions({ workspaceRegistry, sessionQuery }, query, signal) {
+  signal?.throwIfAborted()
+  const normalized = typeof query === 'string' ? query.trim() : ''
+  if (normalized.length === 0 || normalized.length > 500 || normalized.includes('\0')) {
+    throw new TypeError('invalid archive search query')
+  }
+  if (typeof sessionQuery?.searchSessions !== 'function') {
+    throw new Error('archived history search is unavailable')
+  }
+
+  const archivedSessionIds = archiveIds(workspaceRegistry)
+  if (archivedSessionIds.length === 0) return { items: [], hasMore: false }
+
+  let page
+  try {
+    page = await sessionQuery.searchSessions({
+      query: normalized,
+      sessionFilters: [{ kind: 'id', values: archivedSessionIds }],
+      eventFilters: [
+        { kind: 'type', values: ['user/message', 'assistant/message'] },
+        { kind: 'surface', values: ['current'] },
+      ],
+      limit: SEARCH_LIMIT,
+    }, { signal })
+    signal?.throwIfAborted()
+  } catch (error) {
+    // A corrupt or partially migrated log makes the indexed search abort; the
+    // per-session scan below skips unreadable logs instead of failing the page.
+    return scanArchivedEvents(sessionQuery, archivedSessionIds, normalized, signal)
+  }
+
+  const archived = new Set(archivedSessionIds)
+  const items = []
+  const included = new Set()
+  for (const hit of Array.isArray(page?.items) ? page.items : []) {
+    const sessionId = hit?.header?.id
+    const match = hit?.bestMatch
+    if (
+      typeof sessionId !== 'string'
+      || !archived.has(sessionId)
+      || included.has(sessionId)
+      || match?.sessionId !== sessionId
+      || match?.surface !== 'current'
+      || !MESSAGE_TYPES.has(match?.type)
+      || typeof match?.snippet !== 'string'
+    ) continue
+    included.add(sessionId)
+    items.push({ sessionId, snippet: match.snippet })
+    if (items.length >= SEARCH_LIMIT) break
+  }
+
+  return { items, hasMore: page?.nextCursor !== undefined }
+}
+
+const sendJson = (res, status, payload) => {
+  res.writeHead(status, {
+    'content-type': 'application/json; charset=utf-8',
+    'cache-control': 'no-store',
+    'x-content-type-options': 'nosniff',
+  })
+  res.end(JSON.stringify(payload))
+}
+
+const failure = (code, message) => ({ ok: false, error: { code, message } })
+
+const readJsonBody = async req => {
+  const chunks = []
+  let size = 0
+  for await (const chunk of req) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+    size += buffer.length
+    if (size > MAX_REQUEST_BYTES) throw new Error('request-too-large')
+    chunks.push(buffer)
+  }
+  return JSON.parse(Buffer.concat(chunks).toString('utf8'))
+}
+
+const sameOriginRequest = req => typeof req.headers.host === 'string' && req.headers.origin === `http://${req.headers.host}`
+
+const parseBody = async (req, res) => {
+  try {
+    return await readJsonBody(req)
+  } catch (error) {
+    const tooLarge = error instanceof Error && error.message === 'request-too-large'
+    sendJson(
+      res,
+      tooLarge ? 413 : 400,
+      failure(tooLarge ? 'request-too-large' : 'invalid-json', tooLarge ? '归档搜索请求过大。' : '归档搜索请求不是有效 JSON。'),
+    )
+    return undefined
+  }
+}
+
+/**
+ * Same-origin HTTP boundary for archive content search.
+ * @param root0 - the search implementation and the Host request fence.
+ * @returns a route handler for the exact search path.
+ */
+export function createArchiveSearchHandler({ search, warn = console.warn, isTrustedRequest = sameOriginRequest }) {
+  return async (req, res) => {
+    if (req.method !== 'POST') {
+      sendJson(res, 405, failure('method-not-allowed', '只允许使用 POST 搜索归档会话。'))
+      return
+    }
+    if (!isTrustedRequest(req)) {
+      sendJson(res, 403, failure('forbidden', '归档搜索请求未通过同源校验。'))
+      return
+    }
+    const contentType = req.headers['content-type']
+    if (typeof contentType !== 'string' || !contentType.toLowerCase().startsWith('application/json')) {
+      sendJson(res, 415, failure('unsupported-media-type', '归档搜索请求必须使用 JSON。'))
+      return
+    }
+    const body = await parseBody(req, res)
+    if (body === undefined) return
+    const query = typeof body?.query === 'string' ? body.query.trim() : ''
+    if (query.length === 0 || query.length > 500 || query.includes('\0')) {
+      sendJson(res, 400, failure('invalid-query', '搜索内容无效。'))
+      return
+    }
+    const controller = new AbortController()
+    const abort = () => controller.abort(new Error('archive search request closed'))
+    req.once('aborted', abort)
+    if (typeof res.once === 'function') res.once('close', abort)
+    try {
+      const value = await search(query, controller.signal)
+      if (controller.signal.aborted) return
+      sendJson(res, 200, { ok: true, value })
+    } catch (error) {
+      if (controller.signal.aborted) return
+      warn('archived history search failed:', error)
+      sendJson(res, 503, failure('search-unavailable', '归档内容搜索暂不可用，请稍后重试。'))
+    } finally {
+      req.off('aborted', abort)
+      if (typeof res.off === 'function') res.off('close', abort)
+    }
+  }
+}

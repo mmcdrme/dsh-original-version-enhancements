@@ -1,65 +1,76 @@
 # 原版功能增强 / Original Version Enhancements
 
-「原版功能增强」是一个 DSH Web 客户端插件，把「设置 → 通用设置 → 工作步骤展示」的四个档位
-（简洁 / 标准 / 详细 / 完全展开）复制成四个图标按钮，放在「用资源管理器打开」
-工作区按钮的左侧。会话标题栏和右侧文件面板标题栏各有一份，两个入口都紧邻
-官方 open-in-app 控件。
+「原版功能增强」是一个 DSH Web 客户端插件。它在设置里提供一个自己的页面
+（设置 → 原版功能增强），用开关控制各项增强，并把官方界面缺少的聊天记录管理集中到同一处。
 
-> Original Version Enhancements is a DSH Web client plugin that puts the four
-> Work details levels (Compact / Standard / Detailed / Verbose) immediately left
-> of the **Open in File Explorer** workspace action, in both the session header
-> and the file panel header.
+> Original Version Enhancements is a DSH Web client plugin. It adds its own
+> settings page (Settings → Original Version Enhancements) with per-feature
+> switches and an archived-session manager.
 
-## 名称 / Name
+## 功能 / Features
 
-- 插件显示名：**原版功能增强**（English: Original Version Enhancements）
-- GitHub 仓库：`dsh-original-version-addition`
-- npm 包名保持 `@local/dsh-work-steps-quick-switch`，cordis 条目 id 保持
-  `work-steps-quick-switch`。它们是已安装实例的稳定标识，改名会导致现有安装
-  失联，因此只更新展示名。
+### 1. 工作步骤展示快捷切换
 
-## 行为 / Behavior
+把「设置 → 通用设置 → 工作步骤展示」的四个档位（简洁 / 标准 / 详细 / 完全展开）
+复制成四个 24px 图标按钮，放在「用资源管理器打开」工作区按钮的左侧：
 
-- 四个 24px 高的图标按钮组成一组，匹配文件面板标题栏及相邻「用资源管理器打开」
-  分体按钮的紧凑尺寸。
-- 点击任一图标即写入 `ui-chat.transcriptView`，与设置页共享同一个 Host 配置；
-  在设置页切换时，这组按钮也会同步更新。
-- 图标按钮带双语提示、`aria-pressed` 状态与键盘焦点环；写入失败时边框会短暂变为
-  错误色，并通过隐藏的 `aria-live` 区域报告。
-- 只有在 Host 正在提供 `ui-chat` 配置命名空间时才注册，避免在未挂载聊天能力的
-  部署里留下孤立控件。
+- 会话标题栏：`conversation.session.header.utilities`，`order: -20`
+- 右侧文件面板：`sidebar.right.tab.files.actions`，`order: -10`
 
-## 位置 / Placement
+按钮共享 `ui-chat.transcriptView`，与设置页双向同步。插件页上的「工作步骤展示快捷切换」
+开关关闭后，两处按钮立即隐藏，Host 配置保持不变。
 
-- `conversation.session.header.utilities` 槽位，`order: -20`，排在官方
-  `open-in-app`（order -10）左侧。
-- `sidebar.right.tab.files.actions` 槽位，`order: -10`，排在官方
-  `open-in-app`（order 0）左侧。
+### 2. 聊天记录管理
 
-四个 SVG 图标按档位由折叠卡片逐步过渡到展开树。
+插件页下方的「已归档会话」区域：
+
+- 按名称、工作区或聊天内容搜索已归档会话（聊天内容搜索最多返回 20 条）。
+- 一键「取消归档」，使用官方 `workspaces.unarchiveSession`，会话回到原工作区。
+- 「永久删除」带二次确认，只接受已归档且未被宿主加载的本机会话；已加载或运行中的会话
+  会被拒绝，不会为了删除而停止任何任务。
+
+聊天记录管理改编自 [dsh-chat-manager](https://github.com/WSL043/dsh-chat-manager)
+v1.5.21（MIT），详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+与原版的差异：不包装 Host 的 Agent 生命周期服务；已加载会话直接拒绝；取消归档走官方
+Client 服务而不是额外路由。
+
+## 开关与持久化
+
+- 两个开关（工作步骤展示快捷切换、聊天记录管理）位于插件页顶部，实时生效，无需刷新。
+- 开关保存在当前浏览器的 `localStorage`（`original-version-enhancements.flags.v1`），
+  清除浏览器数据会恢复默认（两项均开启）。
+
+## Host 路由
+
+只在 Host 提供对应服务时注册，缺失时静默降级，不影响插件其余部分：
+
+- `POST /plugins/original-version-enhancements/archives/search` — 归档内容搜索
+- `POST /plugins/original-version-enhancements/sessions/delete` — 永久删除
+  （需要 `x-dsh-session-delete-confirmation: delete-session` 确认头与同源校验）
 
 ## 安装 / Install
 
-该目录本身就是一个 bundle。使用 DSH 的插件管理安装：
+该目录本身就是一个 bundle：
 
 ```text
 plugin_manager install_bundle <本目录绝对路径>
 ```
 
-也可以克隆仓库：
+或克隆仓库：
 
 ```text
 git clone https://github.com/mmcdrme/dsh-original-version-addition.git
 ```
 
-安装后刷新 Web 页面即可在会话标题栏和文件面板标题栏看到这组按钮。
-
 ## 结构 / Layout
 
 ```text
-index.js            Host 半侧（无 Host 行为）
-client.js           Web 客户端：槽位注册、四个 SVG 图标、配置读写
-cordis.patch.yml    插入本插件条目
-locale/{zh,en}.json 插件管理页标题与描述
-icon.svg            插件管理页图标
+index.js                  Host 半侧：注册归档搜索与永久删除路由（缺失服务时降级）
+client.js                 Web 客户端：插件页、开关、四个 SVG 图标、聊天记录管理 UI
+host/archive-manager.mjs  归档内容搜索（改编自 dsh-chat-manager）
+host/delete-session.mjs   已归档会话的安全删除（改编自 dsh-chat-manager）
+cordis.patch.yml          插入本插件条目
+locale/{zh,en}.json       插件管理页标题与描述
+icon.svg                  插件管理页图标
+THIRD_PARTY_NOTICES.md    第三方许可与改动说明
 ```

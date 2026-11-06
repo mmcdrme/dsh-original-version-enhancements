@@ -1,8 +1,8 @@
 {
   "name": "@local/dsh-work-steps-quick-switch",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "private": true,
-  "description": "Original Version Enhancements (原版功能增强): adds a four-step compact work-details switcher beside every Open in File Explorer workspace action.",
+  "description": "Original Version Enhancements (原版功能增强): a plugin page with feature switches for the four-step work-details switcher and an archived-session manager (search, unarchive, confirmed deletion).",
   "type": "module",
   "exports": {
     ".": "./index.js",
@@ -14,9 +14,11 @@
     "index.js",
     "client.js",
     "cordis.patch.yml",
+    "host/*.mjs",
     "locale/*.json",
     "icon.svg",
-    "README.md"
+    "README.md",
+    "THIRD_PARTY_NOTICES.md"
   ],
   "dsh": {
     "bundle": {
@@ -28,7 +30,9 @@
       "inject": [
         "@deepseek-ai/dsh-client-locale",
         "@deepseek-ai/dsh-client-ui-settings",
-        "@deepseek-ai/dsh-client-ui-sidebar-files"
+        "@deepseek-ai/dsh-client-ui-sidebar-files",
+        "@deepseek-ai/dsh-client-ui-workspace",
+        "@deepseek-ai/dsh-client-ui-session"
       ]
     }
   }
