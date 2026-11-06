@@ -178,6 +178,32 @@ window.__ModuleLoader__.load({
     };
 
     /**
+     * Leave the main panel when the Session it shows has just been removed.
+     * The shipped archive action does exactly this (`clearMain()`: drop the
+     * selection, release the retained Session, deselect the panel), so a deleted
+     * Session behaves like an archived one instead of leaving its now-missing
+     * conversation on screen. `mainReference` is what that action itself reads;
+     * the persisted `selection` store is the fallback witness.
+     * @param ctx - the Client plugin context (carries `uiWorkspace`).
+     * @param sessionId - the Session that was just removed.
+     */
+    const leaveRemovedSession = (ctx, sessionId) => {
+      try {
+        const uiWorkspace = ctx?.uiWorkspace;
+        if (uiWorkspace === undefined) return;
+        const current = uiWorkspace.mainReference?.sessionId ?? uiWorkspace.selection?.getSnapshot?.()?.sessionId;
+        if (current !== sessionId) return;
+        if (typeof uiWorkspace.clearMain === 'function') {
+          uiWorkspace.clearMain();
+        } else if (typeof uiWorkspace.clearArchivedCurrent === 'function') {
+          // The removed id is already out of the archive set by the Host, so
+          // this only helps in the narrow race where it is still listed.
+          uiWorkspace.clearArchivedCurrent();
+        }
+      } catch { /* leaving the page is best-effort: the deletion already succeeded */ }
+    };
+
+    /**
      * Read a JSON body, turning an empty or non-JSON answer into a status error.
      * @param response - the fetch response.
      * @returns the parsed JSON payload.
@@ -219,6 +245,7 @@ window.__ModuleLoader__.load({
           };
         }
         await refreshStores(ctx);
+        leaveRemovedSession(ctx, target.id);
         return { ok: true };
       } catch (error) {
         return { ok: false, error: String(error?.message ?? error), code: '' };
@@ -1795,15 +1822,83 @@ window.__ModuleLoader__.load({
     `);
 
     /**
+     * The Client Workspace state model behind `ctx.workspaces`. Its snapshot
+     * carries the durable archive set and its subscription fires whenever the
+     * Host pushes a new one (the same face `uiWorkspace.archiveSession` writes).
+     * @param ctx - the Client plugin context.
+     * @returns the model, or undefined when this composition exposes none.
+     */
+    const workspaceModelOf = (ctx) => {
+      const service = ctx?.workspaces;
+      const model = service?.list ?? service?.model;
+      return typeof model?.getSnapshot === 'function' ? model : undefined;
+    };
+
+    /**
+     * Read the Workspace snapshot once. The session menu does not hand entries a
+     * `useWorkspaces` hook, so the chooser opens from this direct read instead
+     * of an empty target list; a slot that does provide the hook keeps it.
+     * @param ctx - the Client plugin context.
+     * @returns the Workspace snapshot, or undefined when unavailable.
+     */
+    const readWorkspaceSnapshot = (ctx) => {
+      try {
+        return workspaceModelOf(ctx)?.getSnapshot?.();
+      } catch {
+        return undefined;
+      }
+    };
+
+    /**
+     * Whether one Session is archived. The Session menu target only carries the
+     * id and title, so this reads the Workspace archive set itself and keeps the
+     * answer live; archived rows are not offered move/copy because the stock
+     * menu only gives them Unarchive (and an archived conversation should be
+     * restored, not silently re-filed into another workspace).
+     * @param ctx - the Client plugin context.
+     * @param sessionId - the Session whose archive membership is wanted.
+     * @returns true while that id is in the durable archive set.
+     */
+    function useArchivedSession(ctx, sessionId) {
+      const model = workspaceModelOf(ctx);
+      const read = () => {
+        try {
+          const ids = model?.getSnapshot?.()?.archivedSessionIds;
+          return Array.isArray(ids) && ids.includes(sessionId);
+        } catch {
+          return false;
+        }
+      };
+      const [archived, setArchived] = React.useState(read);
+      React.useEffect(() => {
+        setArchived(read());
+        if (typeof model?.subscribe !== 'function') return undefined;
+        const off = model.subscribe(() => setArchived(read()));
+        setArchived(read());
+        return () => {
+          try { off(); } catch { /* the model was already disposed */ }
+        };
+      }, [model, sessionId]);
+      return archived;
+    }
+
+    /**
      * Right-click row action: move or copy one session into another workspace.
      * @param props - owner props, menu hook, workspace snapshot, translator, mode.
      * @returns the menu row.
      */
-    function SessionTransferMenuItem({ sessionId, displayTitle, useMenuOpenState, useWorkspaces, t, mode }) {
+    function SessionTransferMenuItem({ sessionId, displayTitle, useMenuOpenState, useWorkspaces, t, ctx, mode }) {
       const tr = typeof t === 'function' ? t : (key) => key;
       const [, closeMenu] = useMenuOpenState();
-      const workspaces = typeof useWorkspaces === 'function' ? useWorkspaces((snapshot) => snapshot) : undefined;
+      const hooked = typeof useWorkspaces === 'function' ? useWorkspaces((snapshot) => snapshot) : undefined;
+      const workspaces = hooked ?? readWorkspaceSnapshot(ctx);
+      const archived = useArchivedSession(ctx, sessionId);
       const label = tr(mode === 'move' ? 'menuMove' : 'menuCopy');
+
+      // An archived Session has no workspace row on the stock sidebar; the menu
+      // it opens is the archive-only one, where filing it elsewhere makes no
+      // sense. Hiding the row keeps that menu identical to the stock one.
+      if (archived) return null;
 
       const select = () => {
         closeMenu(false);
