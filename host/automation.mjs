@@ -49,7 +49,59 @@ export function profileDirectory() {
 }
 
 /**
- * Read the auto-clean sidecar, tolerating a missing or malformed file.
+ * Keep only the string keys of an untrusted map.
+ * @param value - untrusted value.
+ * @returns a plain object.
+ */
+const stringKeyed = (value) => {
+  const out = {}
+  if (value === null || typeof value !== 'object') return out
+  for (const [key, entry] of Object.entries(value)) {
+    if (typeof key === 'string' && key.length > 0) out[key] = entry
+  }
+  return out
+}
+
+/**
+ * Normalize one task's hidden-record entry: either a cut-off instant (every
+ * receipt at or before it is hidden) or explicit message identities.
+ * @param value - untrusted entry.
+ * @returns a normalized entry, or undefined when it holds nothing.
+ */
+const hiddenEntry = (value) => {
+  if (value === null || typeof value !== 'object') return undefined
+  const entry = {}
+  if (typeof value.before === 'string' && value.before.length > 0) entry.before = value.before
+  if (Array.isArray(value.ids)) {
+    const ids = value.ids.filter(id => typeof id === 'string' && id.length > 0)
+    if (ids.length > 0) entry.ids = [...new Set(ids)]
+  }
+  return Object.keys(entry).length === 0 ? undefined : entry
+}
+
+/**
+ * Whether one delivery receipt is hidden from this panel's run records.
+ * @param entry - the task's hidden-record entry.
+ * @param receipt - one delivery receipt from the Host.
+ * @returns whether the receipt should stay out of the visible list.
+ */
+const hiddenReceipt = (entry, receipt) => {
+  if (entry === undefined) return false
+  if (Array.isArray(entry.ids) && typeof receipt?.messageId === 'string' && entry.ids.includes(receipt.messageId)) return true
+  if (typeof entry.before === 'string' && typeof receipt?.deliveredAt === 'string') {
+    const cutoff = Date.parse(entry.before)
+    const at = Date.parse(receipt.deliveredAt)
+    if (Number.isFinite(cutoff) && Number.isFinite(at) && at <= cutoff) return true
+  }
+  return false
+}
+
+/**
+ * Read the automation sidecar, tolerating a missing or malformed file.
+ *
+ * Besides the auto-clean flags it keeps the two views this panel adds on top of
+ * the Host records: which run records are hidden here, and which tasks drop
+ * their own record right after a delivery.
  * @param file - absolute sidecar path.
  * @param warn - diagnostic sink.
  * @returns the mutable state object.
@@ -57,17 +109,26 @@ export function profileDirectory() {
 export function readAutomationState(file, warn) {
   try {
     const parsed = JSON.parse(fs.readFileSync(file, 'utf8'))
-    if (parsed !== null && typeof parsed === 'object' && parsed.autoClean !== null && typeof parsed.autoClean === 'object') {
+    if (parsed !== null && typeof parsed === 'object') {
       const autoClean = {}
-      for (const [id, value] of Object.entries(parsed.autoClean)) {
-        if (typeof id === 'string' && id.length > 0) autoClean[id] = value === true
+      for (const [id, value] of Object.entries(stringKeyed(parsed.autoClean))) {
+        autoClean[id] = value === true
       }
-      return { version: STATE_VERSION, autoClean }
+      const trimAfterRun = {}
+      for (const [id, value] of Object.entries(stringKeyed(parsed.trimAfterRun))) {
+        trimAfterRun[id] = value === true
+      }
+      const hidden = {}
+      for (const [id, value] of Object.entries(stringKeyed(parsed.hidden))) {
+        const entry = hiddenEntry(value)
+        if (entry !== undefined) hidden[id] = entry
+      }
+      return { version: STATE_VERSION, autoClean, trimAfterRun, hidden }
     }
   } catch (error) {
     if (error?.code !== 'ENOENT') warn(`automation: could not read ${file}: ${String(error)}`)
   }
-  return { version: STATE_VERSION, autoClean: {} }
+  return { version: STATE_VERSION, autoClean: {}, trimAfterRun: {}, hidden: {} }
 }
 
 /**
@@ -174,6 +235,72 @@ const rowOf = record => ({
 })
 
 /**
+ * Read one task's run records and drop the ones this panel hides.
+ * @param service - the Host Schedule service.
+ * @param state - the automation sidecar state.
+ * @param id - task identity.
+ * @returns visible receipts, the hidden count, and whether the task exists.
+ */
+async function receiptsOf(service, state, id) {
+  const page = await service.history({ id, limit: 100 })
+  if (page === undefined || page.code === 'schedule_not_found' || page.code === 'delivery_cursor_not_found') {
+    return { records: [], hidden: 0, total: 0, found: page?.code !== 'schedule_not_found' }
+  }
+  const all = Array.isArray(page.records) ? page.records : []
+  const entry = state.hidden[id]
+  const visible = all.filter(receipt => !hiddenReceipt(entry, receipt))
+  return {
+    records: visible.map(receipt => ({
+      messageId: receipt.messageId,
+      deliveredAt: receipt.deliveredAt,
+      scheduledAt: receipt.scheduledAt,
+      targetSessionId: receipt.targetSessionId,
+    })),
+    hidden: all.length - visible.length,
+    total: all.length,
+    found: true,
+  }
+}
+
+/**
+ * Hide one receipt (or every receipt so far) of a task in this panel.
+ * @param deps - service access and sidecar state.
+ * @param request - `{id, messageId?}` or `{id, all:true}`.
+ * @returns the remaining visible count.
+ */
+async function hideRecords(deps, request) {
+  const { service, state, save } = deps
+  const entry = state.hidden[request.id] ?? {}
+  if (request.all === true) {
+    entry.before = new Date().toISOString()
+  } else if (typeof request.messageId === 'string' && request.messageId.length > 0) {
+    entry.ids = [...new Set([...(entry.ids ?? []), request.messageId])]
+  } else {
+    return { ok: false, error: { code: 'invalid-request', message: '缺少要删除的运行记录。' } }
+  }
+  state.hidden[request.id] = entry
+  save()
+  const page = await receiptsOf(service, state, request.id)
+  return { ok: true, value: { records: page.records, hidden: page.hidden, total: page.total } }
+}
+
+/**
+ * Apply the per-task "drop this run's record after delivery" choice.
+ * A receipt that already shows up is hidden here; the Host record itself stays
+ * untouched because the Schedule service exposes no per-record deletion.
+ * @param deps - service access and sidecar state.
+ * @param request - `{id, trimAfterRun}`.
+ * @returns the applied state.
+ */
+function setTrimAfterRun(deps, request) {
+  const { state, save } = deps
+  if (request.trimAfterRun === true) state.trimAfterRun[request.id] = true
+  else delete state.trimAfterRun[request.id]
+  save()
+  return { id: request.id, trimAfterRun: request.trimAfterRun === true }
+}
+
+/**
  * Apply or clear one task's auto-clean choice.
  * @param deps - service access and sidecar state.
  * @param request - `{id, autoClean}`.
@@ -276,15 +403,19 @@ async function deleteTask(service, id) {
 }
 
 /**
- * Remove the auto-clean flag of every task that no longer needs it. A one-shot
- * task keeps its delivery receipt, so a stored `lastDelivery` on an ended task
- * is the signal that this task already delivered and may be cleaned up.
+ * Keep the sidecar in step with the Host task list.
+ *
+ * Auto-clean removes a finished one-shot task after its delivery. A task marked
+ * "drop this run's record" hides the receipt it just produced, so the run list
+ * never keeps a delivery the user asked to forget. Flags of deleted tasks are
+ * dropped on the way.
  * @param deps - service access and sidecar state, plus a log sink.
  * @returns the number of removed tasks.
  */
 export async function reconcileAutoClean({ service, state, save, warn = () => {} }) {
-  const ids = Object.keys(state.autoClean)
-  if (ids.length === 0) return 0
+  const cleanIds = Object.keys(state.autoClean)
+  const trimIds = Object.keys(state.trimAfterRun)
+  if (cleanIds.length === 0 && trimIds.length === 0) return 0
   let removed = 0
   let changed = false
   let tasks
@@ -295,7 +426,25 @@ export async function reconcileAutoClean({ service, state, save, warn = () => {}
     return 0
   }
   const byId = new Map(tasks.map(task => [task.id, task]))
-  for (const id of ids) {
+
+  for (const id of trimIds) {
+    const task = byId.get(id)
+    if (task === undefined) {
+      delete state.trimAfterRun[id]
+      delete state.hidden[id]
+      changed = true
+      continue
+    }
+    const receipt = task.lastDelivery
+    if (receipt === undefined || typeof receipt.messageId !== 'string') continue
+    const entry = state.hidden[id] ?? {}
+    if (hiddenReceipt(entry, receipt)) continue
+    entry.ids = [...new Set([...(entry.ids ?? []), receipt.messageId])]
+    state.hidden[id] = entry
+    changed = true
+  }
+
+  for (const id of cleanIds) {
     const task = byId.get(id)
     if (task === undefined) {
       delete state.autoClean[id]
@@ -307,6 +456,8 @@ export async function reconcileAutoClean({ service, state, save, warn = () => {}
       const result = await deleteTask(service, id)
       if (result.deleted) removed += 1
       delete state.autoClean[id]
+      delete state.hidden[id]
+      delete state.trimAfterRun[id]
       changed = true
     } catch (error) {
       warn(`automation: auto-clean delete failed for ${id}: ${String(error)}`)
@@ -405,6 +556,10 @@ export function createAutomationSurface(options) {
     warn = () => {},
   } = options
   const deps = { service, state, save, warn }
+  // A sidecar written by an older build may miss the newer maps.
+  if (state.autoClean === undefined) state.autoClean = {}
+  if (state.trimAfterRun === undefined) state.trimAfterRun = {}
+  if (state.hidden === undefined) state.hidden = {}
   let running = false
 
   const reconcile = async () => {
@@ -454,16 +609,85 @@ export function createAutomationSurface(options) {
     if (body === undefined) return
     try {
       const tasks = await service.catalog()
+      // One visible-record count per task drives the panel's "run records"
+      // column without a second round trip.
+      const records = {}
+      for (const task of tasks) {
+        const page = await receiptsOf(service, state, task.id)
+        records[task.id] = { visible: page.records.length, hidden: page.hidden, total: page.total }
+      }
       sendJson(res, 200, {
         ok: true,
         value: {
           tasks: tasks.map(rowOf),
           autoClean: { ...state.autoClean },
+          trimAfterRun: { ...state.trimAfterRun },
+          records,
         },
       })
     } catch (error) {
       warn(`automation: catalog failed: ${String(error)}`)
       sendJson(res, 503, failure('schedule-unavailable', '读取自动化任务失败，请稍后重试。'))
+    }
+  }
+
+  const history = async (req, res) => {
+    const body = await accept(req, res)
+    if (body === undefined) return
+    if (typeof body?.id !== 'string' || body.id.length === 0) {
+      sendJson(res, 400, failure('invalid-id', '任务 ID 无效。'))
+      return
+    }
+    try {
+      const page = await receiptsOf(service, state, body.id)
+      sendJson(res, 200, {
+        ok: true,
+        value: {
+          records: page.records,
+          hidden: page.hidden,
+          total: page.total,
+          trimAfterRun: state.trimAfterRun[body.id] === true,
+        },
+      })
+    } catch (error) {
+      warn(`automation: history failed: ${String(error)}`)
+      sendJson(res, 503, failure('schedule-unavailable', '读取运行记录失败，请稍后重试。'))
+    }
+  }
+
+  const hide = async (req, res) => {
+    const body = await accept(req, res)
+    if (body === undefined) return
+    if (typeof body?.id !== 'string' || body.id.length === 0) {
+      sendJson(res, 400, failure('invalid-id', '任务 ID 无效。'))
+      return
+    }
+    try {
+      const result = await hideRecords(deps, {
+        id: body.id,
+        all: body.all === true,
+        messageId: typeof body.messageId === 'string' ? body.messageId : undefined,
+      })
+      sendJson(res, result.ok ? 200 : 400, result)
+    } catch (error) {
+      warn(`automation: hiding run records failed: ${String(error)}`)
+      sendJson(res, 503, failure('schedule-unavailable', '删除运行记录失败，请稍后重试。'))
+    }
+  }
+
+  const trim = async (req, res) => {
+    const body = await accept(req, res)
+    if (body === undefined) return
+    if (typeof body?.id !== 'string' || body.id.length === 0) {
+      sendJson(res, 400, failure('invalid-id', '任务 ID 无效。'))
+      return
+    }
+    try {
+      const value = await setTrimAfterRun(deps, { id: body.id, trimAfterRun: body.trimAfterRun === true })
+      sendJson(res, 200, { ok: true, value })
+    } catch (error) {
+      warn(`automation: trim toggle failed: ${String(error)}`)
+      sendJson(res, 503, failure('schedule-unavailable', '更新记录设置失败。'))
     }
   }
 
@@ -635,7 +859,26 @@ export function createAutomationSurface(options) {
     try {
       const result = await service.deleteInactive()
       const deleted = Number.isFinite(result?.deleted) ? result.deleted : 0
-      sendJson(res, 200, { ok: true, value: { deleted } })
+      // Ended tasks are gone; every receipt still attached to a live task is
+      // hidden here, so "clear run records" really empties the list instead of
+      // leaving it untouched when no task had ended yet.
+      let records = 0
+      // One minute of slack: a receipt written while this loop runs must land
+      // behind the cut-off too.
+      const cutoff = new Date(Date.now() + 60_000).toISOString()
+      const tasks = await service.catalog()
+      const live = new Set(tasks.map(task => task.id))
+      for (const id of Object.keys(state.hidden)) {
+        if (!live.has(id)) delete state.hidden[id]
+      }
+      for (const task of tasks) {
+        const page = await receiptsOf(service, state, task.id)
+        if (page.records.length === 0) continue
+        records += page.records.length
+        state.hidden[task.id] = { ...(state.hidden[task.id] ?? {}), before: cutoff }
+      }
+      save()
+      sendJson(res, 200, { ok: true, value: { deleted, records } })
       if (deleted > 0) void reconcile()
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
@@ -675,5 +918,5 @@ export function createAutomationSurface(options) {
     }
   }
 
-  return { handlers: { catalog, create, update, run, autoClean, remove, clear, bind }, reconcile }
+  return { handlers: { catalog, history, hide, trim, create, update, run, autoClean, remove, clear, bind }, reconcile }
 }

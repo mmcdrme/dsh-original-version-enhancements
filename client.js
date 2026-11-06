@@ -277,14 +277,21 @@ window.__ModuleLoader__.load({
       'auto.bindSkipped': '已跳过 {count} 个已绑定的会话',
       'auto.bindTasks': '任务：{names}',
       'auto.repeatToggle': '重复',
-      'auto.repeatHint': '不勾选则只运行一次',
+      'auto.repeatHint': '不勾选则 {n} 分钟后只运行一次',
+      'auto.records': '运行记录',
+      'auto.recordsEmpty': '暂无运行记录',
+      'auto.recordsClear': '清除全部',
+      'auto.recordDelete': '删除这条记录',
+      'auto.recordsHidden': '本面板已隐藏 {count} 条',
+      'auto.trim': '运行后删除本次运行记录',
+      'auto.trimHint': '每次投递后自动隐去这一次的记录',
       'auto.pauseSelected': '暂停所选',
       'auto.pausedMany': '已暂停 {count} 个任务',
       'auto.pauseNone': '所选任务都已暂停',
       'auto.clear': '清除运行记录',
       'auto.clearTitle': '清除运行记录？',
-      'auto.clearDesc': '已结束的任务及其运行记录会被永久删除；已开启或已暂停的任务、原会话与已排队消息不受影响。',
-      'auto.clearCount': '将清除 {count} 条已结束任务的记录',
+      'auto.clearDesc': '所有任务的运行记录都会从面板中清除，已结束的任务一并删除；已开启或已暂停的任务、原会话与已排队消息不受影响。',
+      'auto.clearCount': '将清除 {count} 条运行记录',
       'auto.clearConfirm': '清除',
       'auto.clearing': '正在清除…',
       'auto.cleared': '已清除 {count} 条运行记录',
@@ -455,14 +462,21 @@ window.__ModuleLoader__.load({
       'auto.bindSkipped': 'Skipped {count} conversations that already had the task',
       'auto.bindTasks': 'Tasks: {names}',
       'auto.repeatToggle': 'Repeat',
-      'auto.repeatHint': 'Leave unchecked to run only once',
+      'auto.repeatHint': 'Leave unchecked to run once after {n} minutes',
+      'auto.records': 'Run records',
+      'auto.recordsEmpty': 'No run records yet',
+      'auto.recordsClear': 'Clear all',
+      'auto.recordDelete': 'Delete this record',
+      'auto.recordsHidden': '{count} hidden in this panel',
+      'auto.trim': 'Delete this run record after delivery',
+      'auto.trimHint': 'Hides the receipt of every delivery it makes',
       'auto.pauseSelected': 'Pause selected',
       'auto.pausedMany': 'Paused {count} tasks',
       'auto.pauseNone': 'Every selected task is already paused',
       'auto.clear': 'Clear run records',
       'auto.clearTitle': 'Clear run records?',
-      'auto.clearDesc': 'Ended tasks and their run records are deleted permanently; active and paused tasks, their conversations and queued messages stay untouched.',
-      'auto.clearCount': '{count} ended task records will be removed',
+      'auto.clearDesc': 'Every task keeps running, but its run records are cleared from this panel and ended tasks are deleted; conversations and queued messages stay untouched.',
+      'auto.clearCount': '{count} run records will be cleared',
       'auto.clearConfirm': 'Clear',
       'auto.clearing': 'Clearing…',
       'auto.cleared': 'Cleared {count} run records',
@@ -662,6 +676,28 @@ window.__ModuleLoader__.load({
         color: var(--dsw-alias-label-secondary);
       }
       .ove-example-chip:hover { background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-label-primary); }
+      .ove-records-head { display: flex; align-items: center; gap: 8px; }
+      .ove-link-btn {
+        margin-left: auto; border: 0; background: transparent; font: inherit; font-size: 12px; line-height: 18px;
+        color: var(--dsw-alias-brand-primary, #4f7cff); cursor: pointer; padding: 2px 6px; border-radius: 6px;
+      }
+      .ove-link-btn:hover:not(:disabled) { background: var(--dsw-alias-bg-layer-2); }
+      .ove-link-btn:disabled { opacity: .5; cursor: default; }
+      .ove-records-empty { margin: 0; }
+      .ove-record-list {
+        list-style: none; margin: 0; padding: 2px; display: grid; gap: 1px; max-height: 176px; overflow: auto;
+        border-radius: 10px; background: var(--dsw-alias-bg-layer-1);
+      }
+      .ove-record {
+        display: flex; align-items: center; gap: 8px; padding: 3px 8px; border-radius: 8px;
+        font-size: 12px; line-height: 20px; color: var(--dsw-alias-label-secondary);
+      }
+      .ove-record-time { flex: 1 1 auto; font-variant-numeric: tabular-nums; }
+      .ove-record-del {
+        border: 0; background: transparent; color: var(--dsw-alias-label-tertiary); font-size: 15px; line-height: 1;
+        width: 22px; height: 22px; border-radius: 6px; cursor: pointer;
+      }
+      .ove-record-del:hover:not(:disabled) { background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-state-error-primary); }
       .ove-footnote { margin: 0; font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-tertiary); }
 
       .ove-menu-item {
@@ -1572,26 +1608,41 @@ window.__ModuleLoader__.load({
      * Build the initial editor draft for a new task or an existing row.
      * @param task - the row being edited, or null for a new task.
      * @param cleanFlags - the Host auto-clean map, keyed by task identity.
+     * @param trimFlags - the Host "drop this run's record" map.
      * @returns the draft.
      */
-    const draftOf = (task, cleanFlags) => {
+    const draftOf = (task, cleanFlags, trimFlags) => {
       const target = task?.target ?? { kind: 'new_once' };
-      // A new task starts half an hour from now, repeating every 30 minutes.
-      const soon = new Date(Date.now() + 30 * 60 * 1000);
       const existingKind = typeof task?.kind === 'string' ? task.kind : 'every';
+      // 按分钟 owns the one-shot case: unchecked Repeat means "run once N minutes
+      // from now" (a Host `after` rule), checked means "every N minutes".
       const kind = ['every', 'daily', 'weekly', 'rrule'].includes(existingKind)
         ? existingKind
-        : (existingKind === 'cron' || existingKind === 'rrule' ? 'rrule' : 'every');
+        : (existingKind === 'cron' ? 'rrule' : 'every');
+      const repeat = existingKind === 'every';
+      const soon = new Date(Date.now() + 30 * 60 * 1000);
+      const delayMinutes = () => {
+        if (typeof task?.afterSeconds === 'number' && task.afterSeconds > 0) {
+          return String(Math.max(1, Math.round(task.afterSeconds / 60)));
+        }
+        if (typeof task?.scheduledAt === 'string') {
+          const at = Date.parse(task.scheduledAt);
+          if (Number.isFinite(at)) return String(Math.max(1, Math.round((at - Date.now()) / 60000)));
+        }
+        return '30';
+      };
       const draft = {
         id: task?.id ?? '',
         title: task?.title ?? '',
         prompt: task?.prompt ?? '',
-        repeat: task === null || task === undefined ? true : existingKind !== 'at',
+        repeat,
         kind,
         date: dateOf(soon),
         atTime: clockOf(soon),
         time: typeof task?.time === 'string' ? task.time.slice(0, 5) : clockOf(soon),
-        everyMinutes: task?.everySeconds ? String(Math.round(task.everySeconds / 60)) : '30',
+        everyMinutes: repeat
+          ? (task?.everySeconds ? String(Math.round(task.everySeconds / 60)) : '30')
+          : delayMinutes(),
         weekday: Array.isArray(task?.weekdays) && task.weekdays.length > 0 ? task.weekdays[0] : 1,
         rrule: task?.rrule ?? `DTSTART;TZID=${timeZone()}:${dateOf(soon).replace(/-/g, '')}T${clockOf(soon).replace(':', '')}00\nRRULE:FREQ=WEEKLY;BYDAY=MO`,
         targetKind: target.kind === 'session' ? 'session' : target.kind === 'new' ? 'new' : 'new_once',
@@ -1599,15 +1650,10 @@ window.__ModuleLoader__.load({
         cwd: target.cwd ?? '',
         autoClean: task !== null && task !== undefined && cleanFlags !== undefined
           && cleanFlags[task.id] === true,
+        trim: task !== null && task !== undefined && trimFlags !== undefined
+          && trimFlags[task.id] === true,
         active: task?.status !== 'paused',
       };
-      if (task?.kind === 'at' && typeof task.scheduledAt === 'string') {
-        const when = new Date(task.scheduledAt);
-        if (!Number.isNaN(when.getTime())) {
-          draft.date = dateOf(when);
-          draft.atTime = clockOf(when);
-        }
-      }
       return draft;
     };
 
@@ -1618,22 +1664,14 @@ window.__ModuleLoader__.load({
      */
     const timingOfDraft = (draft) => {
       const zone = timeZone();
-      // The Repeat checkbox owns the one-shot case: unchecked means "run once at
-      // the chosen date and time", whatever the rule picker still holds.
-      if (draft.repeat !== true) {
-        const when = new Date(`${draft.date}T${draft.atTime}:00`);
-        return Number.isNaN(when.getTime()) ? undefined : { kind: 'at', at: when.toISOString() };
-      }
       switch (draft.kind) {
-        case 'at': {
-          const when = new Date(`${draft.date}T${draft.atTime}:00`);
-          if (Number.isNaN(when.getTime())) return undefined;
-          return { kind: 'at', at: when.toISOString() };
-        }
         case 'every': {
           const minutes = Number(draft.everyMinutes);
           if (!Number.isFinite(minutes) || minutes < 1) return undefined;
-          return { kind: 'every', every_seconds: Math.round(minutes * 60) };
+          // Unchecked Repeat turns the interval into a one-shot delay.
+          return draft.repeat === true
+            ? { kind: 'every', every_seconds: Math.round(minutes * 60) }
+            : { kind: 'after', after_seconds: Math.round(minutes * 60) };
         }
         case 'daily':
           return { kind: 'daily', daily: { time: draft.time, time_zone: zone } };
@@ -1670,6 +1708,8 @@ window.__ModuleLoader__.load({
 
       const [rows, setRows] = React.useState([]);
       const [autoClean, setAutoClean] = React.useState({});
+      const [trimFlags, setTrimFlags] = React.useState({});
+      const [recordCounts, setRecordCounts] = React.useState({});
       const [loading, setLoading] = React.useState(true);
       const [loadError, setLoadError] = React.useState('');
       const [tab, setTab] = React.useState('active');
@@ -1685,6 +1725,9 @@ window.__ModuleLoader__.load({
       const [bindPicks, setBindPicks] = React.useState(() => new Set());
       const [cleanPending, setCleanPending] = React.useState(false);
       const [clearConfirm, setClearConfirm] = React.useState(false);
+      const [records, setRecords] = React.useState([]);
+      const [recordHidden, setRecordHidden] = React.useState(0);
+      const [recordsBusy, setRecordsBusy] = React.useState(false);
 
       const load = React.useCallback(async (signal) => {
         const result = await automationCall('catalog');
@@ -1696,6 +1739,8 @@ window.__ModuleLoader__.load({
         }
         setRows(Array.isArray(result.value?.tasks) ? result.value.tasks : []);
         setAutoClean(result.value?.autoClean ?? {});
+        setTrimFlags(result.value?.trimAfterRun ?? {});
+        setRecordCounts(result.value?.records ?? {});
         setLoadError('');
         setLoading(false);
         return result.value;
@@ -1751,20 +1796,27 @@ window.__ModuleLoader__.load({
 
       const openNew = () => {
         setDraft(draftOf(null));
+        setRecords([]);
+        setRecordHidden(0);
         setDraftError('');
         setNotice('');
         setActionError('');
       };
 
       const openEdit = (task) => {
-        setDraft(draftOf(task, autoClean));
+        setDraft(draftOf(task, autoClean, trimFlags));
+        setRecords([]);
+        setRecordHidden(0);
         setDraftError('');
         setActionError('');
+        if (typeof task?.id === 'string' && task.id.length > 0) void loadRecords(task.id);
       };
 
       const closeDraft = () => {
         setDraft(null);
         setDraftError('');
+        setRecords([]);
+        setRecordHidden(0);
       };
 
       const updateDraft = (patch) => setDraft((current) => (current === null ? current : { ...current, ...patch }));
@@ -1793,7 +1845,7 @@ window.__ModuleLoader__.load({
         setDraftError('');
         // Only a one-shot rule ends on its own, so only it can be cleaned up
         // after delivery; a recurring rule keeps the flag off.
-        const clean = draft.repeat !== true && draft.autoClean === true;
+        const clean = draft.kind === 'every' && draft.repeat !== true && draft.autoClean === true;
         const result = draft.id === ''
           ? await automationCall('create', {
             title: draft.title.trim(),
@@ -1824,9 +1876,20 @@ window.__ModuleLoader__.load({
             else delete next[savedId];
             return next;
           });
+          const trim = draft.trim === true;
+          const trimmed = await automationCall('trim', { id: savedId, trimAfterRun: trim });
+          if (trimmed.ok) {
+            setTrimFlags((current) => {
+              const next = { ...current };
+              if (trim) next[savedId] = true;
+              else delete next[savedId];
+              return next;
+            });
+          }
         }
         setNotice(tr('auto.saved'));
         setDraft(null);
+        setRecords([]);
         await load();
       };
 
@@ -1855,6 +1918,7 @@ window.__ModuleLoader__.load({
         }
         setNotice(tr('auto.ran'));
         await load();
+        if (draft !== null && draft.id === task.id) void loadRecords(task.id);
       };
 
       const removeTasks = async (ids) => {
@@ -1911,7 +1975,10 @@ window.__ModuleLoader__.load({
           }
         }
         setBusy('');
-        if (failed === 0) setNotice(tr('auto.pausedMany').replace('{count}', String(running.length)));
+        if (failed === 0) {
+          setNotice(tr('auto.pausedMany').replace('{count}', String(running.length)));
+          setSelected(new Set());
+        }
         await load();
       };
 
@@ -1927,11 +1994,50 @@ window.__ModuleLoader__.load({
           return;
         }
         const deleted = result.value?.deleted ?? 0;
-        setNotice(deleted > 0
-          ? tr('auto.cleared').replace('{count}', String(deleted))
+        const records = result.value?.records ?? 0;
+        setNotice(records > 0 || deleted > 0
+          ? tr('auto.cleared').replace('{count}', String(records))
           : tr('auto.clearEmpty'));
         setSelected(new Set());
         await load();
+      };
+
+      const loadRecords = async (id) => {
+        if (typeof id !== 'string' || id.length === 0) return;
+        const result = await automationCall('history', { id });
+        if (!result.ok) return;
+        setRecords(Array.isArray(result.value?.records) ? result.value.records : []);
+        setRecordHidden(result.value?.hidden ?? 0);
+      };
+
+      const applyRecords = (value) => {
+        setRecords(Array.isArray(value?.records) ? value.records : []);
+        setRecordHidden(value?.hidden ?? 0);
+      };
+
+      const deleteRecord = async (record) => {
+        if (draft === null || draft.id === '' || recordsBusy) return;
+        setRecordsBusy(true);
+        const result = await automationCall('hide', { id: draft.id, messageId: record.messageId });
+        setRecordsBusy(false);
+        if (!result.ok) {
+          setActionError(result.error);
+          return;
+        }
+        applyRecords(result.value);
+      };
+
+      const clearTaskRecords = async () => {
+        if (draft === null || draft.id === '' || recordsBusy) return;
+        setRecordsBusy(true);
+        const result = await automationCall('hide', { id: draft.id, all: true });
+        setRecordsBusy(false);
+        if (!result.ok) {
+          setActionError(result.error);
+          return;
+        }
+        applyRecords(result.value);
+        setRecordCounts((current) => ({ ...current, [draft.id]: { visible: 0, hidden: 0, total: 0 } }));
       };
 
       const openBind = (tasks) => {
@@ -2067,6 +2173,8 @@ window.__ModuleLoader__.load({
       const panelTask = draft !== null && draft.id !== ''
         ? rows.find((task) => task.id === draft.id) ?? null
         : null;
+      const oneShot = draft !== null && draft.kind === 'every' && draft.repeat !== true;
+      const visibleRecords = Object.values(recordCounts).reduce((total, entry) => total + (entry?.visible ?? 0), 0);
 
       const tabs = [
         ['active', tr('auto.tab.active'), 'ove-tone-active'],
@@ -2155,76 +2263,40 @@ window.__ModuleLoader__.load({
                 value: workspace.path,
                 title: workspace.path,
               }, workspace.title)))),
-          h('div', { className: 'ove-field' },
-            h('label', { className: 'ove-repeat-row' },
-              h('input', {
-                type: 'checkbox',
-                className: 'ove-auto-check',
-                checked: draft.repeat === true,
-                onChange: () => updateDraft({ repeat: draft.repeat !== true }),
-              }),
-              h('span', { className: 'ove-label' }, tr('auto.repeatToggle')),
-              h('span', { className: 'ove-repeat-hint' }, tr('auto.repeatHint')))),
-          draft.repeat === true
-            ? h('label', { className: 'ove-field' },
-              h('span', { className: 'ove-label' }, tr('auto.repeat')),
-              h('select', {
-                className: 'ove-select',
-                value: draft.kind,
-                onChange: (event) => updateDraft({ kind: event.target.value }),
-              },
-              h('option', { value: 'every' }, tr('auto.repeat.every')),
-              h('option', { value: 'daily' }, tr('auto.repeat.daily')),
-              h('option', { value: 'weekly' }, tr('auto.repeat.weekly')),
-              h('option', { value: 'rrule' }, tr('auto.repeat.rrule'))))
-            : h('div', { className: 'ove-inline' },
-              h('label', { className: 'ove-field' },
-                h('span', { className: 'ove-label' }, tr('auto.date')),
+          h('label', { className: 'ove-field' },
+            h('span', { className: 'ove-label' }, tr('auto.repeat')),
+            h('select', {
+              className: 'ove-select',
+              value: draft.kind,
+              onChange: (event) => updateDraft({ kind: event.target.value }),
+            },
+            h('option', { value: 'every' }, tr('auto.repeat.every')),
+            h('option', { value: 'daily' }, tr('auto.repeat.daily')),
+            h('option', { value: 'weekly' }, tr('auto.repeat.weekly')),
+            h('option', { value: 'rrule' }, tr('auto.repeat.rrule')))),
+          draft.kind === 'every'
+            ? h('div', { className: 'ove-field' },
+              h('label', { className: 'ove-repeat-row' },
                 h('input', {
-                  type: 'date',
-                  className: 'ove-input',
-                  value: draft.date,
-                  onChange: (event) => updateDraft({ date: event.target.value }),
-                })),
+                  type: 'checkbox',
+                  className: 'ove-auto-check',
+                  checked: draft.repeat === true,
+                  onChange: () => updateDraft({ repeat: draft.repeat !== true }),
+                }),
+                h('span', { className: 'ove-label' }, tr('auto.repeatToggle')),
+                h('span', { className: 'ove-repeat-hint' },
+                  tr('auto.repeatHint').replace('{n}', String(draft.everyMinutes)))),
               h('label', { className: 'ove-field' },
-                h('span', { className: 'ove-label' }, tr('auto.time')),
+                h('span', { className: 'ove-label' }, tr('auto.interval')),
                 h('input', {
-                  type: 'time',
+                  type: 'number',
+                  min: 1,
                   className: 'ove-input',
-                  value: draft.atTime,
-                  onChange: (event) => updateDraft({ atTime: event.target.value }),
-                }))),
-          draft.repeat === true && draft.kind === 'at'
-            ? h('div', { className: 'ove-inline' },
-              h('label', { className: 'ove-field' },
-                h('span', { className: 'ove-label' }, tr('auto.date')),
-                h('input', {
-                  type: 'date',
-                  className: 'ove-input',
-                  value: draft.date,
-                  onChange: (event) => updateDraft({ date: event.target.value }),
-                })),
-              h('label', { className: 'ove-field' },
-                h('span', { className: 'ove-label' }, tr('auto.time')),
-                h('input', {
-                  type: 'time',
-                  className: 'ove-input',
-                  value: draft.atTime,
-                  onChange: (event) => updateDraft({ atTime: event.target.value }),
+                  value: draft.everyMinutes,
+                  onChange: (event) => updateDraft({ everyMinutes: event.target.value }),
                 })))
             : null,
-          draft.repeat === true && draft.kind === 'every'
-            ? h('label', { className: 'ove-field' },
-              h('span', { className: 'ove-label' }, tr('auto.interval')),
-              h('input', {
-                type: 'number',
-                min: 1,
-                className: 'ove-input',
-                value: draft.everyMinutes,
-                onChange: (event) => updateDraft({ everyMinutes: event.target.value }),
-              }))
-            : null,
-          draft.repeat === true && draft.kind === 'daily'
+          draft.kind === 'daily'
             ? h('label', { className: 'ove-field' },
               h('span', { className: 'ove-label' }, tr('auto.time')),
               h('input', {
@@ -2234,7 +2306,7 @@ window.__ModuleLoader__.load({
                 onChange: (event) => updateDraft({ time: event.target.value }),
               }))
             : null,
-          draft.repeat === true && draft.kind === 'weekly'
+          draft.kind === 'weekly'
             ? h('div', { className: 'ove-inline' },
               h('label', { className: 'ove-field' },
                 h('span', { className: 'ove-label' }, tr('auto.weekday')),
@@ -2253,7 +2325,7 @@ window.__ModuleLoader__.load({
                   onChange: (event) => updateDraft({ time: event.target.value }),
                 })))
             : null,
-          draft.repeat === true && draft.kind === 'rrule'
+          draft.kind === 'rrule'
             ? h('div', { className: 'ove-field' },
               h('label', { className: 'ove-label' }, tr('auto.rule')),
               h('textarea', {
@@ -2275,18 +2347,55 @@ window.__ModuleLoader__.load({
                     }),
                   }, tr(example.label))))))
             : null,
-          h('label', { className: 'ove-field ove-check-row' },
-            h('input', {
-              type: 'checkbox',
-              className: 'ove-auto-check',
-              checked: draft.repeat !== true && draft.autoClean,
-              disabled: draft.repeat === true,
-              onChange: () => updateDraft({ autoClean: !draft.autoClean }),
-            }),
-            h('span', { className: 'ove-label' }, tr('auto.clean')),
-            draft.repeat === true
-              ? h('span', { className: 'ove-muted' }, tr('auto.cleanOnceOnly'))
-              : null),
+          h('div', { className: 'ove-field' },
+            h('label', { className: 'ove-check-row' },
+              h('input', {
+                type: 'checkbox',
+                className: 'ove-auto-check',
+                checked: oneShot && draft.autoClean,
+                disabled: !oneShot,
+                onChange: () => updateDraft({ autoClean: !draft.autoClean }),
+              }),
+              h('span', { className: 'ove-label' }, tr('auto.clean')),
+              oneShot ? null : h('span', { className: 'ove-muted' }, tr('auto.cleanOnceOnly'))),
+            h('label', { className: 'ove-check-row' },
+              h('input', {
+                type: 'checkbox',
+                className: 'ove-auto-check',
+                checked: draft.trim === true,
+                onChange: () => updateDraft({ trim: draft.trim !== true }),
+              }),
+              h('span', { className: 'ove-label' }, tr('auto.trim')),
+              h('span', { className: 'ove-muted' }, tr('auto.trimHint')))),
+          draft.id !== ''
+            ? h('div', { className: 'ove-field ove-records' },
+              h('div', { className: 'ove-records-head' },
+                h('span', { className: 'ove-label' },
+                  `${tr('auto.records')}${records.length > 0 ? `（${records.length}）` : ''}`),
+                recordHidden > 0 ? h('span', { className: 'ove-muted' }, tr('auto.recordsHidden').replace('{count}', String(recordHidden))) : null,
+                records.length > 0
+                  ? h('button', {
+                    type: 'button',
+                    className: 'ove-link-btn',
+                    disabled: recordsBusy,
+                    onClick: () => void clearTaskRecords(),
+                  }, tr('auto.recordsClear'))
+                  : null),
+              records.length === 0
+                ? h('p', { className: 'ove-muted ove-records-empty' }, tr('auto.recordsEmpty'))
+                : h('ul', { className: 'ove-record-list' },
+                  records.map((record) => h('li', { key: record.messageId, className: 'ove-record' },
+                    h('span', { className: 'ove-record-time' },
+                      formatInstant(record.deliveredAt)),
+                    h('button', {
+                      type: 'button',
+                      className: 'ove-record-del',
+                      title: tr('auto.recordDelete'),
+                      'aria-label': tr('auto.recordDelete'),
+                      disabled: recordsBusy,
+                      onClick: () => void deleteRecord(record),
+                    }, '×')))))
+            : null,
           panelTask !== null
             ? h('div', { className: 'ove-detail-actions-row' },
               h('button', {
@@ -2466,7 +2575,9 @@ window.__ModuleLoader__.load({
                     const delivered = typeof deliveredAt === 'string' && deliveredAt.length > 0
                       ? `${tr('auto.lastDelivery')}：${formatInstant(deliveredAt)}`
                       : '';
-                    return [head, when, delivered].filter((part) => part.length > 0).join(' · ');
+                    const runs = recordCounts[task.id]?.visible ?? 0;
+                    const runsText = runs > 0 ? `${tr('auto.records')}：${runs}` : '';
+                    return [head, when, delivered, runsText].filter((part) => part.length > 0).join(' · ');
                   })())),
               h('div', { className: 'ove-task-hover' },
                 h('button', {
@@ -2524,7 +2635,7 @@ window.__ModuleLoader__.load({
               h('h2', { className: 'ove-dialog-title' }, tr('auto.clearTitle')),
               h('p', { className: 'ove-dialog-desc' }, tr('auto.clearDesc')),
               h('p', { className: 'ove-dialog-target' }, tr('auto.clearCount')
-                .replace('{count}', String(rows.filter((task) => task.status === 'ended').length))),
+                .replace('{count}', String(visibleRecords))),
               h('div', { className: 'ove-dialog-actions' },
                 h('button', {
                   type: 'button',
