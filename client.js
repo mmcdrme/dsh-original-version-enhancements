@@ -280,10 +280,6 @@ window.__ModuleLoader__.load({
       'auto.repeatHint': '不勾选则 {n} 分钟后只运行一次',
       'auto.records': '运行记录',
       'auto.recordsEmpty': '暂无运行记录',
-      'auto.recordDelete': '删除这条记录',
-      'auto.recordsHidden': '本面板已隐藏 {count} 条',
-      'auto.trim': '运行后删除本次运行记录',
-      'auto.trimHint': '每次投递后自动隐去这一次的记录',
       'auto.pauseSelected': '暂停所选',
       'auto.pausedMany': '已暂停 {count} 个任务',
       'auto.pauseNone': '所选任务都已暂停',
@@ -292,7 +288,6 @@ window.__ModuleLoader__.load({
       'auto.resumeNone': '所选任务都在运行中',
       'auto.tabEdit': '编辑任务',
       'auto.tabRecords': '运行历史记录',
-      'auto.recordsTip': '每一次投递都会记一条，点右侧 × 可从面板删除该条记录。',
       'auto.ruleExample': '示例（点击填入）',
       'auto.ruleEx1': '每周一、三、五 09:00',
       'auto.ruleEx2': '每两天 09:00',
@@ -462,10 +457,6 @@ window.__ModuleLoader__.load({
       'auto.repeatHint': 'Leave unchecked to run once after {n} minutes',
       'auto.records': 'Run records',
       'auto.recordsEmpty': 'No run records yet',
-      'auto.recordDelete': 'Delete this record',
-      'auto.recordsHidden': '{count} hidden in this panel',
-      'auto.trim': 'Delete this run record after delivery',
-      'auto.trimHint': 'Hides the receipt of every delivery it makes',
       'auto.pauseSelected': 'Pause selected',
       'auto.pausedMany': 'Paused {count} tasks',
       'auto.pauseNone': 'Every selected task is already paused',
@@ -474,7 +465,6 @@ window.__ModuleLoader__.load({
       'auto.resumeNone': 'Every selected task is already running',
       'auto.tabEdit': 'Edit task',
       'auto.tabRecords': 'Run history',
-      'auto.recordsTip': 'Each delivery leaves one record; press × to hide that record in this panel.',
       'auto.ruleExample': 'Examples (click to fill)',
       'auto.ruleEx1': 'Every Monday, Wednesday and Friday at 09:00',
       'auto.ruleEx2': 'Every two days at 09:00',
@@ -693,12 +683,7 @@ window.__ModuleLoader__.load({
         font-size: 12px; line-height: 20px; color: var(--dsw-alias-label-secondary);
       }
       .ove-record-time { flex: 1 1 auto; font-variant-numeric: tabular-nums; }
-      .ove-record-del {
-        border: 0; background: transparent; color: var(--dsw-alias-label-tertiary); font-size: 15px; line-height: 1;
-        width: 22px; height: 22px; border-radius: 6px; cursor: pointer;
-      }
-      .ove-record-del:hover:not(:disabled) { background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-state-error-primary); }
-      .ove-records-tip { margin: 0; }
+      .ove-record-target { flex: 0 1 auto; max-width: 55%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dsw-alias-label-tertiary); }
       .ove-record-list-tall { max-height: none; }
       .ove-footnote { margin: 0; font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-tertiary); }
 
@@ -1624,10 +1609,9 @@ window.__ModuleLoader__.load({
      * Build the initial editor draft for a new task or an existing row.
      * @param task - the row being edited, or null for a new task.
      * @param cleanFlags - the Host auto-clean map, keyed by task identity.
-     * @param trimFlags - the Host "drop this run's record" map.
      * @returns the draft.
      */
-    const draftOf = (task, cleanFlags, trimFlags) => {
+    const draftOf = (task, cleanFlags) => {
       const target = task?.target ?? { kind: 'new_once' };
       const existingKind = typeof task?.kind === 'string' ? task.kind : 'every';
       // 按分钟 owns the one-shot case: unchecked Repeat means "run once N minutes
@@ -1666,8 +1650,6 @@ window.__ModuleLoader__.load({
         cwd: target.cwd ?? '',
         autoClean: task !== null && task !== undefined && cleanFlags !== undefined
           && cleanFlags[task.id] === true,
-        trim: task !== null && task !== undefined && trimFlags !== undefined
-          && trimFlags[task.id] === true,
         active: task?.status !== 'paused',
       };
       return draft;
@@ -1724,7 +1706,6 @@ window.__ModuleLoader__.load({
 
       const [rows, setRows] = React.useState([]);
       const [autoClean, setAutoClean] = React.useState({});
-      const [trimFlags, setTrimFlags] = React.useState({});
       const [recordCounts, setRecordCounts] = React.useState({});
       const [loading, setLoading] = React.useState(true);
       const [loadError, setLoadError] = React.useState('');
@@ -1742,8 +1723,6 @@ window.__ModuleLoader__.load({
       const [cleanPending, setCleanPending] = React.useState(false);
       const [detailTab, setDetailTab] = React.useState('edit');
       const [records, setRecords] = React.useState([]);
-      const [recordHidden, setRecordHidden] = React.useState(0);
-      const [recordsBusy, setRecordsBusy] = React.useState(false);
 
       const load = React.useCallback(async (signal) => {
         const result = await automationCall('catalog');
@@ -1755,7 +1734,6 @@ window.__ModuleLoader__.load({
         }
         setRows(Array.isArray(result.value?.tasks) ? result.value.tasks : []);
         setAutoClean(result.value?.autoClean ?? {});
-        setTrimFlags(result.value?.trimAfterRun ?? {});
         setRecordCounts(result.value?.records ?? {});
         setLoadError('');
         setLoading(false);
@@ -1814,17 +1792,15 @@ window.__ModuleLoader__.load({
         setDraft(draftOf(null));
         setDetailTab('edit');
         setRecords([]);
-        setRecordHidden(0);
         setDraftError('');
         setNotice('');
         setActionError('');
       };
 
       const openEdit = (task) => {
-        setDraft(draftOf(task, autoClean, trimFlags));
+        setDraft(draftOf(task, autoClean));
         setDetailTab('edit');
         setRecords([]);
-        setRecordHidden(0);
         setDraftError('');
         setActionError('');
         if (typeof task?.id === 'string' && task.id.length > 0) void loadRecords(task.id);
@@ -1835,7 +1811,6 @@ window.__ModuleLoader__.load({
         setDetailTab('edit');
         setDraftError('');
         setRecords([]);
-        setRecordHidden(0);
       };
 
       const updateDraft = (patch) => setDraft((current) => (current === null ? current : { ...current, ...patch }));
@@ -1895,16 +1870,6 @@ window.__ModuleLoader__.load({
             else delete next[savedId];
             return next;
           });
-          const trim = draft.trim === true;
-          const trimmed = await automationCall('trim', { id: savedId, trimAfterRun: trim });
-          if (trimmed.ok) {
-            setTrimFlags((current) => {
-              const next = { ...current };
-              if (trim) next[savedId] = true;
-              else delete next[savedId];
-              return next;
-            });
-          }
         }
         setNotice(tr('auto.saved'));
         setDraft(null);
@@ -2011,24 +1976,6 @@ window.__ModuleLoader__.load({
         const result = await automationCall('history', { id });
         if (!result.ok) return;
         setRecords(Array.isArray(result.value?.records) ? result.value.records : []);
-        setRecordHidden(result.value?.hidden ?? 0);
-      };
-
-      const applyRecords = (value) => {
-        setRecords(Array.isArray(value?.records) ? value.records : []);
-        setRecordHidden(value?.hidden ?? 0);
-      };
-
-      const deleteRecord = async (record) => {
-        if (draft === null || draft.id === '' || recordsBusy) return;
-        setRecordsBusy(true);
-        const result = await automationCall('hide', { id: draft.id, messageId: record.messageId });
-        setRecordsBusy(false);
-        if (!result.ok) {
-          setActionError(result.error);
-          return;
-        }
-        applyRecords(result.value);
       };
 
       const openBind = (tasks) => {
@@ -2211,29 +2158,23 @@ window.__ModuleLoader__.load({
               role: 'tab',
               className: 'ove-detail-tab',
               'aria-selected': detailTab === value,
-              onClick: () => setDetailTab(value),
+              onClick: () => {
+                setDetailTab(value);
+                // The list may have grown since the drawer opened, so refresh
+                // the receipts whenever the history tab is entered.
+                if (value === 'records' && draft.id !== '') void loadRecords(draft.id);
+              },
             }, label, count > 0 ? `（${count}）` : ''))),
         detailTab === 'records' && draft.id !== ''
           ? h('div', { className: 'ove-detail-body' },
             h('div', { className: 'ove-field ove-records' },
-              h('p', { className: 'ove-muted ove-records-tip' }, tr('auto.recordsTip')),
-              recordHidden > 0
-                ? h('p', { className: 'ove-muted' }, tr('auto.recordsHidden').replace('{count}', String(recordHidden)))
-                : null,
               records.length === 0
                 ? h('p', { className: 'ove-muted ove-records-empty' }, tr('auto.recordsEmpty'))
                 : h('ul', { className: 'ove-record-list ove-record-list-tall' },
                   records.map((record) => h('li', { key: record.messageId, className: 'ove-record' },
-                    h('span', { className: 'ove-record-time' },
-                      formatInstant(record.deliveredAt)),
-                    h('button', {
-                      type: 'button',
-                      className: 'ove-record-del',
-                      title: tr('auto.recordDelete'),
-                      'aria-label': tr('auto.recordDelete'),
-                      disabled: recordsBusy,
-                      onClick: () => void deleteRecord(record),
-                    }, '×'))))))
+                    h('span', { className: 'ove-record-time' }, formatInstant(record.deliveredAt)),
+                    h('span', { className: 'ove-record-target' },
+                      record.targetSessionId ? sessionTitle(record.targetSessionId) : ''))))))
           : h('div', { className: 'ove-detail-body' },
           h('label', { className: 'ove-field' },
             h('span', { className: 'ove-label' }, tr('auto.name')),
@@ -2379,16 +2320,7 @@ window.__ModuleLoader__.load({
                 onChange: () => updateDraft({ autoClean: !draft.autoClean }),
               }),
               h('span', { className: 'ove-label' }, tr('auto.clean')),
-              oneShot ? null : h('span', { className: 'ove-muted' }, tr('auto.cleanOnceOnly'))),
-            h('label', { className: 'ove-check-row' },
-              h('input', {
-                type: 'checkbox',
-                className: 'ove-auto-check',
-                checked: draft.trim === true,
-                onChange: () => updateDraft({ trim: draft.trim !== true }),
-              }),
-              h('span', { className: 'ove-label' }, tr('auto.trim')),
-              h('span', { className: 'ove-muted' }, tr('auto.trimHint')))),
+              oneShot ? null : h('span', { className: 'ove-muted' }, tr('auto.cleanOnceOnly')))),
           panelTask !== null
             ? h('div', { className: 'ove-detail-actions-row' },
               h('button', {
@@ -2561,7 +2493,7 @@ window.__ModuleLoader__.load({
                     const delivered = typeof deliveredAt === 'string' && deliveredAt.length > 0
                       ? `${tr('auto.lastDelivery')}：${formatInstant(deliveredAt)}`
                       : '';
-                    const runs = recordCounts[task.id]?.visible ?? 0;
+                    const runs = recordCounts[task.id] ?? 0;
                     const runsText = runs > 0 ? `${tr('auto.records')}：${runs}` : '';
                     return [head, when, delivered, runsText].filter((part) => part.length > 0).join(' · ');
                   })())),

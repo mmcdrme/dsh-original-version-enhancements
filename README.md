@@ -62,10 +62,7 @@ v1.5.21（MIT），详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
   新建默认「按分钟、每 30 分钟」；「重复」勾选框只在「按分钟」下出现，默认不勾选——
   不勾选时该间隔就是一次性延迟（30 分钟后运行一次），勾选后才按分钟循环。
 - **运行历史记录**：编辑已有任务时，抽屉顶部有「编辑任务」和「运行历史记录」（带条数）两个页签，
-  运行记录按时间倒序列在第二个页签里，每条右侧 `×` 可单独删除（从本面板隐藏），
-  并显示本面板共隐藏了多少条。
-- **运行后删除本次运行记录**：「投递后自动清理」下方的开关，每次投递后自动隐去这一次的记录，
-  记录不会越积越多。
+  运行记录按时间倒序列在第二个页签里（时间 + 目标会话），**只读展示**，不提供删除或隐藏。
 - **自定义规则示例**：选择「自定义」时，RRULE 输入框下方给出三条可直接点选填入的示例
   （每周一三五、每两天、每月 1 号），避免手写 RRULE。
 - **立即投递**：行内与编辑抽屉都提供「立即投递」，调用宿主 `run` 立即把任务内容投递到
@@ -99,10 +96,8 @@ v1.5.21（MIT），详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 - `POST /plugins/original-version-enhancements/archives/search` — 归档内容搜索
 - `POST /plugins/original-version-enhancements/sessions/delete` — 永久删除
   （需要 `x-dsh-session-delete-confirmation: delete-session` 确认头与同源校验）
-- `POST /plugins/original-version-enhancements/automation/catalog` — 任务目录、自动清理/运行记录标记与记录条数
+- `POST /plugins/original-version-enhancements/automation/catalog` — 任务目录、自动清理标记与每个任务的记录条数
 - `POST /plugins/original-version-enhancements/automation/history` — 单个任务的运行记录
-- `POST /plugins/original-version-enhancements/automation/hide` — 隐藏一条或全部运行记录
-- `POST /plugins/original-version-enhancements/automation/trim` — 设置/清除“运行后删除本次记录”
 - `POST /plugins/original-version-enhancements/automation/create` — 新建任务
 - `POST /plugins/original-version-enhancements/automation/update` — 修改任务（标题 / 内容 / 规则 / 目标 / 启停）
 - `POST /plugins/original-version-enhancements/automation/run` — 立即投递
@@ -110,7 +105,7 @@ v1.5.21（MIT），详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 - `POST /plugins/original-version-enhancements/automation/delete` — 批量删除
 - `POST /plugins/original-version-enhancements/automation/bind` — 把任务复制到多个会话
 
-后十条需要 Host 的 `schedule` 服务；未挂载该服务的组合里它们不会注册。
+后八条需要 Host 的 `schedule` 服务；未挂载该服务的组合里它们不会注册。
 
 ## 安装 / Install
 
