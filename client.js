@@ -689,6 +689,12 @@ window.__ModuleLoader__.load({
         background: color-mix(in srgb, #ef4444 10%, transparent);
       }
       .ove-btn-danger-tint:hover:not(:disabled) { background: color-mix(in srgb, #ef4444 18%, transparent); }
+      .ove-btn-info {
+        color: #1d4ed8;
+        border-color: color-mix(in srgb, #3b82f6 55%, transparent);
+        background: color-mix(in srgb, #3b82f6 10%, transparent);
+      }
+      .ove-btn-info:hover:not(:disabled) { background: color-mix(in srgb, #3b82f6 18%, transparent); }
       .ove-repeat-row { display: flex; align-items: center; gap: 8px; }
       .ove-repeat-hint { font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-tertiary); }
       .ove-example { display: grid; gap: 6px; margin-top: -2px; }
@@ -814,7 +820,7 @@ window.__ModuleLoader__.load({
       .ove-menu-row:disabled { opacity: .5; cursor: default; }
 
       .ove-tabs { display: flex; gap: 2px; margin-bottom: 12px; flex-wrap: wrap; }
-      .ove-select-bar { display: flex; align-items: flex-start; padding: 2px 12px 6px; }
+      .ove-select-bar { display: flex; align-items: flex-start; padding: 0 12px 4px; }
       .ove-select-all { display: inline-flex; align-items: flex-start; gap: 12px; font-size: 12px; line-height: 20px; color: var(--dsw-alias-label-tertiary); cursor: pointer; white-space: nowrap; }
       .ove-select-all > span { line-height: 24px; }
       .ove-tab-count { margin-left: 6px; font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
@@ -829,7 +835,7 @@ window.__ModuleLoader__.load({
       .ove-tab:hover { color: var(--dsw-alias-label-secondary); }
       .ove-tab[aria-selected="true"] { background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-label-primary); }
 
-      .ove-search-row { position: relative; margin-bottom: 12px; }
+      .ove-search-row { position: relative; margin-bottom: 8px; }
       .ove-search-input {
         box-sizing: border-box; width: 100%; height: 38px; padding: 0 12px 0 36px;
         border-radius: 10px; border: .5px solid var(--dsw-alias-border-l2);
@@ -840,19 +846,18 @@ window.__ModuleLoader__.load({
 
       /* One fixed-height strip: the selection bar, an error or a receipt share
          it, so acting on a task never changes the list's height. */
-      .ove-list-top { height: 30px; display: flex; align-items: center; overflow: hidden; }
-      /* Selection bar and receipts size to their content, not the full row. */
-      .ove-list-top > * { max-width: 100%; }
+      .ove-list-top { height: 28px; display: flex; align-items: center; overflow: hidden; }
+      /* Full width on the right; only the vertical space is kept minimal. */
+      .ove-list-top > * { width: 100%; max-width: 100%; }
       .ove-list-top .ove-notice, .ove-list-top .ove-error {
-        margin: 0; width: fit-content; max-width: 100%;
-        overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+        margin: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
       }
       .ove-bulk {
-        display: inline-flex; flex-wrap: nowrap; align-items: center; gap: 8px;
-        padding: 0 10px; height: 30px; max-width: 100%; box-sizing: border-box; border-radius: 9px;
+        display: flex; flex-wrap: nowrap; align-items: center; gap: 8px;
+        padding: 0 10px; height: 28px; box-sizing: border-box; border-radius: 8px;
         background: var(--dsw-alias-bg-layer-1); border: .5px solid var(--dsw-alias-border-l1);
       }
-      .ove-bulk-count { font-size: 12px; color: var(--dsw-alias-label-secondary); }
+      .ove-bulk-count { font-size: 12px; color: var(--dsw-alias-label-secondary); margin-right: auto; }
 
       .ove-task-list { display: grid; gap: 2px; }
       .ove-task { position: relative; display: flex; align-items: flex-start; gap: 12px; padding: 10px 12px; border-radius: 10px; cursor: pointer; }
@@ -2671,7 +2676,7 @@ window.__ModuleLoader__.load({
                     h('span', { className: 'ove-bulk-count' }, tr('auto.selected').replace('{count}', String(selectedRows.length))),
                     h('button', {
                       type: 'button',
-                      className: 'ove-btn',
+                      className: 'ove-btn ove-btn-info',
                       onClick: () => openBind(selectedRows),
                     }, tr('auto.bind')),
                     h('button', {
