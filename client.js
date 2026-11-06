@@ -1,11 +1,11 @@
 window.__ModuleLoader__.load({
-  id: '@local/dsh-work-steps-quick-switch',
+  id: '@local/dsh-original-version-addition',
   factory(require) {
     const React = require('react');
     const h = React.createElement;
 
     /** Locale namespace owned by this plugin. */
-    const NS = 'work-steps-quick-switch';
+    const NS = 'original-version-addition';
     /** Route prefix registered by the Host half. */
     const ROUTE_ROOT = '/plugins/original-version-enhancements';
     /** The four accepted work-details modes, in the same order as Settings. */
@@ -668,7 +668,7 @@ window.__ModuleLoader__.load({
       apply(ctx) {
         const text = (key) => ctx.locale.getSnapshot().active === 'zh' ? (zh[key] ?? key) : (en[key] ?? key);
 
-        ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'work-steps-quick-switch: dictionaries');
+        ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'original-version-addition: dictionaries');
 
         ctx.effect(() => ctx.slots.inject('settings.section', () => ctx.slots.register({
           name: 'settings.section',
@@ -676,13 +676,13 @@ window.__ModuleLoader__.load({
           order: 22,
           label: () => text('pageTitle'),
           inject: () => ({ t: (key) => text(key), ctx }),
-        }, PluginPage)), 'work-steps-quick-switch: plugin page');
+        }, PluginPage)), 'original-version-addition: plugin page');
 
         ctx.effect(() => ctx.configForms.whileServed(['ui-chat'], () => {
           const form = ctx.configForms.get('ui-chat');
           const register = (slot, order) => ctx.slots.inject(slot, () => ctx.slots.register({
             name: slot,
-            id: 'work-steps-quick-switch',
+            id: 'original-version-addition',
             order,
             locale: NS,
             inject: () => ({ form }),
@@ -694,7 +694,7 @@ window.__ModuleLoader__.load({
           return () => {
             for (const dispose of disposers) dispose();
           };
-        }), 'work-steps-quick-switch: workspace opener actions');
+        }), 'original-version-addition: workspace opener actions');
       },
     };
   },
