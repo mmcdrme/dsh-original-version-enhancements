@@ -350,6 +350,31 @@ const pathExists = async (path) => {
 }
 
 /**
+ * Stop and detach a session the Host still holds open, so its storage can be
+ * removed or moved. A session opened before the last plugin reload has no
+ * retained lifecycle handle; it is reported instead of pretending it unloaded.
+ * @param deps - sessions/agents services plus the retained lifecycle handles.
+ * @param sessionId - the session to stop.
+ * @returns undefined on success, or a tagged failure understood by the caller.
+ */
+export async function stopLoadedSession(deps, sessionId) {
+  if (deps.agents.get(sessionId) === undefined) return undefined
+  let disposed = false
+  if (typeof deps.agentHandles?.dispose === 'function') {
+    try {
+      disposed = await deps.agentHandles.dispose(sessionId)
+    } catch {
+      return failure('lifecycle-error', 'DSH 未能安全停止并摘载该会话，未删除任何内容。')
+    }
+  }
+  if (disposed) return undefined
+  return failure(
+    'lifecycle-unavailable',
+    '该会话仍被宿主加载，而插件没有它的生命周期句柄（通常是宿主上次重载插件之前就已打开的会话）。可以「强制删除」，或重启 DeepSeek Harness 后重试。',
+  )
+}
+
+/**
  * Permanently remove one unloaded JSONL session directory. A loaded Agent is
  * refused before any storage check; the caller must stop and archive it first.
  * @param deps - sessions, agents and the JSONL persistence backend.
@@ -373,12 +398,20 @@ export async function deleteSessionSafely(deps, { sessionRoot, sessionId, force 
   }
 
   const ownership = { usesHandles, handle: undefined, force }
+  let result
   try {
-    return await deleteReservedSession(deps, { sessionRoot, sessionId }, ownership)
+    result = await deleteReservedSession(deps, { sessionRoot, sessionId }, ownership)
   } finally {
     try { await ownership.handle?.close() } catch { /* the lease is already gone */ }
     finally { releaseReservation?.() }
   }
+  // The transcript standing alone is not the whole record: the Workspace
+  // registry would keep listing its id (a ghost conversation) and the
+  // projection cache would keep its last title. Both are dropped here — after
+  // the storage lease is released, so a dispose-triggered checkpoint cannot
+  // resurrect the cache row — and never at the cost of reporting a failed delete.
+  if (result.ok) await purgeSessionAccounting(deps, sessionId)
+  return result
 }
 
 const UNLOAD_POLL_MS = 50
@@ -450,21 +483,9 @@ async function deleteReservedSession(deps, { sessionRoot, sessionId }, ownership
   // at all would become undeletable. The removal below locates the artifact
   // without a write lease and still validates the directory before quarantining.
 
-  if (!force && deps.agents.get(sessionId) !== undefined) {
-    let disposed = false
-    if (typeof deps.agentHandles?.dispose === 'function') {
-      try {
-        disposed = await deps.agentHandles.dispose(sessionId)
-      } catch {
-        return failure('lifecycle-error', 'DSH 未能安全停止并摘载该会话，未删除任何内容。')
-      }
-    }
-    if (!disposed) {
-      return failure(
-        'lifecycle-unavailable',
-        '该会话仍被宿主加载，而插件没有它的生命周期句柄（通常是宿主上次重载插件之前就已打开的会话）。可以「强制删除」，或重启 DeepSeek Harness 后重试。',
-      )
-    }
+  if (!force) {
+    const blocked = await stopLoadedSession(deps, sessionId)
+    if (blocked !== undefined) return blocked
   }
 
   // Registry teardown can trail the handle's own detach by a tick; wait for it
@@ -647,6 +668,167 @@ async function deleteReservedSession(deps, { sessionRoot, sessionId }, ownership
     if (quarantineRoot !== undefined) await rm(quarantineRoot, { recursive: true, force: true }).catch(() => undefined)
     if (missing(error)) return failure('session-not-found', '会话不存在或已经删除。')
     return failure('storage-error', '存储删除失败，未删除任何文件。')
+  }
+}
+
+/** Domain name of the persisted projection cache: one record per session id. */
+const PROJECTION_DOMAIN = 'session_projcache'
+const PROJECTION_TABLE = 'sessions'
+
+/**
+ * The live `sessions` table of the projection-cache domain: reached through the
+ * cache service itself when it exposes the table, and otherwise through the
+ * mounted storage domain. `delete`/`deleteMany` are the only way to drop a
+ * cached record, so the listing cannot keep serving a removed session's title.
+ * @param deps - the projection cache and storage domain services.
+ * @returns the table, or undefined when this composition uses another medium.
+ */
+export function projectionCacheTable(deps) {
+  const usable = table => table !== undefined
+    && typeof table.delete === 'function'
+    && typeof table.deleteMany === 'function'
+    && typeof table.keys === 'function'
+  const direct = deps.sessionProjectionCache?.table
+  if (usable(direct)) return direct
+  try {
+    const table = deps.storageDomain?.get?.(PROJECTION_DOMAIN)?.table?.(PROJECTION_TABLE)
+    if (usable(table)) return table
+  } catch { /* an unmounted domain leaves the cache untouched */ }
+  return undefined
+}
+
+/**
+ * Drop a removed session's durable accounting. The transcript is only half the
+ * record: the Workspace registry also accounts the id — which is exactly the
+ * "ghost conversation" that stays listed until a restart — the archive and pin
+ * sets may name it, and the projection cache holds its last title. This mirrors
+ * the manual cleanup that used to be necessary.
+ * Deliberately fail-soft: the transcript is already gone, so nothing here may
+ * turn a completed removal into an error.
+ * @param deps - the workspace registry, projection cache, and storage domain.
+ * @param sessionId - the session whose accounting is stale.
+ */
+export async function purgeSessionAccounting(deps, sessionId) {
+  const registry = deps.workspaceRegistry
+  if (registry !== undefined) {
+    try {
+      for (const workspace of registry.list()) {
+        try {
+          await workspace.detachSession(sessionId)
+        } catch { /* a failing write keeps the id for the startup reconciliation */ }
+      }
+    } catch { /* an unavailable registry is reconciled at the next start */ }
+    try { await registry.unarchiveSession(sessionId) } catch { /* not archived, or unavailable */ }
+    if (typeof registry.unpinSession === 'function') {
+      try { await registry.unpinSession(sessionId) } catch { /* not pinned, or unavailable */ }
+    }
+  }
+  const table = projectionCacheTable(deps)
+  if (table !== undefined) {
+    try { await table.delete(sessionId) } catch { /* the cache self-heals on its next write */ }
+  }
+}
+
+/**
+ * Freeze one source session for a move: the loaded Agent is stopped, the log is
+ * read through a write lease (proving its identity and excluding other writers),
+ * and the session directory is renamed out of the persistence root under the
+ * same quarantine protocol as deletion. Recreating the session under the SAME id
+ * afterwards therefore never exposes two logs for one id to the backend.
+ * @param deps - sessions/agents/persistence hooks, optionally with moveDirectory.
+ * @param request - the persistence root, the session id, and the header the caller read.
+ * @returns the frozen header and events plus restore/discard handles, or a failure.
+ */
+export async function quarantineSessionForMove(deps, { sessionRoot, sessionId, expectedHeader }) {
+  const persistence = deps.sessionPersistence
+  const blocked = await stopLoadedSession(deps, sessionId)
+  if (blocked !== undefined) {
+    if (blocked.error?.code === 'lifecycle-unavailable') {
+      return failure('lifecycle-unavailable', '该会话仍被宿主加载，请重启 DeepSeek Harness 后再移动，未做任何改动。')
+    }
+    return blocked
+  }
+  if (!await waitForUnload(deps, sessionId, deps.unloadTimeoutMs ?? 4000)) {
+    return failure('lifecycle-unavailable', '宿主没有在限期内完整摘载该会话，未做任何改动。请稍后重试。')
+  }
+
+  const moveDirectory = deps.moveDirectory ?? rename
+  let handle
+  let detached = false
+  let quarantineRoot
+  let quarantined
+  let validated
+  let header
+  let events
+
+  try {
+    handle = await persistence.open(sessionId, 'write')
+    header = handle.header
+    if (expectedHeader !== undefined && !sameHeader(header, expectedHeader)) {
+      return failure('unsafe-location', '会话在摘载期间发生了身份变化，未做任何改动。')
+    }
+    const read = await handle.read()
+    events = Array.isArray(read?.events) ? read.events : []
+    const paths = locationPaths(sessionRoot, {
+      kind: 'jsonl',
+      path: await persistence.resolveCurrentLog(sessionId),
+    })
+    if (paths === undefined) return failure('unsafe-location', '无法验证该会话的独立 JSONL 存储位置。')
+    validated = await validateExistingLocation(paths)
+    if (validated === undefined) return failure('unsafe-location', '会话存储位置未通过安全校验，未做任何改动。')
+
+    // Release the write lease (and drain anything it still holds) BEFORE the
+    // directory moves, so no queued write can land on a renamed-away path.
+    await handle.close()
+    handle = undefined
+
+    quarantineRoot = await mkdtemp(join(dirname(validated.root), '.dsh-session-move-'))
+    quarantined = join(quarantineRoot, basename(validated.resolvedDirectory))
+    await moveDirectory(validated.resolvedDirectory, quarantined)
+    detached = true
+    const after = await lstat(quarantined, { bigint: true })
+    if (!after.isDirectory() || after.isSymbolicLink()) {
+      await moveDirectory(quarantined, validated.resolvedDirectory)
+      detached = false
+      return failure('unsafe-location', '会话目录在移动期间发生了身份变化，未做任何改动。')
+    }
+  } catch (error) {
+    if (detached && quarantined !== undefined && validated !== undefined) {
+      try {
+        await moveDirectory(quarantined, validated.resolvedDirectory)
+        detached = false
+      } catch { /* the returned quarantine path lets the user recover the log */ }
+    }
+    if (missing(error)) return failure('session-not-found', '会话不存在或已经删除。')
+    return failure('storage-state-unknown', '无法读取该会话的存储，未做任何改动。')
+  } finally {
+    try { await handle?.close() } catch { /* releasing the lease is best-effort here */ }
+    if (quarantineRoot !== undefined && !detached) {
+      await rm(quarantineRoot, { recursive: true, force: true }).catch(() => undefined)
+    }
+  }
+
+  return {
+    ok: true,
+    value: {
+      header,
+      events,
+      quarantine: {
+        directory: quarantined,
+        restore: async () => {
+          if (!detached) return
+          await moveDirectory(quarantined, validated.resolvedDirectory)
+          detached = false
+          await rm(quarantineRoot, { recursive: true, force: true }).catch(() => undefined)
+        },
+        discard: async () => {
+          if (!detached) return
+          await rm(quarantined, { recursive: true, force: false })
+          detached = false
+          await rm(quarantineRoot, { recursive: true, force: true }).catch(() => undefined)
+        },
+      },
+    },
   }
 }
 

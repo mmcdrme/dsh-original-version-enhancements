@@ -372,3 +372,84 @@ test('a listed session whose log disappeared is removable', async () => {
   await assert.rejects(stat(sessionDirectory), error => error.code === 'ENOENT')
   await rm(root, { recursive: true, force: true })
 })
+
+/** A Workspace entity that records the accounting writes the deletion performs. */
+const makeWorkspace = () => {
+  const calls = []
+  return {
+    calls,
+    id: 'ws-1',
+    path: 'C:/work/project',
+    async detachSession(sessionId) { calls.push(['detach', sessionId]) },
+  }
+}
+
+/** The projection-cache table surface the deletion clears one record through. */
+const makeProjectionTable = () => {
+  const deleted = []
+  return {
+    deleted,
+    async delete(sessionId) { deleted.push(sessionId) },
+    async deleteMany() { return 0 },
+    keys: () => [][Symbol.iterator](),
+  }
+}
+
+test('a deletion drops the workspace accounting and cached projection', async () => {
+  const { root, transcript } = await makeSession()
+  const host = makeHost()
+  const persistence = makePersistence({ transcript })
+  const workspace = makeWorkspace()
+  const table = makeProjectionTable()
+  const registryCalls = []
+  const registry = {
+    list: () => [workspace],
+    unarchiveSession: async (id) => { registryCalls.push(['unarchive', id]) },
+    unpinSession: async (id) => { registryCalls.push(['unpin', id]) },
+  }
+
+  const result = await deleteSessionSafely({
+    ...depsFor(host, persistence),
+    workspaceRegistry: registry,
+    sessionProjectionCache: { table },
+  }, {
+    sessionRoot: root,
+    sessionId: SESSION_ID,
+  })
+
+  assert.equal(result.ok, true, JSON.stringify(result))
+  // No id the registry still accounts may outlive its transcript, otherwise the
+  // sidebar keeps a ghost conversation that cannot open.
+  assert.deepEqual(workspace.calls, [['detach', SESSION_ID]])
+  assert.deepEqual(registryCalls, [['unarchive', SESSION_ID], ['unpin', SESSION_ID]])
+  assert.deepEqual(table.deleted, [SESSION_ID])
+  await rm(root, { recursive: true, force: true })
+})
+
+test('a refused deletion leaves the workspace accounting untouched', async () => {
+  const { root, sessionDirectory } = await makeSession()
+  const host = makeHost()
+  host.live()
+  const workspace = makeWorkspace()
+  const table = makeProjectionTable()
+  const registry = {
+    list: () => [workspace],
+    unarchiveSession: async () => {},
+    unpinSession: async () => {},
+  }
+
+  const result = await deleteSessionSafely({
+    ...depsFor(host, makePersistence({ transcript: join(sessionDirectory, 'session.jsonl') })),
+    workspaceRegistry: registry,
+    sessionProjectionCache: { table },
+  }, {
+    sessionRoot: root,
+    sessionId: SESSION_ID,
+  })
+
+  assert.equal(result.ok, false)
+  assert.equal(result.error.code, 'lifecycle-unavailable')
+  assert.deepEqual(workspace.calls, [])
+  assert.deepEqual(table.deleted, [])
+  await rm(root, { recursive: true, force: true })
+})

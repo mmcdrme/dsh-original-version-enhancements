@@ -7,6 +7,8 @@ import {
   deleteSessionSafely,
   hostRequestFence,
   installAgentHandleTracker,
+  projectionCacheTable,
+  purgeSessionAccounting,
 } from './host/delete-session.mjs'
 import {
   createArchiveSearchHandler,
@@ -112,40 +114,82 @@ export function apply(ctx) {
     return
   }
 
-  // Drop archive markers whose session storage no longer exists, including
-  // ids removed before this reconciliation shipped.
+  // Drop accounting whose session storage no longer exists, including ids
+  // removed before this reconciliation shipped. The transcript is the truth: an
+  // id without a stored log can never reopen, so leaving it in the Workspace
+  // registry (or the projection cache) is exactly the ghost conversation this
+  // cleanup exists to prevent. Both halves mirror the manual cleanup that used
+  // to be necessary after a plugin deletion.
+  const projectionCache = optional(ctx, 'sessionProjectionCache')
+  const storageDomain = optional(ctx, 'storageDomain')
+  const accounting = { workspaceRegistry: ctx.workspaceRegistry, sessionProjectionCache: projectionCache, storageDomain }
+
   ctx.effect(() => {
     let cancelled = false
     const reconcile = async () => {
       const registry = ctx.workspaceRegistry
-      const ids = Array.isArray(registry?.archivedSessionIds) ? [...registry.archivedSessionIds] : []
-      for (const id of ids) {
+      if (registry === undefined) return
+      let known
+      try {
+        // One corpus listing answers every question below; never reconcile
+        // against a corpus that could not be read.
+        known = new Set((await persistence.list()).map(item => String(item?.header?.id ?? item?.id ?? '')))
+      } catch {
+        return
+      }
+      const drop = async (id) => {
         if (cancelled) return
+        await purgeSessionAccounting(accounting, id)
+      }
+      const archived = Array.isArray(registry.archivedSessionIds) ? [...registry.archivedSessionIds] : []
+      for (const id of archived) if (!known.has(String(id))) await drop(id)
+      // Iterate the DURABLE records, not `workspace.sessionIds`: the getter
+      // already filters out ids whose header index no longer matches, so the
+      // ghosts this cleanup targets are invisible there and would survive
+      // forever. The raw table is the only complete accounting.
+      const recorded = []
+      try {
+        if (typeof registry.requireTable === 'function') {
+          for (const [workspaceId, record] of registry.requireTable().entries()) recorded.push([workspaceId, record])
+        }
+      } catch { /* an unavailable table is retried on the next start */ }
+      if (recorded.length === 0) {
         try {
-          if (await persistence.stat(id) === undefined) await registry.unarchiveSession(id)
-        } catch { /* an unreadable marker is left for a later run */ }
+          for (const workspace of registry.list()) {
+            recorded.push([workspace.id, { path: workspace.path, sessionIds: workspace.sessionIds }])
+          }
+        } catch { /* an unavailable registry is retried on the next start */ }
+      }
+      for (const [, record] of recorded) {
+        for (const id of [...(record?.sessionIds ?? [])]) {
+          if (!known.has(String(id))) await drop(id)
+        }
+      }
+      const table = projectionCacheTable({ sessionProjectionCache: projectionCache, storageDomain })
+      if (table !== undefined) {
+        try {
+          const stale = []
+          for (const id of table.keys()) if (!known.has(String(id))) stale.push(id)
+          if (stale.length > 0) await table.deleteMany(stale)
+        } catch { /* the cache self-heals on its next write */ }
       }
     }
     reconcile().catch(() => undefined)
     return () => { cancelled = true }
-  }, 'original-version-enhancements: archive marker reconciliation')
+  }, 'original-version-enhancements: session accounting reconciliation')
 
   const deleteHandler = createDeleteRequestHandler({
     isTrustedRequest,
     deleteSession: async (sessionId, options) => {
-      const result = await deleteSessionSafely({
+      // deletion drops the session's Workspace accounting and projection-cache
+      // record itself, so no ghost conversation survives the removed transcript.
+      return await deleteSessionSafely({
+        ...accounting,
         sessions: ctx.sessions,
         agents: ctx.agents,
         agentHandles,
         sessionPersistence: persistence,
       }, { sessionRoot, sessionId, force: options?.force === true })
-      if (result.ok) {
-        // Keep the archive registry free of ids whose storage was removed.
-        try {
-          await ctx.workspaceRegistry.unarchiveSession(sessionId)
-        } catch { /* the caller still gets the deletion result */ }
-      }
-      return result
     },
   })
 
@@ -159,15 +203,14 @@ export function apply(ctx) {
   )
 
   // Moving or copying one session into another workspace. A session belongs to
-  // the workspace owning its recorded directory, so the transfer materialises
-  // an independent copy of its log inside the target directory and then files
-  // that copy; `move` additionally removes the original.
+  // the workspace owning its recorded directory: `copy` materialises an
+  // independent session inside the target directory, while `move` recreates the
+  // very same session id there, so the conversation keeps its identity.
   const transferHandler = createTransferRequestHandler({
     isTrustedRequest,
     transfer: request => transferSession({
-      workspaceRegistry: ctx.workspaceRegistry,
+      ...accounting,
       sessionPersistence: persistence,
-      sessionProjectionCache: optional(ctx, 'sessionProjectionCache'),
       sessions: ctx.sessions,
       agents: ctx.agents,
       agentHandles,

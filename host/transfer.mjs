@@ -9,7 +9,7 @@
 
 import { randomUUID } from 'node:crypto'
 import { realpath, stat } from 'node:fs/promises'
-import { deleteSessionSafely } from './delete-session.mjs'
+import { deleteSessionSafely, quarantineSessionForMove } from './delete-session.mjs'
 
 const MAX_REQUEST_BYTES = 8 * 1024
 /** Request header that must accompany every transfer; a link or form cannot set it. */
@@ -180,8 +180,8 @@ const resolveWorkspace = async (registry, id) => {
 }
 
 /**
- * Copy one Session into another Workspace, and for `move` also remove the
- * original once the copy is filed.
+ * Copy one Session into another Workspace, or move it there while keeping its
+ * session identity.
  * @param deps - Workspace registry, session persistence, and the deletion dependencies.
  * @param request - source Session, target Workspace, and `copy` or `move`.
  * @returns a tagged result understood by the session menu.
@@ -233,6 +233,10 @@ export async function transferSession(deps, request) {
     return failure('same-workspace', '该会话已经在这个工作区中。')
   }
 
+  if (mode === 'move') {
+    return await moveSession(deps, { sessionId, header, target })
+  }
+
   const copyId = `session-${randomUUID()}`
   const copyMeta = copyHeader(header, copyId, target.path)
   let created = false
@@ -251,40 +255,138 @@ export async function transferSession(deps, request) {
     return failure('copy-failed', `复制出的会话无法归入目标工作区：${String(error?.message ?? error)}`)
   }
 
-  if (mode === 'copy') return { ok: true, value: { sessionId: copyId, workspaceId: target.id, mode } }
-
-  const removal = await deleteSessionSafely({
-    sessions: deps.sessions,
-    agents: deps.agents,
-    agentHandles: deps.agentHandles,
-    sessionPersistence,
-  }, { sessionRoot: deps.sessionRoot, sessionId, force: false })
-
-  if (!removal.ok) {
-    return failure(
-      'move-source-kept',
-      `已复制到目标工作区，但原会话未能删除：${removal.error.message}`,
-      { copyId },
-    )
-  }
-  try { await workspaceRegistry.unarchiveSession(sessionId) } catch { /* the copy already exists */ }
   return { ok: true, value: { sessionId: copyId, workspaceId: target.id, mode } }
+}
+
+/**
+ * Header for a moved Session: the SAME identity (id, creation time, lineage),
+ * with only the workspace-bearing `cwd` replaced. Keeping the id is what makes
+ * a move invisible to everything that names the conversation — links, an open
+ * view, automation bindings — instead of turning it into a different session.
+ * @param header - the source Session header.
+ * @param cwd - the target Workspace path.
+ * @returns a header the persistence backend accepts under the same session id.
+ */
+const moveHeader = (header, cwd) => ({ ...header, cwd })
+
+/**
+ * Refresh the Workspace registry's header index for one moved session. The
+ * registry caches each header and its canonical cwd at startup, so without this
+ * the target workspace would still validate the old cwd and refuse to file it.
+ * @param registry - the Workspace registry service.
+ * @param header - the moved session's new header.
+ * @returns whether the Host accepted the refreshed identity.
+ */
+const reindexMovedSession = async (registry, header) => {
+  if (registry === undefined || typeof registry.indexHeader !== 'function') return false
+  try {
+    await registry.indexHeader(header)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Move one Session into another Workspace while preserving its session id. The
+ * source log is quarantined out of the persistence root first, so the recreated
+ * log under the target directory can carry the same id without presenting a
+ * duplicate id to the backend; every event and the session identity are carried
+ * over unchanged.
+ * @param deps - Workspace registry, persistence, projection cache, lifecycle hooks.
+ * @param request - the session, its source header, and the target workspace.
+ * @returns a tagged result understood by the session menu.
+ */
+const moveSession = async (deps, { sessionId, header, target }) => {
+  const { workspaceRegistry } = deps
+  if (typeof workspaceRegistry.indexHeader !== 'function') {
+    return failure('move-unsupported', '当前宿主不允许刷新会话的工作区归属，未做任何改动。')
+  }
+  const sourcePath = typeof header?.cwd === 'string' ? await canonicalOrSelf(header.cwd) : ''
+  const sourceWorkspace = sourcePath.length > 0
+    ? await resolveWorkspace(workspaceRegistry, sourcePath)
+    : undefined
+
+  const prepared = await quarantineSessionForMove(deps, {
+    sessionRoot: deps.sessionRoot,
+    sessionId,
+    expectedHeader: header,
+  })
+  if (prepared.ok !== true) return prepared
+
+  const { header: liveHeader, events, quarantine } = prepared.value
+  if (hasOpenTurn(events)) {
+    // The log changed between the preflight read and the write lease (an
+    // auto-wake started a turn), so put everything back instead of moving a
+    // half-finished conversation.
+    try {
+      await quarantine.restore()
+    } catch {
+      return failure('move-partial', `原会话目录未能自动还原（暂存于 ${quarantine.directory}）。`)
+    }
+    return failure('session-running', '会话还有未结束的回合，请等它结束后再操作。')
+  }
+  const movedMeta = moveHeader(liveHeader, target.path)
+  let created = false
+  try {
+    created = await materializeCopy(deps, movedMeta, events)
+    if (!await reindexMovedSession(workspaceRegistry, movedMeta)) {
+      throw new Error('宿主没有接受更新后的会话归属信息')
+    }
+    await target.attachSession(sessionId)
+  } catch (error) {
+    // Undo in the only order that never leaves two logs for one id: remove the
+    // recreated log first, and only then put the quarantined original back.
+    const removed = created ? await removeCopy(deps, sessionId) : true
+    if (!removed) {
+      return failure(
+        'move-partial',
+        `移动失败，且临时会话未能清理；原会话目录暂存于 ${quarantine.directory}，请重启后再清理。`,
+      )
+    }
+    try {
+      await quarantine.restore()
+    } catch {
+      return failure(
+        'move-partial',
+        `移动失败，且原会话目录未能自动还原（暂存于 ${quarantine.directory}）。`,
+      )
+    }
+    return failure('move-failed', `移动会话失败：${String(error?.message ?? error)}`)
+  }
+
+  // The session now belongs to the target: drop the source accounting so the old
+  // workspace cannot keep listing it, then remove the quarantined original.
+  try { await sourceWorkspace?.detachSession?.(sessionId) } catch { /* startup reconciliation removes it */ }
+  try { await workspaceRegistry.unarchiveSession(sessionId) } catch { /* not archived */ }
+  if (typeof workspaceRegistry.unpinSession === 'function') {
+    try { await workspaceRegistry.unpinSession(sessionId) } catch { /* not pinned */ }
+  }
+  let warning
+  try {
+    await quarantine.discard()
+  } catch (error) {
+    warning = String(error?.message ?? error)
+  }
+  return { ok: true, value: { sessionId, workspaceId: target.id, mode: 'move', ...(warning === undefined ? {} : { warning }) } }
 }
 
 /**
  * Drop a copy whose filing failed, so a failed transfer leaves no orphan log.
  * @param deps - the deletion dependencies.
  * @param sessionId - the copy to remove.
+ * @returns whether the copy is gone.
  */
 const removeCopy = async (deps, sessionId) => {
   try {
-    await deleteSessionSafely({
-      sessions: deps.sessions,
-      agents: deps.agents,
-      agentHandles: deps.agentHandles,
+    const result = await deleteSessionSafely({
+      ...deps,
       sessionPersistence: deps.sessionPersistence,
     }, { sessionRoot: deps.sessionRoot, sessionId, force: true })
-  } catch { /* the caller still reports the original failure */ }
+    return result.ok === true
+  } catch {
+    return false
+  }
 }
 
 /**
