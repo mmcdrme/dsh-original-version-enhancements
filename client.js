@@ -683,6 +683,12 @@ window.__ModuleLoader__.load({
         background: color-mix(in srgb, #22c55e 12%, transparent);
       }
       .ove-btn-ok:hover:not(:disabled) { background: color-mix(in srgb, #22c55e 22%, transparent); }
+      .ove-btn-danger-tint {
+        color: var(--dsw-alias-state-error-primary);
+        border-color: color-mix(in srgb, #ef4444 55%, transparent);
+        background: color-mix(in srgb, #ef4444 10%, transparent);
+      }
+      .ove-btn-danger-tint:hover:not(:disabled) { background: color-mix(in srgb, #ef4444 18%, transparent); }
       .ove-repeat-row { display: flex; align-items: center; gap: 8px; }
       .ove-repeat-hint { font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-tertiary); }
       .ove-example { display: grid; gap: 6px; margin-top: -2px; }
@@ -832,7 +838,7 @@ window.__ModuleLoader__.load({
       .ove-search-input:focus { outline: 2px solid var(--dsw-alias-brand-primary, #4f7cff); outline-offset: -1px; }
       .ove-search-icon { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: var(--dsw-alias-label-tertiary); display: flex; pointer-events: none; }
 
-      .ove-list-top { min-height: 44px; display: flex; flex-direction: column; gap: 6px; margin-bottom: 4px; }
+      .ove-list-top { min-height: 18px; display: flex; flex-direction: column; gap: 6px; }
       .ove-bulk {
         display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
         padding: 6px 12px; border-radius: 10px; background: var(--dsw-alias-bg-layer-1);
@@ -848,6 +854,10 @@ window.__ModuleLoader__.load({
       .ove-task-icon { color: var(--dsw-alias-label-tertiary); margin-top: 2px; display: flex; flex: none; }
       .ove-task-body { flex: 1 1 auto; min-width: 0; display: grid; gap: 2px; }
       .ove-task-title { font-size: 15px; line-height: 24px; overflow-wrap: anywhere; }
+      .ove-task-context { font-weight: 700; }
+      .ove-task-context-workspace { font-weight: 800; color: var(--dsw-alias-label-primary, #111827); }
+      .ove-task-context-session { font-weight: 800; color: #2563eb; }
+      .ove-task-context-sep { font-weight: 800; color: var(--dsw-alias-label-secondary); }
       .ove-task-meta { font-size: 13px; line-height: 20px; color: var(--dsw-alias-label-tertiary); overflow-wrap: anywhere; }
       .ove-task-hover { display: flex; align-items: center; gap: 8px; opacity: 0; transition: opacity .12s; flex: none; }
       /* Only real pointer hover reveals the row actions: a focused checkbox used
@@ -864,7 +874,7 @@ window.__ModuleLoader__.load({
       .ove-hover-ok { color: #15803d; }
       .ove-hover-ok:hover { background: color-mix(in srgb, #22c55e 18%, transparent); color: #166534; }
       .ove-hover-danger { color: var(--dsw-alias-state-error-primary); }
-      .ove-hover-danger:hover { background: color-mix(in srgb, #ef4444 16%, transparent); }
+      .ove-hover-danger:hover { background: color-mix(in srgb, #ef4444 16%, transparent); color: var(--dsw-alias-state-error-primary); }
       .ove-auto-check { width: 14px; height: 14px; accent-color: var(--dsw-alias-brand-primary, #4f7cff); cursor: pointer; }
 
       .ove-empty { display: grid; justify-items: center; gap: 14px; padding: 64px 0 48px; text-align: center; }
@@ -2236,6 +2246,34 @@ window.__ModuleLoader__.load({
           .filter((item) => item.path.length > 0);
       }, [workspaces]);
 
+      /**
+       * Workspace and conversation a task delivers into, for the row title.
+       * @param task - one automation row.
+       * @returns the display names, either possibly empty.
+       */
+      const taskContext = (task) => {
+        const sessionId = task?.target?.kind === 'session' ? task.target.sessionId : '';
+        const session = sessionId.length > 0 ? sessionTitle(sessionId) : '';
+        // A session target inherits the workspace that owns the conversation.
+        let workspace = '';
+        if (sessionId.length > 0) {
+          const items = Array.isArray(workspaces?.items) ? workspaces.items : [];
+          const owner = items.find((item) => Array.isArray(item.sessionIds) && item.sessionIds.includes(sessionId));
+          if (owner !== undefined) workspace = String(owner.title || owner.path || '');
+        }
+        const cwd = typeof task?.target?.cwd === 'string' ? task.target.cwd : '';
+        if (workspace.length === 0 && cwd.length > 0) {
+          const known = workspaceOptions.find((item) => item.path.toLowerCase() === cwd.toLowerCase());
+          workspace = known === undefined
+            ? (cwd.split(/[\\/]/).filter((part) => part.length > 0).pop() ?? '')
+            : known.title;
+        }
+        return {
+          workspace,
+          session: session === sessionId ? '' : session,
+        };
+      };
+
       const portal = (node) => (node !== null && node !== undefined
         && typeof ReactDOM?.createPortal === 'function'
         && typeof document !== 'undefined')
@@ -2498,7 +2536,7 @@ window.__ModuleLoader__.load({
             ? h('div', { className: 'ove-detail-actions-row' },
               h('button', {
                 type: 'button',
-                className: 'ove-btn',
+                className: 'ove-btn ove-btn-ok',
                 disabled: busy !== '',
                 onClick: () => void runNow(panelTask),
               }, busy === 'run' ? tr('auto.running') : tr('auto.run')),
@@ -2631,7 +2669,7 @@ window.__ModuleLoader__.load({
                     }, tr(tab === 'paused' ? 'auto.resumeSelected' : 'auto.pauseSelected')),
                     h('button', {
                       type: 'button',
-                      className: 'ove-btn ove-btn-danger',
+                      className: 'ove-btn ove-btn-danger-tint',
                       onClick: () => setConfirm({ ids: selectedRows.map((task) => task.id), title: '' }),
                     }, tr('auto.deleteSelected')),
                     h('button', {
@@ -2704,7 +2742,24 @@ window.__ModuleLoader__.load({
               }),
               h('span', { className: 'ove-task-icon' }, h(ClockMark, null)),
               h('div', { className: 'ove-task-body' },
-                h('div', { className: 'ove-task-title' }, task.title),
+                h('div', { className: 'ove-task-title' },
+                  task.title,
+                  (() => {
+                    const context = taskContext(task);
+                    if (context.workspace.length === 0 && context.session.length === 0) return null;
+                    return h('span', { className: 'ove-task-context' },
+                      '（',
+                      context.workspace.length > 0
+                        ? h('span', { className: 'ove-task-context-workspace' }, context.workspace)
+                        : null,
+                      context.workspace.length > 0 && context.session.length > 0
+                        ? h('span', { className: 'ove-task-context-sep' }, '/')
+                        : null,
+                      context.session.length > 0
+                        ? h('span', { className: 'ove-task-context-session' }, context.session)
+                        : null,
+                      '）');
+                  })()),
                 h('div', { className: 'ove-task-meta' },
                   (() => {
                     const head = task.status === 'active' ? recurrenceOf(task, tr) : statusText(task.status);
@@ -2723,7 +2778,7 @@ window.__ModuleLoader__.load({
               h('div', { className: 'ove-task-hover' },
                 h('button', {
                   type: 'button',
-                  className: 'ove-hover-btn',
+                  className: 'ove-hover-btn ove-hover-ok',
                   title: tr('auto.run'),
                   disabled: busy !== '',
                   onClick: (event) => {
