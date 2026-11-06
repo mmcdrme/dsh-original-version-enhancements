@@ -263,21 +263,18 @@ async function receiptsOf(service, state, id) {
 }
 
 /**
- * Hide one receipt (or every receipt so far) of a task in this panel.
+ * Hide one receipt of a task in this panel.
  * @param deps - service access and sidecar state.
- * @param request - `{id, messageId?}` or `{id, all:true}`.
- * @returns the remaining visible count.
+ * @param request - `{id, messageId}`.
+ * @returns the remaining visible records.
  */
 async function hideRecords(deps, request) {
   const { service, state, save } = deps
-  const entry = state.hidden[request.id] ?? {}
-  if (request.all === true) {
-    entry.before = new Date().toISOString()
-  } else if (typeof request.messageId === 'string' && request.messageId.length > 0) {
-    entry.ids = [...new Set([...(entry.ids ?? []), request.messageId])]
-  } else {
+  if (typeof request.messageId !== 'string' || request.messageId.length === 0) {
     return { ok: false, error: { code: 'invalid-request', message: '缺少要删除的运行记录。' } }
   }
+  const entry = state.hidden[request.id] ?? {}
+  entry.ids = [...new Set([...(entry.ids ?? []), request.messageId])]
   state.hidden[request.id] = entry
   save()
   const page = await receiptsOf(service, state, request.id)
@@ -665,7 +662,6 @@ export function createAutomationSurface(options) {
     try {
       const result = await hideRecords(deps, {
         id: body.id,
-        all: body.all === true,
         messageId: typeof body.messageId === 'string' ? body.messageId : undefined,
       })
       sendJson(res, result.ok ? 200 : 400, result)
@@ -853,40 +849,6 @@ export function createAutomationSurface(options) {
     sendJson(res, 200, { ok: true, value: { deleted, failed } })
   }
 
-  const clear = async (req, res) => {
-    const body = await accept(req, res)
-    if (body === undefined) return
-    try {
-      const result = await service.deleteInactive()
-      const deleted = Number.isFinite(result?.deleted) ? result.deleted : 0
-      // Ended tasks are gone; every receipt still attached to a live task is
-      // hidden here, so "clear run records" really empties the list instead of
-      // leaving it untouched when no task had ended yet.
-      let records = 0
-      // One minute of slack: a receipt written while this loop runs must land
-      // behind the cut-off too.
-      const cutoff = new Date(Date.now() + 60_000).toISOString()
-      const tasks = await service.catalog()
-      const live = new Set(tasks.map(task => task.id))
-      for (const id of Object.keys(state.hidden)) {
-        if (!live.has(id)) delete state.hidden[id]
-      }
-      for (const task of tasks) {
-        const page = await receiptsOf(service, state, task.id)
-        if (page.records.length === 0) continue
-        records += page.records.length
-        state.hidden[task.id] = { ...(state.hidden[task.id] ?? {}), before: cutoff }
-      }
-      save()
-      sendJson(res, 200, { ok: true, value: { deleted, records } })
-      if (deleted > 0) void reconcile()
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      warn(`automation: clearing ended tasks failed: ${message}`)
-      sendJson(res, 503, failure('schedule-clear-failed', `清除运行记录失败：${message}`))
-    }
-  }
-
   const bind = async (req, res) => {
     const body = await accept(req, res)
     if (body === undefined) return
@@ -918,5 +880,5 @@ export function createAutomationSurface(options) {
     }
   }
 
-  return { handlers: { catalog, history, hide, trim, create, update, run, autoClean, remove, clear, bind }, reconcile }
+  return { handlers: { catalog, history, hide, trim, create, update, run, autoClean, remove, bind }, reconcile }
 }

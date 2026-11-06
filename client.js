@@ -280,7 +280,6 @@ window.__ModuleLoader__.load({
       'auto.repeatHint': '不勾选则 {n} 分钟后只运行一次',
       'auto.records': '运行记录',
       'auto.recordsEmpty': '暂无运行记录',
-      'auto.recordsClear': '清除全部',
       'auto.recordDelete': '删除这条记录',
       'auto.recordsHidden': '本面板已隐藏 {count} 条',
       'auto.trim': '运行后删除本次运行记录',
@@ -288,14 +287,12 @@ window.__ModuleLoader__.load({
       'auto.pauseSelected': '暂停所选',
       'auto.pausedMany': '已暂停 {count} 个任务',
       'auto.pauseNone': '所选任务都已暂停',
-      'auto.clear': '清除运行记录',
-      'auto.clearTitle': '清除运行记录？',
-      'auto.clearDesc': '所有任务的运行记录都会从面板中清除，已结束的任务一并删除；已开启或已暂停的任务、原会话与已排队消息不受影响。',
-      'auto.clearCount': '将清除 {count} 条运行记录',
-      'auto.clearConfirm': '清除',
-      'auto.clearing': '正在清除…',
-      'auto.cleared': '已清除 {count} 条运行记录',
-      'auto.clearEmpty': '没有可清除的运行记录',
+      'auto.resumeSelected': '恢复所选',
+      'auto.resumedMany': '已恢复 {count} 个任务',
+      'auto.resumeNone': '所选任务都在运行中',
+      'auto.tabEdit': '编辑任务',
+      'auto.tabRecords': '运行历史记录',
+      'auto.recordsTip': '每一次投递都会记一条，点右侧 × 可从面板删除该条记录。',
       'auto.ruleExample': '示例（点击填入）',
       'auto.ruleEx1': '每周一、三、五 09:00',
       'auto.ruleEx2': '每两天 09:00',
@@ -465,7 +462,6 @@ window.__ModuleLoader__.load({
       'auto.repeatHint': 'Leave unchecked to run once after {n} minutes',
       'auto.records': 'Run records',
       'auto.recordsEmpty': 'No run records yet',
-      'auto.recordsClear': 'Clear all',
       'auto.recordDelete': 'Delete this record',
       'auto.recordsHidden': '{count} hidden in this panel',
       'auto.trim': 'Delete this run record after delivery',
@@ -473,14 +469,12 @@ window.__ModuleLoader__.load({
       'auto.pauseSelected': 'Pause selected',
       'auto.pausedMany': 'Paused {count} tasks',
       'auto.pauseNone': 'Every selected task is already paused',
-      'auto.clear': 'Clear run records',
-      'auto.clearTitle': 'Clear run records?',
-      'auto.clearDesc': 'Every task keeps running, but its run records are cleared from this panel and ended tasks are deleted; conversations and queued messages stay untouched.',
-      'auto.clearCount': '{count} run records will be cleared',
-      'auto.clearConfirm': 'Clear',
-      'auto.clearing': 'Clearing…',
-      'auto.cleared': 'Cleared {count} run records',
-      'auto.clearEmpty': 'No run records to clear',
+      'auto.resumeSelected': 'Resume selected',
+      'auto.resumedMany': 'Resumed {count} tasks',
+      'auto.resumeNone': 'Every selected task is already running',
+      'auto.tabEdit': 'Edit task',
+      'auto.tabRecords': 'Run history',
+      'auto.recordsTip': 'Each delivery leaves one record; press × to hide that record in this panel.',
       'auto.ruleExample': 'Examples (click to fill)',
       'auto.ruleEx1': 'Every Monday, Wednesday and Friday at 09:00',
       'auto.ruleEx2': 'Every two days at 09:00',
@@ -665,6 +659,12 @@ window.__ModuleLoader__.load({
         background: color-mix(in srgb, #eab308 12%, transparent);
       }
       .ove-btn-warn:hover:not(:disabled) { background: color-mix(in srgb, #eab308 22%, transparent); }
+      .ove-btn-ok {
+        color: #15803d;
+        border-color: #22c55e;
+        background: color-mix(in srgb, #22c55e 12%, transparent);
+      }
+      .ove-btn-ok:hover:not(:disabled) { background: color-mix(in srgb, #22c55e 22%, transparent); }
       .ove-repeat-row { display: flex; align-items: center; gap: 8px; }
       .ove-repeat-hint { font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-tertiary); }
       .ove-example { display: grid; gap: 6px; margin-top: -2px; }
@@ -698,6 +698,8 @@ window.__ModuleLoader__.load({
         width: 22px; height: 22px; border-radius: 6px; cursor: pointer;
       }
       .ove-record-del:hover:not(:disabled) { background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-state-error-primary); }
+      .ove-records-tip { margin: 0; }
+      .ove-record-list-tall { max-height: none; }
       .ove-footnote { margin: 0; font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-tertiary); }
 
       .ove-menu-item {
@@ -849,6 +851,20 @@ window.__ModuleLoader__.load({
       .ove-detail-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 14px 16px 6px; }
       .ove-detail-actions { display: flex; align-items: center; gap: 6px; }
       .ove-detail-actions-row { display: flex; gap: 8px; padding-top: 4px; }
+      .ove-detail-tabs {
+        display: flex; gap: 4px; padding: 2px 16px 6px;
+        border-bottom: .5px solid var(--dsw-alias-border-l1);
+      }
+      .ove-detail-tab {
+        border: 0; background: transparent; font: inherit; font-size: 12px; line-height: 26px;
+        padding: 0 10px; border-radius: 8px 8px 0 0; cursor: pointer;
+        color: var(--dsw-alias-label-tertiary); border-bottom: 2px solid transparent;
+      }
+      .ove-detail-tab:hover { color: var(--dsw-alias-label-primary); background: var(--dsw-alias-bg-layer-1); }
+      .ove-detail-tab[aria-selected="true"] {
+        color: var(--dsw-alias-label-primary); font-weight: 500;
+        border-bottom-color: var(--dsw-alias-label-primary);
+      }
       .ove-primary-sm { height: 28px; padding: 0 12px; font-size: 12px; }
       .ove-detail-body { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 8px 16px 20px; display: grid; gap: 14px; align-content: start; }
       .ove-detail-foot {
@@ -1724,7 +1740,7 @@ window.__ModuleLoader__.load({
       const [bindTasks, setBindTasks] = React.useState([]);
       const [bindPicks, setBindPicks] = React.useState(() => new Set());
       const [cleanPending, setCleanPending] = React.useState(false);
-      const [clearConfirm, setClearConfirm] = React.useState(false);
+      const [detailTab, setDetailTab] = React.useState('edit');
       const [records, setRecords] = React.useState([]);
       const [recordHidden, setRecordHidden] = React.useState(0);
       const [recordsBusy, setRecordsBusy] = React.useState(false);
@@ -1796,6 +1812,7 @@ window.__ModuleLoader__.load({
 
       const openNew = () => {
         setDraft(draftOf(null));
+        setDetailTab('edit');
         setRecords([]);
         setRecordHidden(0);
         setDraftError('');
@@ -1805,6 +1822,7 @@ window.__ModuleLoader__.load({
 
       const openEdit = (task) => {
         setDraft(draftOf(task, autoClean, trimFlags));
+        setDetailTab('edit');
         setRecords([]);
         setRecordHidden(0);
         setDraftError('');
@@ -1814,6 +1832,7 @@ window.__ModuleLoader__.load({
 
       const closeDraft = () => {
         setDraft(null);
+        setDetailTab('edit');
         setDraftError('');
         setRecords([]);
         setRecordHidden(0);
@@ -1957,18 +1976,20 @@ window.__ModuleLoader__.load({
         }
       };
 
-      const pauseSelected = async () => {
+      const setSelectedActive = async (resume) => {
         if (busy !== '' || selectedRows.length === 0) return;
-        const running = selectedRows.filter((task) => task.status === 'active');
-        if (running.length === 0) {
-          setActionError(tr('auto.pauseNone'));
+        const targets = selectedRows.filter((task) => (resume
+          ? task.status === 'paused'
+          : task.status === 'active'));
+        if (targets.length === 0) {
+          setActionError(tr(resume ? 'auto.resumeNone' : 'auto.pauseNone'));
           return;
         }
-        setBusy('pause');
+        setBusy(resume ? 'resume' : 'pause');
         setActionError('');
         let failed = 0;
-        for (const task of running) {
-          const result = await automationCall('update', { id: task.id, active: false });
+        for (const task of targets) {
+          const result = await automationCall('update', { id: task.id, active: resume });
           if (!result.ok) {
             failed += 1;
             setActionError(result.error);
@@ -1976,31 +1997,14 @@ window.__ModuleLoader__.load({
         }
         setBusy('');
         if (failed === 0) {
-          setNotice(tr('auto.pausedMany').replace('{count}', String(running.length)));
+          setNotice(tr(resume ? 'auto.resumedMany' : 'auto.pausedMany').replace('{count}', String(targets.length)));
           setSelected(new Set());
         }
         await load();
       };
 
-      const clearRecords = async () => {
-        if (busy !== '') return;
-        setBusy('clear');
-        setActionError('');
-        const result = await automationCall('clear', {});
-        setBusy('');
-        setClearConfirm(false);
-        if (!result.ok) {
-          setActionError(result.error);
-          return;
-        }
-        const deleted = result.value?.deleted ?? 0;
-        const records = result.value?.records ?? 0;
-        setNotice(records > 0 || deleted > 0
-          ? tr('auto.cleared').replace('{count}', String(records))
-          : tr('auto.clearEmpty'));
-        setSelected(new Set());
-        await load();
-      };
+      const pauseSelected = () => setSelectedActive(false);
+      const resumeSelected = () => setSelectedActive(true);
 
       const loadRecords = async (id) => {
         if (typeof id !== 'string' || id.length === 0) return;
@@ -2025,19 +2029,6 @@ window.__ModuleLoader__.load({
           return;
         }
         applyRecords(result.value);
-      };
-
-      const clearTaskRecords = async () => {
-        if (draft === null || draft.id === '' || recordsBusy) return;
-        setRecordsBusy(true);
-        const result = await automationCall('hide', { id: draft.id, all: true });
-        setRecordsBusy(false);
-        if (!result.ok) {
-          setActionError(result.error);
-          return;
-        }
-        applyRecords(result.value);
-        setRecordCounts((current) => ({ ...current, [draft.id]: { visible: 0, hidden: 0, total: 0 } }));
       };
 
       const openBind = (tasks) => {
@@ -2174,7 +2165,6 @@ window.__ModuleLoader__.load({
         ? rows.find((task) => task.id === draft.id) ?? null
         : null;
       const oneShot = draft !== null && draft.kind === 'every' && draft.repeat !== true;
-      const visibleRecords = Object.values(recordCounts).reduce((total, entry) => total + (entry?.visible ?? 0), 0);
 
       const tabs = [
         ['active', tr('auto.tab.active'), 'ove-tone-active'],
@@ -2212,7 +2202,39 @@ window.__ModuleLoader__.load({
               'aria-label': tr('cancel'),
               onClick: closeDraft,
             }, '×'))),
-        h('div', { className: 'ove-detail-body' },
+        draft.id === ''
+          ? null
+          : h('div', { className: 'ove-detail-tabs', role: 'tablist' },
+            [['edit', tr('auto.tabEdit'), 0], ['records', tr('auto.tabRecords'), records.length]].map(([value, label, count]) => h('button', {
+              key: value,
+              type: 'button',
+              role: 'tab',
+              className: 'ove-detail-tab',
+              'aria-selected': detailTab === value,
+              onClick: () => setDetailTab(value),
+            }, label, count > 0 ? `（${count}）` : ''))),
+        detailTab === 'records' && draft.id !== ''
+          ? h('div', { className: 'ove-detail-body' },
+            h('div', { className: 'ove-field ove-records' },
+              h('p', { className: 'ove-muted ove-records-tip' }, tr('auto.recordsTip')),
+              recordHidden > 0
+                ? h('p', { className: 'ove-muted' }, tr('auto.recordsHidden').replace('{count}', String(recordHidden)))
+                : null,
+              records.length === 0
+                ? h('p', { className: 'ove-muted ove-records-empty' }, tr('auto.recordsEmpty'))
+                : h('ul', { className: 'ove-record-list ove-record-list-tall' },
+                  records.map((record) => h('li', { key: record.messageId, className: 'ove-record' },
+                    h('span', { className: 'ove-record-time' },
+                      formatInstant(record.deliveredAt)),
+                    h('button', {
+                      type: 'button',
+                      className: 'ove-record-del',
+                      title: tr('auto.recordDelete'),
+                      'aria-label': tr('auto.recordDelete'),
+                      disabled: recordsBusy,
+                      onClick: () => void deleteRecord(record),
+                    }, '×'))))))
+          : h('div', { className: 'ove-detail-body' },
           h('label', { className: 'ove-field' },
             h('span', { className: 'ove-label' }, tr('auto.name')),
             h('input', {
@@ -2367,35 +2389,6 @@ window.__ModuleLoader__.load({
               }),
               h('span', { className: 'ove-label' }, tr('auto.trim')),
               h('span', { className: 'ove-muted' }, tr('auto.trimHint')))),
-          draft.id !== ''
-            ? h('div', { className: 'ove-field ove-records' },
-              h('div', { className: 'ove-records-head' },
-                h('span', { className: 'ove-label' },
-                  `${tr('auto.records')}${records.length > 0 ? `（${records.length}）` : ''}`),
-                recordHidden > 0 ? h('span', { className: 'ove-muted' }, tr('auto.recordsHidden').replace('{count}', String(recordHidden))) : null,
-                records.length > 0
-                  ? h('button', {
-                    type: 'button',
-                    className: 'ove-link-btn',
-                    disabled: recordsBusy,
-                    onClick: () => void clearTaskRecords(),
-                  }, tr('auto.recordsClear'))
-                  : null),
-              records.length === 0
-                ? h('p', { className: 'ove-muted ove-records-empty' }, tr('auto.recordsEmpty'))
-                : h('ul', { className: 'ove-record-list' },
-                  records.map((record) => h('li', { key: record.messageId, className: 'ove-record' },
-                    h('span', { className: 'ove-record-time' },
-                      formatInstant(record.deliveredAt)),
-                    h('button', {
-                      type: 'button',
-                      className: 'ove-record-del',
-                      title: tr('auto.recordDelete'),
-                      'aria-label': tr('auto.recordDelete'),
-                      disabled: recordsBusy,
-                      onClick: () => void deleteRecord(record),
-                    }, '×')))))
-            : null,
           panelTask !== null
             ? h('div', { className: 'ove-detail-actions-row' },
               h('button', {
@@ -2427,13 +2420,6 @@ window.__ModuleLoader__.load({
               h('div', { className: 'ove-auto-heading' },
                 h('h1', { className: 'ove-auto-title-text' }, tr('auto.panel')),
                 h('div', { className: 'ove-head-actions' },
-                  h('button', {
-                    type: 'button',
-                    className: 'ove-btn',
-                    disabled: busy !== '',
-                    title: tr('auto.clearDesc'),
-                    onClick: () => setClearConfirm(true),
-                  }, tr('auto.clear')),
                   h('button', {
                     type: 'button',
                     className: 'ove-primary',
@@ -2484,10 +2470,10 @@ window.__ModuleLoader__.load({
                   }, tr('auto.bind')),
                   h('button', {
                     type: 'button',
-                    className: 'ove-btn ove-btn-warn',
+                    className: `ove-btn ${tab === 'paused' ? 'ove-btn-ok' : 'ove-btn-warn'}`,
                     disabled: busy !== '',
-                    onClick: () => void pauseSelected(),
-                  }, tr('auto.pauseSelected')),
+                    onClick: () => void (tab === 'paused' ? resumeSelected() : pauseSelected()),
+                  }, tr(tab === 'paused' ? 'auto.resumeSelected' : 'auto.pauseSelected')),
                   h('button', {
                     type: 'button',
                     className: 'ove-btn ove-btn-danger',
@@ -2627,28 +2613,6 @@ window.__ModuleLoader__.load({
                   disabled: busy !== '',
                   onClick: () => void removeTasks(confirm.ids),
                 }, busy === 'delete' ? tr('auto.deleting') : tr('auto.deleteConfirm')))))
-          : null),
-
-        portal(clearConfirm
-          ? h('div', { className: 'ove-overlay ove-overlay-portal' },
-            h('div', { className: 'ove-dialog', role: 'dialog', 'aria-modal': 'true' },
-              h('h2', { className: 'ove-dialog-title' }, tr('auto.clearTitle')),
-              h('p', { className: 'ove-dialog-desc' }, tr('auto.clearDesc')),
-              h('p', { className: 'ove-dialog-target' }, tr('auto.clearCount')
-                .replace('{count}', String(visibleRecords))),
-              h('div', { className: 'ove-dialog-actions' },
-                h('button', {
-                  type: 'button',
-                  className: 'ove-btn',
-                  disabled: busy !== '',
-                  onClick: () => setClearConfirm(false),
-                }, tr('cancel')),
-                h('button', {
-                  type: 'button',
-                  className: 'ove-btn ove-btn-danger',
-                  disabled: busy !== '',
-                  onClick: () => void clearRecords(),
-                }, busy === 'clear' ? tr('auto.clearing') : tr('auto.clearConfirm')))))
           : null),
 
         portal(bindTasks.length > 0
