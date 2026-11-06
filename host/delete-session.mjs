@@ -230,9 +230,118 @@ const validateExistingLocation = async (paths) => {
   return { root, resolvedDirectory, directory, transcript }
 }
 
-const pathExists = async (path) => {
+/**
+ * Stop a session whose storage never materialized from blocking its own
+ * deletion. An interrupted write can leave the session directory behind with no
+ * transcript inside it; such a session is listed by the Workspace accounting but
+ * can never be opened, and the ordinary path refuses it as "not found" because
+ * there is no header or log to validate.
+ * @param sessionRoot - the persistence root every transcript lives under.
+ * @param sessionId - the session whose directory is wanted.
+ * @returns the validated project root and session directory, or undefined.
+ */
+const findPhantomSessionDirectory = async (sessionRoot, sessionId) => {
+  let root
   try {
-    await lstat(path)
+    root = await realpath(sessionRoot)
+  } catch {
+    return undefined
+  }
+  let projects
+  try {
+    projects = await readdir(root, { withFileTypes: true })
+  } catch {
+    return undefined
+  }
+  for (const project of projects) {
+    if (!project.isDirectory() || project.isSymbolicLink()) continue
+    const candidate = join(root, project.name, sessionId)
+    let info
+    try {
+      info = await lstat(candidate, { bigint: true })
+    } catch {
+      continue
+    }
+    if (!info.isDirectory() || info.isSymbolicLink()) continue
+    let resolved
+    try {
+      resolved = await realpath(candidate)
+    } catch {
+      continue
+    }
+    if (!inside(root, resolved)) continue
+    let entries
+    try {
+      entries = await readdir(resolved)
+    } catch {
+      continue
+    }
+    // A real log is handled by the ordinary location path; only an empty
+    // storage shell takes this branch.
+    if (entries.some(name => /^session(?:\.v[1-9]\d*)?\.jsonl(?:\.zstd)?$/.test(name))) continue
+    return { root, resolvedDirectory: resolved }
+  }
+  return undefined
+}
+
+/**
+ * Remove a storage shell that holds no transcript, through the same quarantine
+ * protocol as a real removal: the directory is renamed away first, re-checked,
+ * and only then deleted, so a permission or identity failure never leaves a
+ * half-removed directory behind.
+ * @param deps - removable directory hooks.
+ * @param phantom - the validated project root and session directory.
+ * @returns a tagged result understood by the settings page.
+ */
+const removePhantomDirectory = async (deps, phantom) => {
+  const moveDirectory = deps.moveDirectory ?? rename
+  let quarantineRoot
+  let quarantined
+  let detached = false
+  try {
+    quarantineRoot = await mkdtemp(join(dirname(phantom.root), '.dsh-session-delete-'))
+    quarantined = join(quarantineRoot, basename(phantom.resolvedDirectory))
+    await moveDirectory(phantom.resolvedDirectory, quarantined)
+    detached = true
+
+    const after = await lstat(quarantined, { bigint: true })
+    if (!after.isDirectory() || after.isSymbolicLink()) {
+      await moveDirectory(quarantined, phantom.resolvedDirectory)
+      detached = false
+      await rm(quarantineRoot, { recursive: true, force: true })
+      return failure('unsafe-location', '会话存储目录在删除期间发生了身份变化，未删除任何文件。')
+    }
+
+    const removeDirectory = deps.removeDirectory
+      ?? (directory => rm(directory, { recursive: true, force: false }))
+    await removeDirectory(quarantined)
+    if (await pathExists(quarantined)) {
+      return failure('storage-partial', '会话已从 DSH 摘载，但存储清理未完成，不能确认永久删除成功。')
+    }
+    await rm(quarantineRoot, { recursive: true, force: true })
+    return { ok: true, value: { deleted: true, phantom: true } }
+  } catch (error) {
+    if (detached && quarantined !== undefined) {
+      let remains = true
+      try {
+        remains = await pathExists(quarantined)
+      } catch {
+        // Inaccessible storage is not proof of cleanup; retain the quarantine.
+      }
+      if (remains) {
+        return failure('storage-partial', '会话已从 DSH 摘载，但存储清理未完成，不能确认永久删除成功。')
+      }
+      if (quarantineRoot !== undefined) await rm(quarantineRoot, { recursive: true, force: true }).catch(() => undefined)
+      return { ok: true, value: { deleted: true, phantom: true } }
+    }
+    if (quarantineRoot !== undefined) await rm(quarantineRoot, { recursive: true, force: true }).catch(() => undefined)
+    if (missing(error)) return failure('session-not-found', '会话不存在或已经删除。')
+    return failure('storage-error', '存储删除失败，未删除任何文件。')
+  }
+}
+
+const pathExists = async (path) => {
+  try {    await lstat(path)
     return true
   } catch (error) {
     if (missing(error)) return false
@@ -310,12 +419,14 @@ async function deleteReservedSession(deps, { sessionRoot, sessionId }, ownership
     ?? snapshot?.header
     ?? deps.sessions.get(sessionId)?.header
   if (header === undefined) {
-    // A stale archive marker can outlive its transcript. Only acknowledge an
-    // absent session after both the public backend and physical layout agree;
-    // unreadable/corrupt artifacts must never be mistaken for successful deletion.
+    // A stale archive marker can outlive its transcript. A session whose storage
+    // is a hollow directory shell is removed here: it can never be opened, so
+    // refusing it would strand it in the sidebar forever.
     if (usesHandles && /^[A-Za-z0-9_-]+$/.test(sessionId)
       && deps.sessions.get(sessionId) === undefined && deps.agents.get(sessionId) === undefined
       && await deps.sessionPersistence.stat(sessionId) === undefined) {
+      const phantom = await findPhantomSessionDirectory(sessionRoot, sessionId).catch(() => undefined)
+      if (phantom !== undefined) return removePhantomDirectory(deps, phantom)
       const projects = await readdir(sessionRoot, { withFileTypes: true })
       let absent = true
       for (const project of projects) {
@@ -334,12 +445,10 @@ async function deleteReservedSession(deps, { sessionRoot, sessionId }, ownership
     return failure('session-not-found', '会话不存在或已经删除。')
   }
 
-  if (!force && snapshot?.formatStatus !== undefined && snapshot.formatStatus !== 'current') {
-    // Opening a historical log for write publishes a migration. Deleting it
-    // instead only after an upgrade avoids rewriting a log we are about to
-    // remove, and keeps the write-lease proof meaningful.
-    return failure('unsupported-format', '该会话使用旧版存储格式。请先在 DSH 里打开它完成升级，然后再删除。')
-  }
+  // A historical or corrupt log is deliberately NOT refused: opening it for the
+  // write-lease proof would publish a migration, and a log that cannot be opened
+  // at all would become undeletable. The removal below locates the artifact
+  // without a write lease and still validates the directory before quarantining.
 
   if (!force && deps.agents.get(sessionId) !== undefined) {
     let disposed = false
@@ -364,8 +473,15 @@ async function deleteReservedSession(deps, { sessionRoot, sessionId }, ownership
     return failure('lifecycle-unavailable', '宿主没有在限期内完整摘载该会话，未删除任何内容。请稍后重试。')
   }
 
+  // A session whose storage is an empty shell holds no transcript, so no read or
+  // write lease can ever locate it: remove the shell rather than failing to
+  // locate a log that is gone. Healthy sessions return here without a change.
+  const shell = await findPhantomSessionDirectory(sessionRoot, sessionId).catch(() => undefined)
+  if (shell !== undefined) return removePhantomDirectory(deps, shell)
+
   let location
   let raw
+  let openedForWrite = false
   if (force) {
     // The loaded session still holds the writer lease, so the exclusive open
     // cannot be acquired; the observed snapshot locates the artifact without it.
@@ -378,6 +494,23 @@ async function deleteReservedSession(deps, { sessionRoot, sessionId }, ownership
         }
       : deps.sessionPersistence.locate(header)
     raw = { meta: header }
+  } else if (snapshot?.formatStatus !== undefined && snapshot.formatStatus !== 'current') {
+    // A historical log must not be opened for writing: that publishes a
+    // migration of a file we are about to remove. It is also exactly the kind of
+    // record the user otherwise cannot get rid of, so locate it without a lease.
+    try {
+      location = usesHandles
+        ? {
+            kind: 'jsonl',
+            path: snapshot?.location?.kind === 'jsonl' && typeof snapshot.location.path === 'string'
+              ? snapshot.location.path
+              : await deps.sessionPersistence.resolveCurrentLog(sessionId),
+          }
+        : deps.sessionPersistence.locate(header)
+    } catch {
+      return failure('storage-state-unknown', '无法定位该会话的存储位置，未删除任何文件。')
+    }
+    raw = { meta: header }
   } else {
     // inspect() waits for the persistence backend's asynchronous retirement
     // drain. A never-materialized blank session is already fully removed here.
@@ -389,6 +522,7 @@ async function deleteReservedSession(deps, { sessionRoot, sessionId }, ownership
         return failure('unsafe-location', '会话在摘载期间发生了身份变化，未删除任何文件。')
       }
       header = inspected.meta
+      openedForWrite = true
     } catch (error) {
       const stillStored = (await storedHeaders()).some(item => item.id === sessionId)
       if (!stillStored && deps.sessions.get(sessionId) === undefined && deps.agents.get(sessionId) === undefined) {
@@ -401,17 +535,43 @@ async function deleteReservedSession(deps, { sessionRoot, sessionId }, ownership
         }
         return failure('storage-state-unknown', 'DSH 已摘载会话，但无法确认其存储是否已删除。')
       }
-      return failure('storage-state-unknown', '无法确认会话存储状态，未继续删除。')
+      if (!stillStored) {
+        return failure('storage-state-unknown', '无法确认会话存储状态，未继续删除。')
+      }
+      // The stored log cannot be opened for writing: it is corrupt, an unsupported
+      // historical format, or otherwise unreadable. Such a session can neither be
+      // opened in the UI nor left behind forever, so locate its artifact without
+      // the write lease; the location and quarantine checks below still decide
+      // whether the removal is safe.
+      try {
+        location = usesHandles
+          ? {
+              kind: 'jsonl',
+              path: snapshot?.location?.kind === 'jsonl' && typeof snapshot.location.path === 'string'
+                ? snapshot.location.path
+                : await deps.sessionPersistence.resolveCurrentLog(sessionId),
+            }
+          : deps.sessionPersistence.locate(header)
+      } catch {
+        return failure('storage-state-unknown', '无法定位该会话的存储位置，未删除任何文件。')
+      }
+      raw = { meta: header }
     }
 
-    location = usesHandles
-      ? { kind: 'jsonl', path: await deps.sessionPersistence.resolveCurrentLog(sessionId) }
-      : deps.sessionPersistence.locate(header)
-    raw = usesHandles ? { meta: ownership.handle.header } : await deps.sessionPersistence.readRaw(sessionId)
+    if (openedForWrite) {
+      location = usesHandles
+        ? { kind: 'jsonl', path: await deps.sessionPersistence.resolveCurrentLog(sessionId) }
+        : deps.sessionPersistence.locate(header)
+      raw = usesHandles ? { meta: ownership.handle.header } : await deps.sessionPersistence.readRaw(sessionId)
+    }
   }
 
   const paths = locationPaths(sessionRoot, location)
   if (paths === undefined || raw === undefined || (!force && !sameHeader(header, raw.meta))) {
+    // A header that survives its own log (an interrupted write, a hand-deleted
+    // transcript) still leaves a removable storage shell behind.
+    const phantom = await findPhantomSessionDirectory(sessionRoot, sessionId).catch(() => undefined)
+    if (phantom !== undefined) return removePhantomDirectory(deps, phantom)
     return failure('unsafe-location', '无法验证该会话的独立 JSONL 存储位置。')
   }
 
@@ -419,10 +579,16 @@ async function deleteReservedSession(deps, { sessionRoot, sessionId }, ownership
   try {
     validated = await validateExistingLocation(paths)
   } catch (error) {
-    if (error?.code === 'ENOENT') return failure('session-not-found', '会话不存在或已经删除。')
+    if (error?.code === 'ENOENT') {
+      const phantom = await findPhantomSessionDirectory(sessionRoot, sessionId).catch(() => undefined)
+      if (phantom !== undefined) return removePhantomDirectory(deps, phantom)
+      return failure('session-not-found', '会话不存在或已经删除。')
+    }
     return failure('storage-error', '读取会话存储失败，未删除任何文件。')
   }
   if (validated === undefined) {
+    const phantom = await findPhantomSessionDirectory(sessionRoot, sessionId).catch(() => undefined)
+    if (phantom !== undefined) return removePhantomDirectory(deps, phantom)
     return failure('unsafe-location', '会话存储位置未通过安全校验，未删除任何文件。')
   }
   if (!force && (deps.sessions.get(sessionId) !== undefined || deps.agents.get(sessionId) !== undefined)) {

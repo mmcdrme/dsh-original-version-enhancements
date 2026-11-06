@@ -8,7 +8,7 @@
 // files that new Session into the target Workspace.
 
 import { randomUUID } from 'node:crypto'
-import { realpath } from 'node:fs/promises'
+import { realpath, stat } from 'node:fs/promises'
 import { deleteSessionSafely } from './delete-session.mjs'
 
 const MAX_REQUEST_BYTES = 8 * 1024
@@ -57,7 +57,9 @@ const hasOpenTurn = (events) => {
 
 /**
  * Header for the copied Session: a fresh identity in the target directory.
- * Lineage fields are dropped so the copy is not a branch of its source.
+ * Lineage fields are dropped so the copy is not a branch of its source, but the
+ * seed flag MUST follow the copied log: a log carrying the `session/end-seed`
+ * marker is only readable as a seeded Session.
  * @param header - the source Session header.
  * @param id - the new Session id.
  * @param cwd - the target Workspace path.
@@ -69,10 +71,23 @@ const copyHeader = (header, id, cwd) => {
     id,
     createdAt: Date.now(),
     cwd,
-    isSeeded: false,
+    isSeeded: header.isSeeded === true,
   }
   if (typeof header.agentPreset === 'string') next.agentPreset = header.agentPreset
   return next
+}
+
+/**
+ * Number of events a seeded log inherited before its own first event. The
+ * `session/end-seed` marker sits exactly at that cut, so its index into the log
+ * is the inherited prefix length the persistence header must record.
+ * @param events - the copied events in sequence order.
+ * @returns the inherited prefix length, zero for an unseeded log.
+ */
+const inheritedCount = (events) => {
+  const marker = events.findIndex(event => event?.type === 'session/end-seed')
+  if (marker < 0) return 0
+  return events[marker].seq ?? marker
 }
 
 /**
@@ -89,17 +104,48 @@ const copyHeader = (header, id, cwd) => {
  */
 const materializeCopy = async (deps, meta, events) => {
   const { sessionPersistence, sessionProjectionCache } = deps
-  const handle = await sessionPersistence.create(meta)
+  const inherited = inheritedCount(events)
+  // The persistence header of a seeded log must carry its inherited prefix
+  // length; without it the backend refuses to materialize the copy at all.
+  const handle = await sessionPersistence.create(meta, meta.isSeeded ? { inheritedEventCount: inherited } : undefined)
   try {
     await handle.append(events)
     await handle.flush()
   } finally {
     try { await handle.close() } catch { /* flush already settled the log */ }
   }
+  // Never file a copy that has no durable log: a half-written session shows up in
+  // the sidebar and then refuses to open its history. The signature of that bug
+  // is exactly the phantom the deletion path above has to clean up afterwards, so
+  // the copy is verified here and rolled back instead.
+  await verifyMaterialized(sessionPersistence, meta.id, events.length)
   try {
-    sessionProjectionCache?.coldSnapshot?.(meta, 0, events)
+    sessionProjectionCache?.coldSnapshot?.(meta, inherited, events)
   } catch { /* the copy is filed either way; the next cold read fills it */ }
   return true
+}
+
+/**
+ * Confirm the copy reached durable storage with at least its whole log.
+ * @param persistence - the JSONL backend.
+ * @param sessionId - the copy's identity.
+ * @param expectedEvents - how many events the copy must carry.
+ * @throws when the session is unknown to the backend or its log is empty/short.
+ */
+const verifyMaterialized = async (persistence, sessionId, expectedEvents) => {
+  const snapshot = await persistence.stat(sessionId).catch(() => undefined)
+  if (snapshot === undefined) throw new Error('宿主没有落盘复制出的会话')
+  if (typeof snapshot.eventCount === 'number' && snapshot.eventCount < expectedEvents) {
+    throw new Error(`复制出的会话日志不完整（${snapshot.eventCount}/${expectedEvents} 条事件）`)
+  }
+  if (typeof snapshot.sizeBytes === 'number' && snapshot.sizeBytes === 0) {
+    throw new Error('复制出的会话日志为空')
+  }
+  const location = snapshot.location
+  if (location?.kind === 'jsonl' && typeof location.path === 'string') {
+    const info = await stat(location.path).catch(() => undefined)
+    if (info === undefined || !info.isFile() || info.size === 0) throw new Error('复制出的会话日志没有落盘')
+  }
 }
 
 /**

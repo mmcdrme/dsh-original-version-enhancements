@@ -7,7 +7,7 @@
 // until its lifecycle handle is disposed.
 
 import assert from 'node:assert/strict'
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -242,7 +242,7 @@ test('force deletion locates the artifact from the observed snapshot', async () 
   await rm(root, { recursive: true, force: true })
 })
 
-test('a historical storage format is refused instead of migrated', async () => {
+test('a historical storage format is removed without being opened for write', async () => {
   const { root, sessionDirectory } = await makeSession()
   const host = makeHost()
   const persistence = makePersistence({
@@ -255,9 +255,31 @@ test('a historical storage format is refused instead of migrated', async () => {
     sessionId: SESSION_ID,
   })
 
-  assert.equal(result.ok, false)
-  assert.equal(result.error.code, 'unsupported-format')
+  assert.equal(result.ok, true, JSON.stringify(result))
+  // Opening the log for write would publish a migration of a file that is about
+  // to be deleted, so the artifact is located without the write lease.
   assert.equal(persistence.state.opened, false)
+  await assert.rejects(readFile(sessionDirectory, 'utf8'))
+  await rm(root, { recursive: true, force: true })
+})
+
+test('an unreadable log is deleted instead of being stuck forever', async () => {
+  const { root, sessionDirectory } = await makeSession()
+  const host = makeHost()
+  const persistence = makePersistence({ transcript: join(sessionDirectory, 'session.jsonl') })
+  // The log is corrupt: opening it for write fails the way the JSONL backend
+  // reports a format violation, while the session is still listed.
+  persistence.open = async () => {
+    throw new Error('stored log is corrupt: SessionFormatError')
+  }
+
+  const result = await deleteSessionSafely(depsFor(host, persistence), {
+    sessionRoot: root,
+    sessionId: SESSION_ID,
+  })
+
+  assert.equal(result.ok, true, JSON.stringify(result))
+  await assert.rejects(readFile(sessionDirectory, 'utf8'))
   await rm(root, { recursive: true, force: true })
 })
 
@@ -295,4 +317,58 @@ test('the tracker refuses to wrap a registry twice', () => {
   const wrapped = host.agents.resume
   installAgentHandleTracker(host.agents, host.sessions)
   assert.equal(host.agents.resume, wrapped)
+})
+
+/**
+ * Persistence for a session the backend does not know at all: the interrupted
+ * write left an empty session directory and no header anywhere.
+ */
+const makePhantomPersistence = () => ({
+  name: 'session-persistence-jsonl',
+  open: async () => {
+    throw new Error(`session '${SESSION_ID}' not found`)
+  },
+  stat: async () => undefined,
+  list: async () => [],
+  resolveCurrentLog: async () => {
+    throw new Error(`session '${SESSION_ID}' not found`)
+  },
+})
+
+test('a session whose storage is an empty shell is removable', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'ove-delete-'))
+  const sessionDirectory = join(root, 'project', SESSION_ID)
+  await mkdir(sessionDirectory, { recursive: true })
+  const host = makeHost()
+
+  const result = await deleteSessionSafely(depsFor(host, makePhantomPersistence()), {
+    sessionRoot: root,
+    sessionId: SESSION_ID,
+  })
+
+  assert.equal(result.ok, true, JSON.stringify(result))
+  assert.equal(result.value.phantom, true)
+  await assert.rejects(stat(sessionDirectory), error => error.code === 'ENOENT')
+  await rm(root, { recursive: true, force: true })
+})
+
+test('a listed session whose log disappeared is removable', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'ove-delete-'))
+  const sessionDirectory = join(root, 'project', SESSION_ID)
+  const transcript = join(sessionDirectory, 'session.jsonl')
+  await mkdir(sessionDirectory, { recursive: true })
+  const host = makeHost()
+  // The header outlives its transcript: the backend still lists the session but
+  // the file itself is gone, so no read or write lease can ever succeed.
+  const persistence = makePersistence({ transcript })
+
+  const result = await deleteSessionSafely(depsFor(host, persistence), {
+    sessionRoot: root,
+    sessionId: SESSION_ID,
+  })
+
+  assert.equal(result.ok, true, JSON.stringify(result))
+  assert.equal(result.value.phantom, true)
+  await assert.rejects(stat(sessionDirectory), error => error.code === 'ENOENT')
+  await rm(root, { recursive: true, force: true })
 })
