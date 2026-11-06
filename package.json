@@ -1,8 +1,8 @@
-{
+﻿{
   "name": "@local/dsh-original-version-enhancements",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "private": true,
-  "description": "Original Version Enhancements (原版功能增强): a plugin page with feature switches for the four-step work-details switcher, an archived-session manager (search, unarchive, confirmed deletion), and an automation enhancement panel (bulk deletion, multi-conversation binding, auto-clean after delivery).",
+  "description": "Original Version Enhancements (鍘熺増鍔熻兘澧炲己): a plugin page with feature switches for the four-step work-details switcher, an archived-session manager (search, unarchive, confirmed deletion), and an automation enhancement panel (bulk deletion, multi-conversation binding, auto-clean after delivery).",
   "type": "module",
   "exports": {
     ".": "./index.js",

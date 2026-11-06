@@ -47,12 +47,17 @@ v1.5.21（MIT），详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 ### 3. 自动化任务增强
 
 自动化任务增强把原 `automation-console` 插件的能力并入本插件，并按 DSH 0.2.x
-的新版 Schedule 服务与新版界面重写：
+的新版 Schedule 服务与「自动化任务」页的界面重写：
 
-- **独立侧栏面板**：侧栏「自动化增强」（`main` 面板 key 与 `sidebar.panellist` id 均为
-  `original-version-enhancements.automation`，`order: 11`），与官方「自动化任务」页并存。
-  官方页负责创建、编辑、筛选、记录；本面板只补它没有的能力。
-- **批量删除**：多选任务后一次删除，带二次确认；已投递的消息与目标会话保留。
+- **与官方页同构的独立面板**：侧栏「自动化增强」（`main` 面板 key 与 `sidebar.panellist`
+  id 均为 `original-version-enhancements.automation`，`order: 11`）。标题、`+ 新建`
+  分裂按钮、`已开启 / 已暂停 / 已结束 / 全部` 分栏、搜索框、时钟图标的行样式与空态插画
+  都对齐官方页；点击任务在右侧打开同款「规则」编辑抽屉（名称 / 内容 / 执行位置 /
+  关联工作区 / 重复 / 时间 / 自定义 RRULE / 保存 / 暂停 / 删除）。官方页及其数据不变，
+  两处操作同一份任务。
+- **免对话创建**：在面板里直接新建任务，不必先进入一段对话；`新建` 主按钮打开编辑抽屉，
+  右侧菜单提供「手动创建」与「绑定到多个会话」。
+- **批量删除**：勾选多个任务后一次删除，带二次确认；已投递的消息与目标会话保留。
 - **多会话绑定**：把一条任务复制到多个会话（同标题、同指令、同重复规则），
   每个会话一份；已归档会话会被过滤掉，创建结果逐个回报成功与失败原因。
 - **投递后自动清理**：逐任务开关。一次性任务投递完成（状态 `ended` 且有投递回执）后，
@@ -76,11 +81,14 @@ v1.5.21（MIT），详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 - `POST /plugins/original-version-enhancements/sessions/delete` — 永久删除
   （需要 `x-dsh-session-delete-confirmation: delete-session` 确认头与同源校验）
 - `POST /plugins/original-version-enhancements/automation/catalog` — 任务目录与自动清理标记
+- `POST /plugins/original-version-enhancements/automation/create` — 新建任务
+- `POST /plugins/original-version-enhancements/automation/update` — 修改任务（标题 / 内容 / 规则 / 目标 / 启停）
+- `POST /plugins/original-version-enhancements/automation/run` — 立即投递
 - `POST /plugins/original-version-enhancements/automation/auto-clean` — 设置/清除任务的自动清理
 - `POST /plugins/original-version-enhancements/automation/delete` — 批量删除
 - `POST /plugins/original-version-enhancements/automation/bind` — 把任务复制到多个会话
 
-后四条需要 Host 的 `schedule` 服务；未挂载该服务的组合里它们不会注册。
+后七条需要 Host 的 `schedule` 服务；未挂载该服务的组合里它们不会注册。
 
 ## 安装 / Install
 

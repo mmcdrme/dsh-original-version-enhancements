@@ -211,6 +211,70 @@ window.__ModuleLoader__.load({
       'auto.deleted': '已删除 {count} 个任务',
       'auto.deleteFailed': '有 {count} 个任务删除失败',
 
+      'auto.new': '新建',
+      'auto.newMenu': '新建菜单',
+      'auto.newManual': '手动创建',
+      'auto.newMulti': '绑定到多个会话',
+      'auto.tab.active': '已开启',
+      'auto.tab.paused': '已暂停',
+      'auto.tab.ended': '已结束',
+      'auto.tab.all': '全部',
+      'auto.search': '搜索自动化任务',
+      'auto.select': '选择任务',
+      'auto.clearSelection': '取消选择',
+      'auto.emptyAction': '新建自动化任务',
+      'auto.noMatches': '没有匹配的自动化任务',
+      'auto.nextAt': '下次计划时间',
+      'auto.cleanShort': '自动清理',
+      'auto.inMinutes': '{n} 分钟后',
+      'auto.inHours': '{n} 小时后',
+      'auto.inDays': '{n} 天后',
+      'auto.once': '仅一次',
+      'auto.after': '{n} 分钟后执行',
+      'auto.every': '每 {n} 分钟',
+      'auto.daily': '每天',
+      'auto.weekly': '每周',
+      'auto.custom': '自定义',
+      'auto.weekday.sun': '周日',
+      'auto.weekday.mon': '周一',
+      'auto.weekday.tue': '周二',
+      'auto.weekday.wed': '周三',
+      'auto.weekday.thu': '周四',
+      'auto.weekday.fri': '周五',
+      'auto.weekday.sat': '周六',
+      'auto.createTitle': '新建自动化任务',
+      'auto.editTitle': '编辑自动化任务',
+      'auto.name': '自动化任务名称',
+      'auto.content': '自动化任务内容',
+      'auto.target': '执行位置',
+      'auto.session': '关联会话',
+      'auto.pickSession': '选择会话',
+      'auto.workspace': '关联工作区',
+      'auto.workspaceDefault': '默认工作区',
+      'auto.repeat': '重复',
+      'auto.repeat.at': '一次',
+      'auto.repeat.every': '按分钟',
+      'auto.repeat.daily': '每天',
+      'auto.repeat.weekly': '每周',
+      'auto.repeat.rrule': '自定义',
+      'auto.date': '日期',
+      'auto.time': '时间',
+      'auto.interval': '间隔（分钟）',
+      'auto.weekday': '星期',
+      'auto.rule': 'RRULE',
+      'auto.clean': '投递后自动清理',
+      'auto.save': '保存',
+      'auto.saving': '正在保存…',
+      'auto.saved': '已保存',
+      'auto.ran': '已开始投递',
+      'auto.pause': '暂停',
+      'auto.resume': '恢复',
+      'auto.deleteTask': '删除任务',
+      'auto.needName': '请填写任务名称。',
+      'auto.needContent': '请填写任务内容。',
+      'auto.needTiming': '时间设置无效。',
+      'auto.needSession': '请选择一个会话。',
+
       archivesTitle: '已归档会话',
       archivesIntro: '搜索已归档会话的名称、工作区或聊天内容；永久删除只针对已归档且未被宿主加载的本机会话，无法恢复。',
       searchPlaceholder: '搜索名称、工作区或聊天内容',
@@ -259,7 +323,7 @@ window.__ModuleLoader__.load({
       'switch.automation.desc': 'Adds an Automation enhancements sidebar panel: delete selected tasks, bind one rule to several conversations, and auto-clean after delivery. The stock Automation tasks page stays as it is.',
       pageHint: 'Archive search, unarchive and permanent deletion live in Settings → Archived sessions.',
 
-      'auto.panel': 'Automation+',
+      'auto.panel': 'Automation enhancements',
       'auto.title': 'Automation task enhancements',
       'auto.intro': 'The stock Automation tasks page creates, edits and records tasks. This panel adds what it lacks: bulk deletion, multi-conversation binding, and auto-clean after delivery.',
       'auto.refresh': 'Refresh',
@@ -298,6 +362,70 @@ window.__ModuleLoader__.load({
       'auto.deleting': 'Deleting…',
       'auto.deleted': 'Deleted {count} tasks',
       'auto.deleteFailed': '{count} tasks could not be deleted',
+
+      'auto.new': 'New',
+      'auto.newMenu': 'New task menu',
+      'auto.newManual': 'Create manually',
+      'auto.newMulti': 'Bind to conversations',
+      'auto.tab.active': 'Enabled',
+      'auto.tab.paused': 'Paused',
+      'auto.tab.ended': 'Ended',
+      'auto.tab.all': 'All',
+      'auto.search': 'Search automation tasks',
+      'auto.select': 'Select task',
+      'auto.clearSelection': 'Clear selection',
+      'auto.emptyAction': 'Create an automation task',
+      'auto.noMatches': 'No matching automation tasks',
+      'auto.nextAt': 'Next run',
+      'auto.cleanShort': 'Auto-clean',
+      'auto.inMinutes': 'in {n} min',
+      'auto.inHours': 'in {n} h',
+      'auto.inDays': 'in {n} d',
+      'auto.once': 'Once',
+      'auto.after': 'in {n} min',
+      'auto.every': 'Every {n} min',
+      'auto.daily': 'Daily',
+      'auto.weekly': 'Weekly',
+      'auto.custom': 'Custom',
+      'auto.weekday.sun': 'Sun',
+      'auto.weekday.mon': 'Mon',
+      'auto.weekday.tue': 'Tue',
+      'auto.weekday.wed': 'Wed',
+      'auto.weekday.thu': 'Thu',
+      'auto.weekday.fri': 'Fri',
+      'auto.weekday.sat': 'Sat',
+      'auto.createTitle': 'New automation task',
+      'auto.editTitle': 'Edit automation task',
+      'auto.name': 'Task name',
+      'auto.content': 'Task instruction',
+      'auto.target': 'Destination',
+      'auto.session': 'Conversation',
+      'auto.pickSession': 'Choose a conversation',
+      'auto.workspace': 'Workspace',
+      'auto.workspaceDefault': 'Default workspace',
+      'auto.repeat': 'Repeat',
+      'auto.repeat.at': 'Once',
+      'auto.repeat.every': 'Every N minutes',
+      'auto.repeat.daily': 'Daily',
+      'auto.repeat.weekly': 'Weekly',
+      'auto.repeat.rrule': 'Custom',
+      'auto.date': 'Date',
+      'auto.time': 'Time',
+      'auto.interval': 'Interval (minutes)',
+      'auto.weekday': 'Weekday',
+      'auto.rule': 'RRULE',
+      'auto.clean': 'Auto-clean after delivery',
+      'auto.save': 'Save',
+      'auto.saving': 'Saving…',
+      'auto.saved': 'Saved',
+      'auto.ran': 'Delivery started',
+      'auto.pause': 'Pause',
+      'auto.resume': 'Resume',
+      'auto.deleteTask': 'Delete task',
+      'auto.needName': 'Enter a task name.',
+      'auto.needContent': 'Enter the task instruction.',
+      'auto.needTiming': 'The schedule is invalid.',
+      'auto.needSession': 'Choose a conversation.',
 
       archivesTitle: 'Archived sessions',
       archivesIntro: 'Search archived session names, workspaces, or chat content. Permanent deletion only applies to unloaded archived local sessions and cannot be undone.',
@@ -528,37 +656,118 @@ window.__ModuleLoader__.load({
       .ove-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
       .ove-warn { margin: 0; font-size: 13px; line-height: 20px; color: var(--dsw-alias-state-warning-primary, #b45309); }
 
-      .ove-auto { display: flex; flex-direction: column; height: 100%; min-height: 0; background: var(--dsw-alias-bg-base); }
+      .ove-auto { display: flex; height: 100%; max-height: 100%; min-height: 0; overflow: hidden; background: var(--dsw-alias-bg-base); position: relative; }
+      .ove-auto-main { flex: 1 1 auto; min-width: 0; max-height: 100%; display: flex; flex-direction: column; min-height: 0; }
       .ove-auto-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; scrollbar-gutter: stable; }
-      .ove-auto-inner { max-width: 880px; margin: 0 auto; padding: 28px clamp(20px, 4vw, 40px) 48px; display: grid; gap: 18px; }
-      .ove-auto-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
-      .ove-auto-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
-      .ove-auto-count { font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-tertiary); }
-      .ove-auto-list { border: .5px solid var(--dsw-alias-border-l1); border-radius: 12px; background: var(--dsw-alias-bg-layer-1); }
-      .ove-auto-row { display: flex; align-items: flex-start; gap: 12px; padding: 14px 16px; }
-      .ove-auto-row + .ove-auto-row { border-top: .5px solid var(--dsw-alias-border-l1); }
-      .ove-auto-check { margin-top: 3px; width: 15px; height: 15px; accent-color: var(--dsw-alias-brand-primary, #4f7cff); }
-      .ove-auto-body { flex: 1 1 auto; min-width: 0; display: grid; gap: 4px; }
-      .ove-auto-title { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 14px; line-height: 22px; }
-      .ove-auto-name { font-weight: 500; overflow-wrap: anywhere; }
-      .ove-auto-meta { font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-tertiary); overflow-wrap: anywhere; }
-      .ove-auto-prompt { font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-secondary); overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-      .ove-auto-side { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
-      .ove-chip {
-        display: inline-flex; align-items: center; gap: 4px; padding: 1px 8px; border-radius: 999px;
-        font-size: 11px; line-height: 18px; border: .5px solid var(--dsw-alias-border-l1);
-        color: var(--dsw-alias-label-secondary); white-space: nowrap;
+      .ove-auto-inner { max-width: 900px; margin: 0 auto; padding: 28px clamp(20px, 4vw, 40px) 44px; }
+      .ove-auto-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 18px; }
+      .ove-auto-title-text { margin: 0; font-size: 24px; line-height: 32px; font-weight: 600; letter-spacing: -.01em; }
+
+      .ove-split { position: relative; display: inline-flex; align-items: stretch; height: 34px; border-radius: 10px; overflow: visible; background: var(--dsw-alias-label-primary); color: var(--dsw-alias-bg-base); }
+      .ove-split-main, .ove-split-more { border: 0; background: transparent; color: inherit; font: inherit; font-size: 13px; cursor: pointer; display: inline-flex; align-items: center; }
+      .ove-split-main { padding: 0 14px; gap: 4px; }
+      .ove-split-more { padding: 0 8px; border-left: .5px solid rgba(255, 255, 255, .22); }
+      .ove-split-main:hover, .ove-split-more:hover { background: rgba(255, 255, 255, .12); }
+      .ove-split-menu {
+        position: absolute; top: calc(100% + 6px); right: 0; min-width: 190px; z-index: 30;
+        padding: 4px; border-radius: 10px; border: .5px solid var(--dsw-alias-border-l2);
+        background: var(--dsw-alias-bg-layer-2); box-shadow: 0 10px 30px rgba(0, 0, 0, .28);
+        display: grid; gap: 2px;
       }
-      .ove-chip-active { color: var(--dsw-alias-state-success-primary, #15803d); border-color: currentColor; }
-      .ove-chip-paused { color: var(--dsw-alias-state-warning-primary, #b45309); border-color: currentColor; }
-      .ove-chip-ended { color: var(--dsw-alias-label-tertiary); }
-      .ove-auto-clean { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-tertiary); cursor: pointer; }
+      .ove-menu-row {
+        border: 0; background: transparent; color: var(--dsw-alias-label-primary); font: inherit; font-size: 13px;
+        text-align: left; padding: 8px 10px; border-radius: 8px; cursor: pointer;
+      }
+      .ove-menu-row:hover { background: var(--dsw-alias-bg-layer-1); }
+      .ove-menu-row:disabled { opacity: .5; cursor: default; }
+
+      .ove-tabs { display: flex; gap: 2px; margin-bottom: 12px; flex-wrap: wrap; }
+      .ove-tab {
+        border: 0; background: transparent; font: inherit; font-size: 13px; line-height: 20px;
+        color: var(--dsw-alias-label-tertiary); padding: 6px 12px; border-radius: 8px; cursor: pointer;
+      }
+      .ove-tab:hover { color: var(--dsw-alias-label-secondary); }
+      .ove-tab[aria-selected="true"] { background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-label-primary); }
+
+      .ove-search-row { position: relative; margin-bottom: 12px; }
+      .ove-search-input {
+        box-sizing: border-box; width: 100%; height: 38px; padding: 0 12px 0 36px;
+        border-radius: 10px; border: .5px solid var(--dsw-alias-border-l2);
+        background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary); font: inherit; font-size: 13px;
+      }
+      .ove-search-input:focus { outline: 2px solid var(--dsw-alias-brand-primary, #4f7cff); outline-offset: -1px; }
+      .ove-search-icon { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: var(--dsw-alias-label-tertiary); display: flex; pointer-events: none; }
+
+      .ove-bulk {
+        display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 10px;
+        padding: 8px 12px; border-radius: 10px; background: var(--dsw-alias-bg-layer-1);
+        border: .5px solid var(--dsw-alias-border-l1);
+      }
+      .ove-bulk-count { font-size: 12px; color: var(--dsw-alias-label-secondary); margin-right: auto; }
+
+      .ove-task-list { display: grid; gap: 2px; }
+      .ove-task { display: flex; align-items: flex-start; gap: 12px; padding: 10px 12px; border-radius: 10px; cursor: pointer; }
+      .ove-task:hover { background: var(--dsw-alias-bg-layer-1); }
+      .ove-task[data-active="true"] { background: var(--dsw-alias-bg-layer-2); }
+      .ove-task-check { margin-top: 5px; width: 15px; height: 15px; accent-color: var(--dsw-alias-brand-primary, #4f7cff); cursor: pointer; flex: none; }
+      .ove-task-icon { color: var(--dsw-alias-label-tertiary); margin-top: 2px; display: flex; flex: none; }
+      .ove-task-body { flex: 1 1 auto; min-width: 0; display: grid; gap: 2px; }
+      .ove-task-title { font-size: 15px; line-height: 24px; overflow-wrap: anywhere; }
+      .ove-task-meta { font-size: 13px; line-height: 20px; color: var(--dsw-alias-label-tertiary); overflow-wrap: anywhere; }
+      .ove-task-hover { display: flex; align-items: center; gap: 8px; opacity: 0; transition: opacity .12s; flex: none; }
+      .ove-task:hover .ove-task-hover, .ove-task:focus-within .ove-task-hover, .ove-task[data-active="true"] .ove-task-hover { opacity: 1; }
+      .ove-clean-toggle { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-tertiary); cursor: pointer; white-space: nowrap; }
+      .ove-auto-check { width: 14px; height: 14px; accent-color: var(--dsw-alias-brand-primary, #4f7cff); cursor: pointer; }
+
+      .ove-empty { display: grid; justify-items: center; gap: 14px; padding: 64px 0 48px; text-align: center; }
+      .ove-empty-art { color: var(--dsw-alias-label-tertiary); opacity: .45; display: flex; }
+      .ove-empty-text { margin: 0; font-size: 14px; line-height: 22px; color: var(--dsw-alias-label-tertiary); }
+
+      .ove-detail {
+        flex: 0 0 380px; width: 380px; max-width: 50%; height: 100%; max-height: calc(100vh - 110px); display: flex; flex-direction: column; min-height: 0; overflow: hidden;
+        border-left: .5px solid var(--dsw-alias-border-l1); background: var(--dsw-alias-bg-base);
+      }
+      .ove-detail-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 14px 16px 6px; }
+      .ove-detail-actions { display: flex; align-items: center; gap: 6px; }
+      .ove-detail-actions-row { display: flex; gap: 8px; padding-top: 4px; }
+      .ove-primary-sm { height: 28px; padding: 0 12px; font-size: 12px; }
+      .ove-detail-body { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 8px 16px 20px; display: grid; gap: 14px; align-content: start; }
+      .ove-detail-foot {
+        display: flex; justify-content: flex-end; gap: 8px; padding: 10px 16px;
+        border-top: .5px solid var(--dsw-alias-border-l1); background: var(--dsw-alias-bg-base);
+      }
+      .ove-field { display: grid; gap: 6px; }
+      .ove-label { font-size: 13px; line-height: 20px; color: var(--dsw-alias-label-secondary); }
+      .ove-input, .ove-select, .ove-textarea {
+        box-sizing: border-box; width: 100%; font: inherit; font-size: 13px; line-height: 20px;
+        padding: 8px 10px; border-radius: 10px; border: .5px solid var(--dsw-alias-border-l2);
+        background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary);
+      }
+      .ove-textarea { min-height: 110px; resize: vertical; }
+      .ove-rule { min-height: 96px; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 12px; }
+      .ove-inline { display: flex; gap: 8px; }
+      .ove-inline > .ove-field { flex: 1 1 0; min-width: 0; }
+      .ove-check-row { display: flex; align-items: center; gap: 8px; }
+      .ove-icon-btn {
+        border: 0; background: transparent; color: var(--dsw-alias-label-tertiary); font-size: 18px; line-height: 1;
+        width: 28px; height: 28px; border-radius: 8px; cursor: pointer;
+      }
+      .ove-icon-btn:hover { background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-primary); }
+      .ove-primary {
+        border: 0; border-radius: 10px; height: 34px; padding: 0 16px; cursor: pointer;
+        background: var(--dsw-alias-label-primary); color: var(--dsw-alias-bg-base);
+        font: inherit; font-size: 13px; display: inline-flex; align-items: center; justify-content: center;
+      }
+      .ove-primary:disabled { opacity: .5; cursor: default; }
       .ove-session-pick { max-height: 260px; overflow: auto; display: grid; gap: 2px; padding: 4px; border-radius: 10px; background: var(--dsw-alias-bg-base); }
       .ove-session-option { display: flex; align-items: center; gap: 10px; padding: 7px 8px; border-radius: 8px; font-size: 13px; line-height: 20px; cursor: pointer; }
       .ove-session-option:hover { background: var(--dsw-alias-bg-layer-1); }
       .ove-session-option span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      .ove-notice { margin: 0; font-size: 12px; line-height: 18px; color: var(--dsw-alias-state-success-primary, #15803d); }
+      .ove-notice { margin: 0 0 8px; font-size: 12px; line-height: 18px; color: var(--dsw-alias-state-success-primary, #15803d); }
       .ove-overlay-portal { z-index: 2147483000; }
+      @media (max-width: 640px) {
+        .ove-detail { position: absolute; inset: 0; width: 100%; z-index: 5; }
+      }
     `;
 
     /* ------------------------------------------------------------------ */
@@ -1174,13 +1383,174 @@ window.__ModuleLoader__.load({
       });
     };
 
-    const STATUS_CHIP = { active: 'ove-chip-active', paused: 'ove-chip-paused', ended: 'ove-chip-ended' };
+    /**
+     * Relative distance label the page appends to the next occurrence.
+     * @param value - ISO timestamp.
+     * @param tr - translator.
+     * @returns a relative label, or an empty string when it is in the past.
+     */
+    const relativeTo = (value, tr) => {
+      const time = Date.parse(value ?? '');
+      if (Number.isNaN(time)) return '';
+      const minutes = Math.round((time - Date.now()) / 60000);
+      if (minutes < 1) return '';
+      if (minutes < 60) return tr('auto.inMinutes').replace('{n}', String(minutes));
+      const hours = Math.round(minutes / 60);
+      if (hours < 24) return tr('auto.inHours').replace('{n}', String(hours));
+      return tr('auto.inDays').replace('{n}', String(Math.round(hours / 24)));
+    };
+
+    const WEEKDAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
 
     /**
-     * Batch deletion, multi-conversation binding, and the auto-clean flag for
-     * the tasks the shipped Automation tasks page creates.
+     * Recurrence description shown on a row, mirroring the stock page wording.
+     * @param task - one automation row.
+     * @param tr - translator.
+     * @returns the localized rule summary.
+     */
+    const recurrenceOf = (task, tr) => {
+      switch (task.kind) {
+        case 'at':
+          return tr('auto.once');
+        case 'after':
+          return tr('auto.after').replace('{n}', String(Math.round((task.afterSeconds ?? 0) / 60)));
+        case 'every':
+          return tr('auto.every').replace('{n}', String(Math.round((task.everySeconds ?? 0) / 60)));
+        case 'daily':
+          return `${tr('auto.daily')} ${String(task.time ?? '').slice(0, 5)}`.trim();
+        case 'weekly':
+          return `${tr('auto.weekly')} ${(task.weekdays ?? []).map((day) => tr(`auto.weekday.${WEEKDAY_KEYS[day] ?? 'mon'}`)).join('、')} ${String(task.time ?? '').slice(0, 5)}`.trim();
+        case 'cron':
+          return tr('auto.custom');
+        case 'rrule':
+          return tr('auto.custom');
+        default:
+          return tr('auto.custom');
+      }
+    };
+
+    const ClockMark = ({ size }) => h('svg', {
+      viewBox: '0 0 16 16',
+      width: size ?? 18,
+      height: size ?? 18,
+      fill: 'none',
+      stroke: 'currentColor',
+      strokeWidth: 1.3,
+      strokeLinecap: 'round',
+      'aria-hidden': 'true',
+    },
+    h('circle', { cx: 8, cy: 8, r: 6 }),
+    h('path', { d: 'M8 4.7V8l2.3 1.5' }));
+
+    const EmptyArt = () => h('svg', {
+      viewBox: '0 0 96 96',
+      width: 96,
+      height: 96,
+      fill: 'none',
+      stroke: 'currentColor',
+      strokeWidth: 2,
+      strokeLinecap: 'round',
+      strokeLinejoin: 'round',
+      'aria-hidden': 'true',
+    },
+    h('path', { d: 'M24 18h34l14 14v46a4 4 0 0 1-4 4H24a4 4 0 0 1-4-4V22a4 4 0 0 1 4-4z' }),
+    h('path', { d: 'M58 18v14h14' }),
+    h('path', { d: 'M31 40h22M31 50h22M31 60h14' }),
+    h('circle', { cx: 64, cy: 66, r: 15 }),
+    h('path', { d: 'M64 59v7l5 3' }));
+
+    const timeZone = () => {
+      try {
+        return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+      } catch {
+        return 'UTC';
+      }
+    };
+
+    const localDate = () => {
+      const now = new Date();
+      return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    };
+
+    /**
+     * Build the initial editor draft for a new task or an existing row.
+     * @param task - the row being edited, or null for a new task.
+     * @returns the draft.
+     */
+    const draftOf = (task) => {
+      const target = task?.target ?? { kind: 'new_once' };
+      const draft = {
+        id: task?.id ?? '',
+        title: task?.title ?? '',
+        prompt: task?.prompt ?? '',
+        kind: task?.kind ?? 'daily',
+        date: localDate(),
+        atTime: '09:00',
+        time: typeof task?.time === 'string' ? task.time.slice(0, 5) : '09:00',
+        everyMinutes: task?.everySeconds ? String(Math.round(task.everySeconds / 60)) : '60',
+        weekday: Array.isArray(task?.weekdays) && task.weekdays.length > 0 ? task.weekdays[0] : 1,
+        rrule: task?.rrule ?? `DTSTART;TZID=${timeZone()}:${localDate().replace(/-/g, '')}T090000\nRRULE:FREQ=WEEKLY;BYDAY=MO`,
+        targetKind: target.kind === 'session' ? 'session' : target.kind === 'new' ? 'new' : 'new_once',
+        sessionId: target.kind === 'session' ? target.sessionId : '',
+        cwd: target.cwd ?? '',
+        autoClean: false,
+        active: task?.status !== 'paused',
+      };
+      if (task?.kind === 'at' && typeof task.scheduledAt === 'string') {
+        const when = new Date(task.scheduledAt);
+        if (!Number.isNaN(when.getTime())) {
+          draft.date = `${when.getFullYear()}-${String(when.getMonth() + 1).padStart(2, '0')}-${String(when.getDate()).padStart(2, '0')}`;
+          draft.atTime = `${String(when.getHours()).padStart(2, '0')}:${String(when.getMinutes()).padStart(2, '0')}`;
+        }
+      }
+      return draft;
+    };
+
+    /**
+     * Turn an editor draft into a Host timing request.
+     * @param draft - editor draft.
+     * @returns the timing request, or undefined when the draft is invalid.
+     */
+    const timingOfDraft = (draft) => {
+      const zone = timeZone();
+      switch (draft.kind) {
+        case 'at': {
+          const when = new Date(`${draft.date}T${draft.atTime}:00`);
+          if (Number.isNaN(when.getTime())) return undefined;
+          return { kind: 'at', at: when.toISOString() };
+        }
+        case 'every': {
+          const minutes = Number(draft.everyMinutes);
+          if (!Number.isFinite(minutes) || minutes < 1) return undefined;
+          return { kind: 'every', every_seconds: Math.round(minutes * 60) };
+        }
+        case 'daily':
+          return { kind: 'daily', daily: { time: draft.time, time_zone: zone } };
+        case 'weekly':
+          return { kind: 'weekly', weekly: { time: draft.time, time_zone: zone, weekdays: [draft.weekday] } };
+        case 'rrule':
+          return draft.rrule.trim().length > 0 ? { kind: 'rrule', rrule: draft.rrule } : undefined;
+        default:
+          return undefined;
+      }
+    };
+
+    const targetOfDraft = (draft) => {
+      if (draft.targetKind === 'session') {
+        if (typeof draft.sessionId !== 'string' || draft.sessionId.length === 0) return undefined;
+        return { kind: 'session', sessionId: draft.sessionId };
+      }
+      return draft.cwd.length > 0
+        ? { kind: draft.targetKind, cwd: draft.cwd }
+        : { kind: draft.targetKind };
+    };
+
+    /**
+     * Automation task management beside the stock Automation tasks page:
+     * the same list, tabs and search, plus in-place creation, bulk deletion,
+     * multi-conversation binding and the auto-clean flag.
      * @param props - standard panel props and the translator.
-     * @returns the enhancement panel.
+     * @returns the automation enhancement page.
      */
     function AutomationPage({ useSessions, useWorkspaces, t }) {
       const tr = typeof t === 'function' ? t : (key) => key;
@@ -1191,13 +1561,19 @@ window.__ModuleLoader__.load({
       const [autoClean, setAutoClean] = React.useState({});
       const [loading, setLoading] = React.useState(true);
       const [loadError, setLoadError] = React.useState('');
+      const [tab, setTab] = React.useState('active');
+      const [query, setQuery] = React.useState('');
       const [selected, setSelected] = React.useState(() => new Set());
       const [busy, setBusy] = React.useState('');
       const [notice, setNotice] = React.useState('');
       const [actionError, setActionError] = React.useState('');
-      const [confirming, setConfirming] = React.useState(false);
+      const [draft, setDraft] = React.useState(null);
+      const [draftError, setDraftError] = React.useState('');
+      const [confirm, setConfirm] = React.useState(null);
       const [bindTarget, setBindTarget] = React.useState(null);
       const [bindPicks, setBindPicks] = React.useState(() => new Set());
+      const [menuOpen, setMenuOpen] = React.useState(false);
+      const [cleanPending, setCleanPending] = React.useState(false);
 
       const load = React.useCallback(async (signal) => {
         const result = await automationCall('catalog');
@@ -1227,17 +1603,20 @@ window.__ModuleLoader__.load({
         return sessions?.byId?.[id]?.displayTitle || id;
       };
 
-      const targetLabel = (task) => {
-        const target = task.target ?? {};
-        if (target.kind === 'session') return `${tr('auto.target.session')} · ${sessionTitle(target.sessionId)}`;
-        return tr(target.kind === 'new_once' ? 'auto.target.newOnce' : 'auto.target.new');
+      const targetLabel = (target) => {
+        if (target?.kind === 'session') return `${tr('auto.target.session')} · ${sessionTitle(target.sessionId)}`;
+        return tr(target?.kind === 'new' ? 'auto.target.new' : 'auto.target.newOnce');
       };
 
-      const statusLabel = (status) => {
-        const key = `auto.status.${status ?? 'unknown'}`;
-        const value = tr(key);
-        return value === key ? tr('auto.status.unknown') : value;
-      };
+      const filtered = rows.filter((task) => {
+        if (tab === 'active' && task.status !== 'active') return false;
+        if (tab === 'paused' && task.status !== 'paused') return false;
+        if (tab === 'ended' && task.status !== 'ended') return false;
+        const needle = query.trim().toLowerCase();
+        if (needle.length === 0) return true;
+        const target = task.target?.kind === 'session' ? sessionTitle(task.target.sessionId) : '';
+        return `${task.title} ${task.prompt} ${target}`.toLowerCase().includes(needle);
+      });
 
       const toggleSelect = (id) => {
         setSelected((current) => {
@@ -1248,17 +1627,113 @@ window.__ModuleLoader__.load({
         });
       };
 
-      const allSelected = rows.length > 0 && rows.every((task) => selected.has(task.id));
-      const toggleAll = () => setSelected(allSelected ? new Set() : new Set(rows.map((task) => task.id)));
+      const openNew = () => {
+        setDraft(draftOf(null));
+        setDraftError('');
+        setNotice('');
+        setActionError('');
+        setMenuOpen(false);
+      };
 
-      const removeSelected = async () => {
-        const ids = [...selected];
+      const openEdit = (task) => {
+        setDraft(draftOf(task));
+        setDraftError('');
+        setActionError('');
+        setMenuOpen(false);
+      };
+
+      const closeDraft = () => {
+        setDraft(null);
+        setDraftError('');
+      };
+
+      const updateDraft = (patch) => setDraft((current) => (current === null ? current : { ...current, ...patch }));
+
+      const saveDraft = async () => {
+        if (draft === null || busy !== '') return;
+        const timing = timingOfDraft(draft);
+        const target = targetOfDraft(draft);
+        if (draft.title.trim().length === 0) {
+          setDraftError(tr('auto.needName'));
+          return;
+        }
+        if (draft.prompt.trim().length === 0) {
+          setDraftError(tr('auto.needContent'));
+          return;
+        }
+        if (timing === undefined) {
+          setDraftError(tr('auto.needTiming'));
+          return;
+        }
+        if (target === undefined) {
+          setDraftError(tr('auto.needSession'));
+          return;
+        }
+        setBusy('save');
+        setDraftError('');
+        const result = draft.id === ''
+          ? await automationCall('create', {
+            title: draft.title.trim(),
+            prompt: draft.prompt,
+            timing,
+            target,
+            autoClean: draft.autoClean,
+          })
+          : await automationCall('update', {
+            id: draft.id,
+            title: draft.title.trim(),
+            prompt: draft.prompt,
+            timing,
+            target,
+            active: draft.active,
+          });
+        setBusy('');
+        if (!result.ok) {
+          setDraftError(result.error);
+          return;
+        }
+        if (draft.id === '' && draft.autoClean) {
+          await automationCall('auto-clean', { id: result.value.id, autoClean: true });
+        }
+        setNotice(tr('auto.saved'));
+        setDraft(null);
+        await load();
+      };
+
+      const toggleActive = async (task) => {
+        const next = task.status === 'active' ? false : true;
+        setBusy('active');
+        const result = await automationCall('update', { id: task.id, active: next });
+        setBusy('');
+        if (!result.ok) {
+          setActionError(result.error);
+          return;
+        }
+        await load();
+        if (draft !== null && draft.id === task.id) updateDraft({ active: next });
+      };
+
+      const runNow = async (task) => {
+        if (busy !== '') return;
+        setBusy('run');
+        setActionError('');
+        const result = await automationCall('run', { id: task.id });
+        setBusy('');
+        if (!result.ok) {
+          setActionError(result.error);
+          return;
+        }
+        setNotice(tr('auto.ran'));
+        await load();
+      };
+
+      const removeTasks = async (ids) => {
         if (ids.length === 0 || busy !== '') return;
         setBusy('delete');
         setActionError('');
         const result = await automationCall('delete', { ids });
         setBusy('');
-        setConfirming(false);
+        setConfirm(null);
         if (!result.ok) {
           setActionError(result.error);
           return;
@@ -1269,6 +1744,7 @@ window.__ModuleLoader__.load({
           ? tr('auto.deleted').replace('{count}', String(deleted))
           : tr('auto.deleteFailed').replace('{count}', String(failed)));
         setSelected(new Set());
+        if (draft !== null && ids.includes(draft.id)) setDraft(null);
         await load();
       };
 
@@ -1329,126 +1805,396 @@ window.__ModuleLoader__.load({
           .sort((a, b) => a.title.localeCompare(b.title));
       }, [sessions, workspaces, bindTarget]);
 
-      const effectiveSelected = rows.filter((task) => selected.has(task.id));
+      const workspaceOptions = React.useMemo(() => {
+        const items = Array.isArray(workspaces?.items) ? workspaces.items : [];
+        return items
+          .map((item) => ({
+            id: item.id,
+            title: item.title || item.directory || item.id,
+            directory: item.directory,
+          }))
+          .filter((item) => typeof item.directory === 'string' && item.directory.length > 0);
+      }, [workspaces]);
 
-      // Dialogs live outside the main column: a fixed overlay inside the
-      // column can be clipped or lose pointer hits behind the shell chrome.
       const portal = (node) => (node !== null && node !== undefined
         && typeof ReactDOM?.createPortal === 'function'
         && typeof document !== 'undefined')
         ? ReactDOM.createPortal(node, document.body)
         : node;
 
-      const list = rows.length === 0 ? null : h('div', { className: 'ove-auto-list' },
-        rows.map((task) => {
-          const meta = [
-            targetLabel(task),
-            task.scheduledAt ? `${tr('auto.next')} ${formatInstant(task.scheduledAt)}` : '',
-            task.lastDelivery ? `${tr('auto.delivered')} ${formatInstant(task.lastDelivery.deliveredAt)}` : '',
-          ].filter((part) => part.length > 0).join(' · ');
-          return h('div', { className: 'ove-auto-row', key: task.id },
+      const selectedRows = rows.filter((task) => selected.has(task.id));
+      const panelTask = draft !== null && draft.id !== ''
+        ? rows.find((task) => task.id === draft.id) ?? null
+        : null;
+
+      const tabs = [
+        ['active', tr('auto.tab.active')],
+        ['paused', tr('auto.tab.paused')],
+        ['ended', tr('auto.tab.ended')],
+        ['all', tr('auto.tab.all')],
+      ];
+
+      const statusText = (status) => {
+        const key = `auto.status.${status ?? 'unknown'}`;
+        const value = tr(key);
+        return value === key ? tr('auto.status.unknown') : value;
+      };
+
+      const editor = draft === null ? null : h('aside', { className: 'ove-detail' },
+        h('div', { className: 'ove-detail-head' },
+          h('span', { className: 'ove-label' }, draft.id === '' ? tr('auto.createTitle') : tr('auto.editTitle')),
+          h('div', { className: 'ove-detail-actions' },
+            h('button', {
+              type: 'button',
+              className: 'ove-primary ove-primary-sm',
+              disabled: busy !== '',
+              onClick: () => void saveDraft(),
+            }, busy === 'save' ? tr('auto.saving') : tr('auto.save')),
+            h('button', {
+              type: 'button',
+              className: 'ove-icon-btn',
+              'aria-label': tr('cancel'),
+              onClick: closeDraft,
+            }, '×'))),
+        h('div', { className: 'ove-detail-body' },
+          h('label', { className: 'ove-field' },
+            h('span', { className: 'ove-label' }, tr('auto.name')),
+            h('input', {
+              className: 'ove-input',
+              value: draft.title,
+              onChange: (event) => updateDraft({ title: event.target.value }),
+            })),
+          h('label', { className: 'ove-field' },
+            h('span', { className: 'ove-label' }, tr('auto.content')),
+            h('textarea', {
+              className: 'ove-textarea',
+              value: draft.prompt,
+              onChange: (event) => updateDraft({ prompt: event.target.value }),
+            })),
+          h('label', { className: 'ove-field' },
+            h('span', { className: 'ove-label' }, tr('auto.target')),
+            h('select', {
+              className: 'ove-select',
+              value: draft.targetKind,
+              onChange: (event) => updateDraft({ targetKind: event.target.value }),
+            },
+            h('option', { value: 'new_once' }, tr('auto.target.newOnce')),
+            h('option', { value: 'new' }, tr('auto.target.new')),
+            h('option', { value: 'session' }, tr('auto.target.session')))),
+          draft.targetKind === 'session'
+            ? h('label', { className: 'ove-field' },
+              h('span', { className: 'ove-label' }, tr('auto.session')),
+              h('select', {
+                className: 'ove-select',
+                value: draft.sessionId,
+                onChange: (event) => updateDraft({ sessionId: event.target.value }),
+              },
+              h('option', { value: '' }, tr('auto.pickSession')),
+              bindCandidates.map((session) => h('option', { key: session.id, value: session.id }, session.title))))
+            : h('label', { className: 'ove-field' },
+              h('span', { className: 'ove-label' }, tr('auto.workspace')),
+              h('select', {
+                className: 'ove-select',
+                value: draft.cwd,
+                onChange: (event) => updateDraft({ cwd: event.target.value }),
+              },
+              h('option', { value: '' }, tr('auto.workspaceDefault')),
+              workspaceOptions.map((workspace) => h('option', { key: workspace.id, value: workspace.directory }, workspace.title)))),
+          h('label', { className: 'ove-field' },
+            h('span', { className: 'ove-label' }, tr('auto.repeat')),
+            h('select', {
+              className: 'ove-select',
+              value: draft.kind,
+              onChange: (event) => updateDraft({ kind: event.target.value }),
+            },
+            h('option', { value: 'at' }, tr('auto.repeat.at')),
+            h('option', { value: 'every' }, tr('auto.repeat.every')),
+            h('option', { value: 'daily' }, tr('auto.repeat.daily')),
+            h('option', { value: 'weekly' }, tr('auto.repeat.weekly')),
+            h('option', { value: 'rrule' }, tr('auto.repeat.rrule')))),
+          draft.kind === 'at'
+            ? h('div', { className: 'ove-inline' },
+              h('label', { className: 'ove-field' },
+                h('span', { className: 'ove-label' }, tr('auto.date')),
+                h('input', {
+                  type: 'date',
+                  className: 'ove-input',
+                  value: draft.date,
+                  onChange: (event) => updateDraft({ date: event.target.value }),
+                })),
+              h('label', { className: 'ove-field' },
+                h('span', { className: 'ove-label' }, tr('auto.time')),
+                h('input', {
+                  type: 'time',
+                  className: 'ove-input',
+                  value: draft.atTime,
+                  onChange: (event) => updateDraft({ atTime: event.target.value }),
+                })))
+            : null,
+          draft.kind === 'every'
+            ? h('label', { className: 'ove-field' },
+              h('span', { className: 'ove-label' }, tr('auto.interval')),
+              h('input', {
+                type: 'number',
+                min: 1,
+                className: 'ove-input',
+                value: draft.everyMinutes,
+                onChange: (event) => updateDraft({ everyMinutes: event.target.value }),
+              }))
+            : null,
+          draft.kind === 'daily'
+            ? h('label', { className: 'ove-field' },
+              h('span', { className: 'ove-label' }, tr('auto.time')),
+              h('input', {
+                type: 'time',
+                className: 'ove-input',
+                value: draft.time,
+                onChange: (event) => updateDraft({ time: event.target.value }),
+              }))
+            : null,
+          draft.kind === 'weekly'
+            ? h('div', { className: 'ove-inline' },
+              h('label', { className: 'ove-field' },
+                h('span', { className: 'ove-label' }, tr('auto.weekday')),
+                h('select', {
+                  className: 'ove-select',
+                  value: String(draft.weekday),
+                  onChange: (event) => updateDraft({ weekday: Number(event.target.value) }),
+                },
+                WEEKDAY_KEYS.map((key, index) => h('option', { key, value: String(index) }, tr(`auto.weekday.${key}`))))),
+              h('label', { className: 'ove-field' },
+                h('span', { className: 'ove-label' }, tr('auto.time')),
+                h('input', {
+                  type: 'time',
+                  className: 'ove-input',
+                  value: draft.time,
+                  onChange: (event) => updateDraft({ time: event.target.value }),
+                })))
+            : null,
+          draft.kind === 'rrule'
+            ? h('label', { className: 'ove-field' },
+              h('span', { className: 'ove-label' }, tr('auto.rule')),
+              h('textarea', {
+                className: 'ove-textarea ove-rule',
+                value: draft.rrule,
+                spellCheck: false,
+                onChange: (event) => updateDraft({ rrule: event.target.value }),
+              }))
+            : null,
+          h('label', { className: 'ove-field ove-check-row' },
             h('input', {
               type: 'checkbox',
               className: 'ove-auto-check',
-              checked: selected.has(task.id),
-              'aria-label': task.title,
-              onChange: () => toggleSelect(task.id),
+              checked: draft.autoClean,
+              onChange: () => updateDraft({ autoClean: !draft.autoClean }),
             }),
-            h('div', { className: 'ove-auto-body' },
-              h('div', { className: 'ove-auto-title' },
-                h('span', { className: 'ove-auto-name' }, task.title),
-                h('span', {
-                  className: `ove-chip ${STATUS_CHIP[task.status] ?? 'ove-chip-ended'}`,
-                }, statusLabel(task.status))),
-              h('div', { className: 'ove-auto-meta' }, meta),
-              task.prompt ? h('div', { className: 'ove-auto-prompt' }, task.prompt) : null),
-            h('div', { className: 'ove-auto-side' },
-              h('label', { className: 'ove-auto-clean', title: tr('auto.autoCleanHint') },
-                h('input', {
-                  type: 'checkbox',
-                  className: 'ove-auto-check',
-                  checked: autoClean[task.id] === true,
-                  onChange: () => void toggleClean(task),
-                }),
-                tr('auto.autoClean')),
+            h('span', { className: 'ove-label' }, tr('auto.clean'))),
+          panelTask !== null
+            ? h('div', { className: 'ove-detail-actions-row' },
               h('button', {
                 type: 'button',
                 className: 'ove-btn',
-                onClick: () => openBind(task),
-              }, tr('auto.bind'))));
-        }));
+                disabled: busy !== '',
+                onClick: () => void toggleActive(panelTask),
+              }, panelTask.status === 'active' ? tr('auto.pause') : tr('auto.resume')),
+              h('button', {
+                type: 'button',
+                className: 'ove-btn ove-btn-danger',
+                disabled: busy !== '',
+                onClick: () => setConfirm({ ids: [panelTask.id], title: panelTask.title }),
+              }, tr('auto.deleteTask')))
+            : null,
+          draftError.length > 0 ? h('p', { className: 'ove-error' }, draftError) : null));
 
-      return h(React.Fragment, null,
+      return h('div', { className: 'ove-auto' },
         h('style', { key: 'styles', 'data-plugin-css': `${NS}-automation` }, CSS),
-        h('div', { className: 'ove-auto' },
+        h('div', { className: 'ove-auto-main' },
           h('div', { className: 'ove-auto-scroll' },
             h('div', { className: 'ove-auto-inner' },
               h('div', { className: 'ove-auto-heading' },
-                h('div', { className: 'ove-head' },
-                  h('h1', { className: 'ove-title' }, tr('auto.title')),
-                  h('p', { className: 'ove-intro' }, tr('auto.intro'))),
-                h('button', {
-                  type: 'button',
-                  className: 'ove-btn',
-                  disabled: loading,
-                  onClick: () => { setLoading(true); void load(); },
-                }, tr('auto.refresh'))),
+                h('h1', { className: 'ove-auto-title-text' }, tr('auto.panel')),
+                h('div', { className: 'ove-split' },
+                  h('button', {
+                    type: 'button',
+                    className: 'ove-split-main',
+                    onClick: openNew,
+                  }, `+ ${tr('auto.new')}`),
+                  h('button', {
+                    type: 'button',
+                    className: 'ove-split-more',
+                    'aria-label': tr('auto.newMenu'),
+                    onClick: () => setMenuOpen((open) => !open),
+                  }, h('svg', {
+                    viewBox: '0 0 16 16',
+                    width: 12,
+                    height: 12,
+                    fill: 'none',
+                    stroke: 'currentColor',
+                    strokeWidth: 1.6,
+                    strokeLinecap: 'round',
+                    'aria-hidden': 'true',
+                  }, h('path', { d: 'M4 6.5 8 10l4-3.5' }))),
+                  menuOpen
+                    ? h('div', { className: 'ove-split-menu' },
+                      h('button', {
+                        type: 'button',
+                        className: 'ove-menu-row',
+                        onClick: openNew,
+                      }, tr('auto.newManual')),
+                      h('button', {
+                        type: 'button',
+                        className: 'ove-menu-row',
+                        disabled: rows.length === 0,
+                        onClick: () => {
+                          setMenuOpen(false);
+                          setNotice('');
+                          setActionError('');
+                          openBind(rows[0]);
+                        },
+                      }, tr('auto.newMulti')))
+                    : null)),
 
-              h('div', { className: 'ove-auto-toolbar' },
-                h('label', { className: 'ove-auto-clean' },
-                  h('input', {
-                    type: 'checkbox',
-                    className: 'ove-auto-check',
-                    checked: allSelected,
-                    disabled: rows.length === 0,
-                    onChange: toggleAll,
-                  }),
-                  tr('auto.selectAll')),
-                h('span', { className: 'ove-auto-count' }, tr('auto.selected').replace('{count}', String(effectiveSelected.length))),
-                h('button', {
+              h('div', { className: 'ove-tabs', role: 'tablist' },
+                tabs.map(([value, label]) => h('button', {
+                  key: value,
                   type: 'button',
-                  className: 'ove-btn ove-btn-danger',
-                  disabled: effectiveSelected.length === 0 || busy !== '',
-                  onClick: () => setConfirming(true),
-                }, tr('auto.deleteSelected'))),
+                  role: 'tab',
+                  className: 'ove-tab',
+                  'aria-selected': tab === value,
+                  onClick: () => setTab(value),
+                }, label))),
+
+              h('div', { className: 'ove-search-row' },
+                h('span', { className: 'ove-search-icon' },
+                  h('svg', {
+                    viewBox: '0 0 16 16',
+                    width: 16,
+                    height: 16,
+                    fill: 'none',
+                    stroke: 'currentColor',
+                    strokeWidth: 1.4,
+                    strokeLinecap: 'round',
+                    'aria-hidden': 'true',
+                  },
+                  h('circle', { cx: 7, cy: 7, r: 4.5 }),
+                  h('path', { d: 'M10.5 10.5 14 14' }))),
+                h('input', {
+                  className: 'ove-search-input',
+                  type: 'search',
+                  placeholder: tr('auto.search'),
+                  'aria-label': tr('auto.search'),
+                  value: query,
+                  onChange: (event) => setQuery(event.target.value),
+                })),
+
+              selectedRows.length > 0
+                ? h('div', { className: 'ove-bulk' },
+                  h('span', { className: 'ove-bulk-count' }, tr('auto.selected').replace('{count}', String(selectedRows.length))),
+                  h('button', {
+                    type: 'button',
+                    className: 'ove-btn',
+                    onClick: () => openBind(selectedRows[0]),
+                  }, tr('auto.bind')),
+                  h('button', {
+                    type: 'button',
+                    className: 'ove-btn ove-btn-danger',
+                    onClick: () => setConfirm({ ids: selectedRows.map((task) => task.id), title: '' }),
+                  }, tr('auto.deleteSelected')),
+                  h('button', {
+                    type: 'button',
+                    className: 'ove-btn',
+                    onClick: () => setSelected(new Set()),
+                  }, tr('auto.clearSelection')))
+                : null,
 
               notice.length > 0 ? h('p', { className: 'ove-notice' }, notice) : null,
               actionError.length > 0 ? h('p', { className: 'ove-error' }, actionError) : null,
 
               loading && rows.length === 0 ? h('p', { className: 'ove-muted' }, tr('auto.loading')) : null,
               loadError.length > 0
-                ? h('div', { className: 'ove-card' },
-                  h('p', { className: 'ove-error' }, `${tr('auto.error')}：${loadError}`),
-                  h('div', { className: 'ove-actions' },
-                    h('button', { type: 'button', className: 'ove-btn', onClick: () => { setLoading(true); void load(); } }, tr('auto.retry'))))
-                : null,
-              !loading && loadError.length === 0 && rows.length === 0
-                ? h('div', { className: 'ove-card' },
-                  h('p', { className: 'ove-muted' }, tr('auto.empty')),
-                  h('p', { className: 'ove-footnote' }, tr('auto.emptyHint')))
+                ? h('p', { className: 'ove-error' }, `${tr('auto.error')}：${loadError}`)
                 : null,
 
-              list)),
+              !loading && loadError.length === 0 && filtered.length === 0
+                ? h('div', { className: 'ove-empty' },
+                  h('div', { className: 'ove-empty-art' }, h(EmptyArt, null)),
+                  h('p', { className: 'ove-empty-text' }, query.trim().length > 0 ? tr('auto.noMatches') : tr('auto.empty')),
+                  rows.length === 0
+                    ? h('button', { type: 'button', className: 'ove-btn', onClick: openNew }, tr('auto.emptyAction'))
+                    : null)
+                : null,
 
-        portal(confirming
+              h('div', { className: 'ove-task-list' }, filtered.map((task) => h('div', {
+                key: task.id,
+                className: 'ove-task',
+                'data-active': draft !== null && draft.id === task.id,
+                role: 'button',
+                tabIndex: 0,
+                onClick: () => openEdit(task),
+                onKeyDown: (event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    openEdit(task);
+                  }
+                },
+              },
+              h('input', {
+                type: 'checkbox',
+                className: 'ove-task-check',
+                'aria-label': tr('auto.select'),
+                checked: selected.has(task.id),
+                onClick: (event) => event.stopPropagation(),
+                onChange: () => toggleSelect(task.id),
+              }),
+              h('span', { className: 'ove-task-icon' }, h(ClockMark, null)),
+              h('div', { className: 'ove-task-body' },
+                h('div', { className: 'ove-task-title' }, task.title),
+                h('div', { className: 'ove-task-meta' },
+                  (() => {
+                    const head = task.status === 'active' ? recurrenceOf(task, tr) : statusText(task.status);
+                    const relative = task.status === 'active' ? relativeTo(task.scheduledAt, tr) : '';
+                    const when = task.scheduledAt
+                      ? `${tr('auto.nextAt')}：${formatInstant(task.scheduledAt)}${relative.length > 0 ? `（${relative}）` : ''}`
+                      : '';
+                    return [head, when].filter((part) => part.length > 0).join(' · ');
+                  })())),
+              h('div', { className: 'ove-task-hover' },
+                h('label', {
+                  className: 'ove-clean-toggle',
+                  title: tr('auto.autoCleanHint'),
+                  onClick: (event) => event.stopPropagation(),
+                },
+                h('input', {
+                  type: 'checkbox',
+                  className: 'ove-auto-check',
+                  checked: autoClean[task.id] === true,
+                  onChange: () => void toggleClean(task),
+                }),
+                tr('auto.cleanShort')))))),
+              ' '))),
+          editor,
+
+        portal(confirm !== null
           ? h('div', { className: 'ove-overlay ove-overlay-portal' },
             h('div', { className: 'ove-dialog', role: 'dialog', 'aria-modal': 'true' },
               h('h2', { className: 'ove-dialog-title' }, tr('auto.deleteTitle')),
               h('p', { className: 'ove-dialog-desc' }, tr('auto.deleteDesc')),
-              h('p', { className: 'ove-dialog-target' },
-                effectiveSelected.map((task) => task.title).join('、')),
+              confirm.title.length > 0
+                ? h('p', { className: 'ove-dialog-target' }, confirm.title)
+                : h('p', { className: 'ove-dialog-target' },
+                  selectedRows.map((task) => task.title).join('、')),
               h('div', { className: 'ove-dialog-actions' },
                 h('button', {
                   type: 'button',
                   className: 'ove-btn',
                   disabled: busy !== '',
-                  onClick: () => setConfirming(false),
+                  onClick: () => setConfirm(null),
                 }, tr('cancel')),
                 h('button', {
                   type: 'button',
                   className: 'ove-btn ove-btn-danger',
                   disabled: busy !== '',
-                  onClick: () => void removeSelected(),
+                  onClick: () => void removeTasks(confirm.ids),
                 }, busy === 'delete' ? tr('auto.deleting') : tr('auto.deleteConfirm')))))
           : null),
 
@@ -1489,7 +2235,7 @@ window.__ModuleLoader__.load({
                   disabled: busy !== '' || bindPicks.size === 0,
                   onClick: () => void confirmBind(),
                 }, busy === 'bind' ? tr('auto.binding') : tr('auto.bindConfirm')))))
-          : null)));
+          : null));
     }
 
     /**

@@ -162,6 +162,15 @@ const rowOf = record => ({
   executionActive: record.executionActive === true,
   target: targetOf(record),
   involvedSessionIds: Array.isArray(record.involvedSessionIds) ? [...record.involvedSessionIds] : [],
+  // Rule fields, so the panel can describe and re-edit the recurrence without
+  // parsing a localized label.
+  afterSeconds: typeof record.afterSeconds === 'number' ? record.afterSeconds : null,
+  everySeconds: typeof record.everySeconds === 'number' ? record.everySeconds : null,
+  time: typeof record.time === 'string' ? record.time : null,
+  timeZone: typeof record.timeZone === 'string' ? record.timeZone : null,
+  weekdays: Array.isArray(record.weekdays) ? [...record.weekdays] : null,
+  expression: typeof record.expression === 'string' ? record.expression : null,
+  rrule: typeof record.rrule === 'string' ? record.rrule : null,
 })
 
 /**
@@ -183,6 +192,76 @@ async function setAutoClean(deps, request) {
   else delete state.autoClean[request.id]
   save()
   return { id: request.id, updated: true, autoClean: request.autoClean === true }
+}
+
+/**
+ * Accept only a timing request this Host understands.
+ * @param input - untrusted timing object.
+ * @returns a ScheduleTiming request, or undefined.
+ */
+function sanitizeTiming(input) {
+  if (input === null || typeof input !== 'object') return undefined
+  const zone = typeof input.time_zone === 'string' && input.time_zone.length > 0 ? input.time_zone : undefined
+  const withSeconds = (value) => (typeof value === 'string' && /^\d{2}:\d{2}$/.test(value) ? value + ':00' : value)
+  const nestedZone = (value) => (typeof value?.time_zone === 'string' && value.time_zone.length > 0
+    ? value.time_zone
+    : zone)
+  switch (input.kind) {
+    case 'at':
+      return typeof input.at === 'string' && input.at.length > 0 ? { kind: 'at', at: input.at } : undefined
+    case 'after':
+      return Number.isFinite(input.after_seconds) && input.after_seconds > 0
+        ? { kind: 'after', after_seconds: Math.round(input.after_seconds) }
+        : undefined
+    case 'every':
+      return Number.isFinite(input.every_seconds) && input.every_seconds >= 60
+        ? { kind: 'every', every_seconds: Math.round(input.every_seconds) }
+        : undefined
+    case 'daily':
+      return typeof input.daily?.time === 'string' && /^\d{2}:\d{2}(:\d{2})?$/.test(input.daily.time) && nestedZone(input.daily) !== undefined
+        ? { kind: 'daily', daily: { time: withSeconds(input.daily.time), time_zone: nestedZone(input.daily) } }
+        : undefined
+    case 'weekly':
+      return typeof input.weekly?.time === 'string'
+        && /^\d{2}:\d{2}(:\d{2})?$/.test(input.weekly.time)
+        && nestedZone(input.weekly) !== undefined
+        && Array.isArray(input.weekly.weekdays)
+        && input.weekly.weekdays.every(day => Number.isInteger(day) && day >= 0 && day <= 6)
+        && input.weekly.weekdays.length > 0
+        ? { kind: 'weekly', weekly: { time: withSeconds(input.weekly.time), time_zone: nestedZone(input.weekly), weekdays: [...input.weekly.weekdays] } }
+        : undefined
+    case 'cron':
+      return typeof input.cron?.expression === 'string' && input.cron.expression.trim().length > 0 && nestedZone(input.cron) !== undefined
+        ? { kind: 'cron', cron: { expression: input.cron.expression.trim(), time_zone: nestedZone(input.cron) } }
+        : undefined
+    case 'rrule':
+      return typeof input.rrule === 'string' && input.rrule.trim().length > 0
+        ? { kind: 'rrule', rrule: input.rrule }
+        : undefined
+    default:
+      return undefined
+  }
+}
+
+/**
+ * Accept a destination this Host can store.
+ * @param input - untrusted target object.
+ * @returns a ScheduleTargetRequest, or undefined.
+ */
+function sanitizeTarget(input) {
+  if (input === null || typeof input !== 'object') return undefined
+  if (input.kind === 'session') {
+    return typeof input.sessionId === 'string' && input.sessionId.length > 0
+      ? { kind: 'session', sessionId: input.sessionId }
+      : undefined
+  }
+  if (input.kind === 'new_once' || input.kind === 'new') {
+    const create = {}
+    if (typeof input.cwd === 'string' && input.cwd.length > 0) create.cwd = input.cwd
+    if (typeof input.agentPreset === 'string' && input.agentPreset.length > 0) create.agentPreset = input.agentPreset
+    return Object.keys(create).length > 0 ? { kind: input.kind, create } : { kind: input.kind }
+  }
+  return undefined
 }
 
 /**
@@ -375,6 +454,120 @@ export function createAutomationSurface(options) {
     }
   }
 
+  const create = async (req, res) => {
+    const body = await accept(req, res)
+    if (body === undefined) return
+    const title = typeof body?.title === 'string' ? body.title.trim() : ''
+    const prompt = typeof body?.prompt === 'string' ? body.prompt : ''
+    const timing = sanitizeTiming(body?.timing)
+    const target = body?.target === undefined ? undefined : sanitizeTarget(body.target)
+    if (title.length === 0 || title.length > 200 || prompt.trim().length === 0 || prompt.length > 20000) {
+      sendJson(res, 400, failure('invalid-task', '请填写任务名称与内容，名称不超过 200 字。'))
+      return
+    }
+    if (timing === undefined) {
+      sendJson(res, 400, failure('invalid-timing', '重复规则无效，请检查时间设置。'))
+      return
+    }
+    if (body?.target !== undefined && target === undefined) {
+      sendJson(res, 400, failure('invalid-target', '执行位置无效。'))
+      return
+    }
+    try {
+      const record = await service.create({
+        title,
+        prompt,
+        timing,
+        ...(target === undefined ? {} : { target }),
+      })
+      if (body?.autoClean === true) {
+        state.autoClean[record.id] = true
+        save()
+      }
+      sendJson(res, 200, { ok: true, value: rowOf(record) })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      warn(`automation: create failed: ${message}`)
+      sendJson(res, 409, failure('schedule-create-failed', message))
+    }
+  }
+
+  const update = async (req, res) => {
+    const body = await accept(req, res)
+    if (body === undefined) return
+    const id = typeof body?.id === 'string' ? body.id : ''
+    if (id.length === 0) {
+      sendJson(res, 400, failure('invalid-id', '任务 ID 无效。'))
+      return
+    }
+    const patch = {}
+    if (typeof body.title === 'string') patch.title = body.title.trim()
+    if (typeof body.prompt === 'string') patch.prompt = body.prompt
+    if (typeof body.active === 'boolean') patch.active = body.active
+    if (body.timing !== undefined) {
+      const timing = sanitizeTiming(body.timing)
+      if (timing === undefined) {
+        sendJson(res, 400, failure('invalid-timing', '重复规则无效，请检查时间设置。'))
+        return
+      }
+      patch.timing = timing
+    }
+    if (body.target !== undefined) {
+      const target = sanitizeTarget(body.target)
+      if (target === undefined) {
+        sendJson(res, 400, failure('invalid-target', '执行位置无效。'))
+        return
+      }
+      patch.target = target
+    }
+    if (Object.keys(patch).length === 0) {
+      sendJson(res, 400, failure('empty-patch', '没有需要保存的改动。'))
+      return
+    }
+    try {
+      const result = await service.edit({ id, action: 'update', patch })
+      if (result?.code === 'schedule_not_found') {
+        sendJson(res, 404, failure('schedule_not_found', '任务不存在或已删除。'))
+        return
+      }
+      if (result?.code === 'schedule_conflict') {
+        sendJson(res, 409, failure('schedule_conflict', '任务已被其他位置修改，请刷新后重试。'))
+        return
+      }
+      sendJson(res, 200, { ok: true, value: rowOf(result) })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      warn(`automation: update failed: ${message}`)
+      sendJson(res, 409, failure('schedule-update-failed', message))
+    }
+  }
+
+  const run = async (req, res) => {
+    const body = await accept(req, res)
+    if (body === undefined) return
+    const id = typeof body?.id === 'string' ? body.id : ''
+    if (id.length === 0) {
+      sendJson(res, 400, failure('invalid-id', '任务 ID 无效。'))
+      return
+    }
+    try {
+      const result = await service.run({ id })
+      if (result?.code === 'schedule_not_found') {
+        sendJson(res, 404, failure('schedule_not_found', '任务不存在或已删除。'))
+        return
+      }
+      if (result?.code === 'schedule_execution_pending') {
+        sendJson(res, 409, failure('schedule_execution_pending', '该任务正在投递中，请稍后再试。'))
+        return
+      }
+      sendJson(res, 200, { ok: true, value: rowOf(result) })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      warn(`automation: run failed: ${message}`)
+      sendJson(res, 409, failure('schedule-run-failed', message))
+    }
+  }
+
   const remove = async (req, res) => {
     const body = await accept(req, res)
     if (body === undefined) return
@@ -421,5 +614,5 @@ export function createAutomationSurface(options) {
     }
   }
 
-  return { handlers: { catalog, autoClean, remove, bind }, reconcile }
+  return { handlers: { catalog, create, update, run, autoClean, remove, bind }, reconcile }
 }
