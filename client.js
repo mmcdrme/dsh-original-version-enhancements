@@ -1,11 +1,11 @@
 window.__ModuleLoader__.load({
-  id: '@local/dsh-original-version-addition',
+  id: '@local/dsh-original-version-enhancements',
   factory(require) {
     const React = require('react');
     const h = React.createElement;
 
     /** Locale namespace owned by this plugin. */
-    const NS = 'original-version-addition';
+    const NS = 'original-version-enhancements';
     /** Route prefix registered by the Host half. */
     const ROUTE_ROOT = '/plugins/original-version-enhancements';
     /** The four accepted work-details modes, in the same order as Settings. */
@@ -668,7 +668,7 @@ window.__ModuleLoader__.load({
       apply(ctx) {
         const text = (key) => ctx.locale.getSnapshot().active === 'zh' ? (zh[key] ?? key) : (en[key] ?? key);
 
-        ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'original-version-addition: dictionaries');
+        ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'original-version-enhancements: dictionaries');
 
         ctx.effect(() => ctx.slots.inject('settings.section', () => ctx.slots.register({
           name: 'settings.section',
@@ -676,13 +676,13 @@ window.__ModuleLoader__.load({
           order: 22,
           label: () => text('pageTitle'),
           inject: () => ({ t: (key) => text(key), ctx }),
-        }, PluginPage)), 'original-version-addition: plugin page');
+        }, PluginPage)), 'original-version-enhancements: plugin page');
 
         ctx.effect(() => ctx.configForms.whileServed(['ui-chat'], () => {
           const form = ctx.configForms.get('ui-chat');
           const register = (slot, order) => ctx.slots.inject(slot, () => ctx.slots.register({
             name: slot,
-            id: 'original-version-addition',
+            id: 'original-version-enhancements',
             order,
             locale: NS,
             inject: () => ({ form }),
@@ -694,7 +694,7 @@ window.__ModuleLoader__.load({
           return () => {
             for (const dispose of disposers) dispose();
           };
-        }), 'original-version-addition: workspace opener actions');
+        }), 'original-version-enhancements: workspace opener actions');
       },
     };
   },

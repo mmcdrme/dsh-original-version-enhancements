@@ -1,4 +1,4 @@
 - insert:
-    - id: original-version-addition
-      name: '@local/dsh-original-version-addition'
+    - id: original-version-enhancements
+      name: '@local/dsh-original-version-enhancements'
       config: {}

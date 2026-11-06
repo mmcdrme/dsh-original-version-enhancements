@@ -59,7 +59,7 @@ plugin_manager install_bundle <本目录绝对路径>
 或克隆仓库：
 
 ```text
-git clone https://github.com/mmcdrme/dsh-original-version-addition.git
+git clone https://github.com/mmcdrme/dsh-original-version-enhancements.git
 ```
 
 ## 结构 / Layout
