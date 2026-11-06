@@ -221,6 +221,7 @@ window.__ModuleLoader__.load({
       'auto.tab.all': '全部',
       'auto.search': '搜索自动化任务',
       'auto.select': '选择任务',
+      'auto.selectAll': '全选',
       'auto.clearSelection': '取消选择',
       'auto.emptyAction': '新建自动化任务',
       'auto.noMatches': '没有匹配的自动化任务',
@@ -249,8 +250,9 @@ window.__ModuleLoader__.load({
       'auto.target': '执行位置',
       'auto.session': '关联会话',
       'auto.pickSession': '选择会话',
+      'auto.archived': '已归档',
       'auto.workspace': '关联工作区',
-      'auto.workspaceDefault': '默认工作区',
+      'auto.workspaceDefault': '不指定（跟随默认）',
       'auto.repeat': '重复',
       'auto.repeat.at': '一次',
       'auto.repeat.every': '按分钟',
@@ -373,6 +375,7 @@ window.__ModuleLoader__.load({
       'auto.tab.all': 'All',
       'auto.search': 'Search automation tasks',
       'auto.select': 'Select task',
+      'auto.selectAll': 'Select all',
       'auto.clearSelection': 'Clear selection',
       'auto.emptyAction': 'Create an automation task',
       'auto.noMatches': 'No matching automation tasks',
@@ -401,8 +404,9 @@ window.__ModuleLoader__.load({
       'auto.target': 'Destination',
       'auto.session': 'Conversation',
       'auto.pickSession': 'Choose a conversation',
+      'auto.archived': 'archived',
       'auto.workspace': 'Workspace',
-      'auto.workspaceDefault': 'Default workspace',
+      'auto.workspaceDefault': 'Not set (use default)',
       'auto.repeat': 'Repeat',
       'auto.repeat.at': 'Once',
       'auto.repeat.every': 'Every N minutes',
@@ -682,6 +686,7 @@ window.__ModuleLoader__.load({
       .ove-menu-row:disabled { opacity: .5; cursor: default; }
 
       .ove-tabs { display: flex; gap: 2px; margin-bottom: 12px; flex-wrap: wrap; }
+      .ove-select-all { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; font-size: 12px; line-height: 20px; color: var(--dsw-alias-label-tertiary); cursor: pointer; white-space: nowrap; }
       .ove-tab {
         border: 0; background: transparent; font: inherit; font-size: 13px; line-height: 20px;
         color: var(--dsw-alias-label-tertiary); padding: 6px 12px; border-radius: 8px; cursor: pointer;
@@ -1572,7 +1577,6 @@ window.__ModuleLoader__.load({
       const [confirm, setConfirm] = React.useState(null);
       const [bindTarget, setBindTarget] = React.useState(null);
       const [bindPicks, setBindPicks] = React.useState(() => new Set());
-      const [menuOpen, setMenuOpen] = React.useState(false);
       const [cleanPending, setCleanPending] = React.useState(false);
 
       const load = React.useCallback(async (signal) => {
@@ -1632,14 +1636,12 @@ window.__ModuleLoader__.load({
         setDraftError('');
         setNotice('');
         setActionError('');
-        setMenuOpen(false);
       };
 
       const openEdit = (task) => {
         setDraft(draftOf(task));
         setDraftError('');
         setActionError('');
-        setMenuOpen(false);
       };
 
       const closeDraft = () => {
@@ -1794,26 +1796,53 @@ window.__ModuleLoader__.load({
         await load();
       };
 
-      const bindCandidates = React.useMemo(() => {
+      const sessionOptions = React.useMemo(() => {
         const byId = sessions?.byId ?? {};
         const archived = new Set(Array.isArray(workspaces?.archivedSessionIds) ? workspaces.archivedSessionIds : []);
-        const current = bindTarget?.target?.kind === 'session' ? bindTarget.target.sessionId : undefined;
-        return Object.values(byId)
+        const list = Object.values(byId)
           .filter((session) => session !== null && typeof session === 'object' && typeof session.id === 'string')
-          .filter((session) => session.id !== current && !archived.has(session.id))
-          .map((session) => ({ id: session.id, title: session.displayTitle || session.id }))
+          .map((session) => ({
+            id: session.id,
+            title: String(session.displayTitle || session.id),
+            archived: archived.has(session.id),
+          }))
           .sort((a, b) => a.title.localeCompare(b.title));
-      }, [sessions, workspaces, bindTarget]);
+        // Several sessions routinely share a title (a workspace name, "新会话").
+        // Append the identity tail so a picker entry addresses exactly one row.
+        const counts = new Map();
+        for (const session of list) counts.set(session.title, (counts.get(session.title) ?? 0) + 1);
+        return list.map((session) => ({
+          ...session,
+          label: counts.get(session.title) > 1
+            ? `${session.title} · ${session.id.slice(-4)}`
+            : session.title,
+        }));
+      }, [sessions, workspaces]);
+
+      const bindCandidates = React.useMemo(() => {
+        const current = bindTarget?.target?.kind === 'session' ? bindTarget.target.sessionId : undefined;
+        return sessionOptions.filter((session) => session.id !== current && !session.archived);
+      }, [sessionOptions, bindTarget]);
+
+      /** Sessions a task may point at, plus its own (possibly archived) target. */
+      const targetSessions = React.useMemo(() => {
+        const current = draft?.sessionId;
+        const list = sessionOptions.filter((session) => !session.archived
+          || session.id === current);
+        return list;
+      }, [sessionOptions, draft?.sessionId]);
 
       const workspaceOptions = React.useMemo(() => {
         const items = Array.isArray(workspaces?.items) ? workspaces.items : [];
         return items
           .map((item) => ({
             id: item.id,
-            title: item.title || item.directory || item.id,
-            directory: item.directory,
+            title: String(item.title || item.path || item.directory || item.id),
+            path: typeof item.path === 'string'
+              ? item.path
+              : (typeof item.directory === 'string' ? item.directory : ''),
           }))
-          .filter((item) => typeof item.directory === 'string' && item.directory.length > 0);
+          .filter((item) => item.path.length > 0);
       }, [workspaces]);
 
       const portal = (node) => (node !== null && node !== undefined
@@ -1890,7 +1919,10 @@ window.__ModuleLoader__.load({
                 onChange: (event) => updateDraft({ sessionId: event.target.value }),
               },
               h('option', { value: '' }, tr('auto.pickSession')),
-              bindCandidates.map((session) => h('option', { key: session.id, value: session.id }, session.title))))
+              targetSessions.map((session) => h('option', {
+                key: session.id,
+                value: session.id,
+              }, session.archived ? `${session.label}（${tr('auto.archived')}）` : session.label))))
             : h('label', { className: 'ove-field' },
               h('span', { className: 'ove-label' }, tr('auto.workspace')),
               h('select', {
@@ -1899,7 +1931,11 @@ window.__ModuleLoader__.load({
                 onChange: (event) => updateDraft({ cwd: event.target.value }),
               },
               h('option', { value: '' }, tr('auto.workspaceDefault')),
-              workspaceOptions.map((workspace) => h('option', { key: workspace.id, value: workspace.directory }, workspace.title)))),
+              workspaceOptions.map((workspace) => h('option', {
+                key: workspace.id,
+                value: workspace.path,
+                title: workspace.path,
+              }, workspace.title)))),
           h('label', { className: 'ove-field' },
             h('span', { className: 'ove-label' }, tr('auto.repeat')),
             h('select', {
@@ -2013,46 +2049,11 @@ window.__ModuleLoader__.load({
             h('div', { className: 'ove-auto-inner' },
               h('div', { className: 'ove-auto-heading' },
                 h('h1', { className: 'ove-auto-title-text' }, tr('auto.panel')),
-                h('div', { className: 'ove-split' },
-                  h('button', {
-                    type: 'button',
-                    className: 'ove-split-main',
-                    onClick: openNew,
-                  }, `+ ${tr('auto.new')}`),
-                  h('button', {
-                    type: 'button',
-                    className: 'ove-split-more',
-                    'aria-label': tr('auto.newMenu'),
-                    onClick: () => setMenuOpen((open) => !open),
-                  }, h('svg', {
-                    viewBox: '0 0 16 16',
-                    width: 12,
-                    height: 12,
-                    fill: 'none',
-                    stroke: 'currentColor',
-                    strokeWidth: 1.6,
-                    strokeLinecap: 'round',
-                    'aria-hidden': 'true',
-                  }, h('path', { d: 'M4 6.5 8 10l4-3.5' }))),
-                  menuOpen
-                    ? h('div', { className: 'ove-split-menu' },
-                      h('button', {
-                        type: 'button',
-                        className: 'ove-menu-row',
-                        onClick: openNew,
-                      }, tr('auto.newManual')),
-                      h('button', {
-                        type: 'button',
-                        className: 'ove-menu-row',
-                        disabled: rows.length === 0,
-                        onClick: () => {
-                          setMenuOpen(false);
-                          setNotice('');
-                          setActionError('');
-                          openBind(rows[0]);
-                        },
-                      }, tr('auto.newMulti')))
-                    : null)),
+                h('button', {
+                  type: 'button',
+                  className: 'ove-primary',
+                  onClick: openNew,
+                }, `+ ${tr('auto.new')}`)),
 
               h('div', { className: 'ove-tabs', role: 'tablist' },
                 tabs.map(([value, label]) => h('button', {
@@ -2062,7 +2063,26 @@ window.__ModuleLoader__.load({
                   className: 'ove-tab',
                   'aria-selected': tab === value,
                   onClick: () => setTab(value),
-                }, label))),
+                }, label)),
+                h('label', { className: 'ove-select-all' },
+                  h('input', {
+                    type: 'checkbox',
+                    className: 'ove-auto-check',
+                    checked: filtered.length > 0 && filtered.every((task) => selected.has(task.id)),
+                    disabled: filtered.length === 0,
+                    onChange: () => {
+                      const all = filtered.every((task) => selected.has(task.id));
+                      setSelected((current) => {
+                        const next = new Set(current);
+                        for (const task of filtered) {
+                          if (all) next.delete(task.id);
+                          else next.add(task.id);
+                        }
+                        return next;
+                      });
+                    },
+                  }),
+                  tr('auto.selectAll'))),
 
               h('div', { className: 'ove-search-row' },
                 h('span', { className: 'ove-search-icon' },
@@ -2221,7 +2241,7 @@ window.__ModuleLoader__.load({
                     return next;
                   }),
                 }),
-                h('span', null, session.title)))),
+                h('span', null, session.label)))),
               h('div', { className: 'ove-dialog-actions' },
                 h('button', {
                   type: 'button',
