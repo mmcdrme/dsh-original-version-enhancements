@@ -30,6 +30,24 @@
   `workspaces.unarchiveSession`；「永久删除」带二次确认。
 - **会话右键菜单**：任意会话行的右键菜单新增红色「永久删除」，点击后弹出同一套确认框。
 
+#### 移动 / 复制会话到其他工作区
+
+会话右键菜单在「永久删除」上方新增两行，图标与文字分别使用蓝色与绿色：
+
+- **移动到工作区**（蓝色 · 文件夹+箭头图标）：把会话完整搬到另一个工作区，原工作区中的会话随后被永久删除。
+- **复制到工作区**（绿色 · 双卡片图标）：在另一个工作区留下完整副本，原会话保持不变。
+
+点击后弹出「选择目标工作区」面板：只列出当前工作区之外、目录仍然存在的工作区（显示名称与路径），
+点击即执行，成功后在面板内显示绿色回执（已移动 / 已复制到 …），失败显示红色原因。
+
+DSH 中「会话属于哪个工作区」由会话记录里不可变的 `cwd` 决定，工作区注册表也用它校验归属，
+因此不存在原地改归属的接口。插件按官方分叉（fork）的同一套协议实现：读取源会话完整的
+事件日志，在目标工作区目录下用 Agent 生命周期创建一条新的会话（种子事件 + 继承游标），
+再把新会话登记进目标工作区；「移动」在这一步之后调用永久删除移除原会话。
+会话仍有未结束回合时会被拒绝（提示等回合结束后再试），以免复制出半截对话。
+创建走 Agent 生命周期而不是直接写日志，是为了让侧边栏、会话列表与投影缓存都能立刻看到新会话；
+没有 Agent 工厂的宿主会退回到直接写日志并预热投影缓存。
+
 永久删除默认只接受已归档且未被宿主加载的本机会话，并通过持久化写入句柄独占校验。
 插件会跟踪 Host 的 Agent 生命周期句柄，先把会话停用再删除。句柄表保存在 Host 进程级，
 插件被重载（升级插件、改配置）之后依然有效——旧实现把句柄表放在插件模块里，重载后就忘了
@@ -129,6 +147,8 @@ v1.5.21（MIT License，Copyright (c) 2026 WSL043）。
 - `POST /plugins/original-version-enhancements/archives/search` — 归档内容搜索
 - `POST /plugins/original-version-enhancements/sessions/delete` — 永久删除
   （需要 `x-dsh-session-delete-confirmation: delete-session` 确认头与同源校验）
+- `POST /plugins/original-version-enhancements/sessions/transfer` — 移动 / 复制会话到其他工作区
+  （需要 `x-dsh-session-transfer-confirmation: transfer-session` 确认头与同源校验）
 - `POST /plugins/original-version-enhancements/automation/catalog` — 任务目录、投递后清理标记与每个任务的记录条数
 - `POST /plugins/original-version-enhancements/automation/history` — 单个任务的运行记录
 - `POST /plugins/original-version-enhancements/automation/create` — 新建任务

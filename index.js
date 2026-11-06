@@ -13,6 +13,10 @@ import {
   searchArchivedSessions,
 } from './host/archive-manager.mjs'
 import {
+  createTransferRequestHandler,
+  transferSession,
+} from './host/transfer.mjs'
+import {
   createAutomationSurface,
   profileDirectory,
   readAutomationState,
@@ -152,5 +156,32 @@ export function apply(ctx) {
       handler: deleteHandler,
     }),
     'original-version-enhancements: confirmed session deletion route',
+  )
+
+  // Moving or copying one session into another workspace. A session belongs to
+  // the workspace owning its recorded directory, so the transfer materialises
+  // an independent copy of its log inside the target directory and then files
+  // that copy; `move` additionally removes the original.
+  const transferHandler = createTransferRequestHandler({
+    isTrustedRequest,
+    transfer: request => transferSession({
+      workspaceRegistry: ctx.workspaceRegistry,
+      sessionPersistence: persistence,
+      sessionProjectionCache: optional(ctx, 'sessionProjectionCache'),
+      agentDefaultModel: optional(ctx, 'agentDefaultModel'),
+      sessions: ctx.sessions,
+      agents: ctx.agents,
+      agentHandles,
+      sessionRoot,
+    }, request),
+  })
+
+  ctx.effect(
+    () => ctx.webServer.register({
+      kind: 'exact',
+      path: `${ROUTE_ROOT}/sessions/transfer`,
+      handler: transferHandler,
+    }),
+    'original-version-enhancements: session transfer route',
   )
 }

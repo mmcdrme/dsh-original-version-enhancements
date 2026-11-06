@@ -18,6 +18,7 @@ window.__ModuleLoader__.load({
     /** Route prefix registered by the Host half. */
     const ROUTE_ROOT = '/plugins/original-version-enhancements';
     const DELETE_ROUTE = `${ROUTE_ROOT}/sessions/delete`;
+    const TRANSFER_ROUTE = `${ROUTE_ROOT}/sessions/transfer`;
     /** The four accepted work-details modes, in the same order as Settings. */
     const MODES = ['compact', 'standard', 'detailed', 'verbose'];
     /** Saved values from older generations of the same Host setting. */
@@ -84,6 +85,57 @@ window.__ModuleLoader__.load({
     };
 
     const getDelete = () => deleteState;
+
+    /* ------------------------------------------------------------------ */
+    /* Pending session transfer, shared by the two menu rows and its panel */
+    /* ------------------------------------------------------------------ */
+
+    /**
+     * `target` is the session being moved or copied, `targets` the workspaces it
+     * may land in (captured where the workspace snapshot is available), and
+     * `mode` decides whether the original is removed afterwards.
+     */
+    let transferState = { target: null, mode: 'copy', origin: '', targets: [], busy: false, error: '', done: '' };
+    const transferListeners = new Set();
+
+    const publishTransfer = (patch) => {
+      transferState = { ...transferState, ...patch };
+      for (const listener of transferListeners) listener();
+    };
+
+    const subscribeTransfer = (listener) => {
+      transferListeners.add(listener);
+      return () => { transferListeners.delete(listener); };
+    };
+
+    const getTransfer = () => transferState;
+
+    /** Open the workspace chooser for one session, capturing its candidates. */
+    const openTransfer = (target, mode, snapshot, tr) => {
+      const items = Array.isArray(snapshot?.items) ? snapshot.items : [];
+      // The snapshot spells the identity differently across versions; the path is
+      // always present and the Host resolves either spelling.
+      const idOf = (item) => String(item?.workspaceId ?? item?.id ?? item?.path ?? '');
+      const owner = items.find((item) => Array.isArray(item.sessionIds) && item.sessionIds.includes(target.id));
+      const ownerId = idOf(owner);
+      const targets = items
+        .filter((item) => idOf(item) !== ownerId)
+        .map((item) => ({
+          id: idOf(item),
+          title: String(item.title || item.path || item.directory || idOf(item)),
+          path: typeof item.path === 'string' ? item.path : '',
+        }))
+        .filter((item) => item.id.length > 0);
+      publishTransfer({
+        target,
+        mode,
+        origin: owner === undefined ? tr('ungrouped') : String(owner.title || owner.path || ''),
+        targets,
+        busy: false,
+        error: '',
+        done: '',
+      });
+    };
 
     /**
      * Mount an overlay on `document.body`. The settings panel and the app frame
@@ -152,6 +204,44 @@ window.__ModuleLoader__.load({
         }
         await refreshStores(ctx);
         return { ok: true };
+      } catch (error) {
+        return { ok: false, error: String(error?.message ?? error), code: '' };
+      }
+    };
+
+    /**
+     * Ask the Host to copy — or copy and then remove — one session into another
+     * workspace.
+     * @param ctx - the client plugin context.
+     * @param request - source session, target workspace, and the mode.
+     * @returns the outcome with the new session id, or the Host failure.
+     */
+    const requestTransfer = async (ctx, request) => {
+      try {
+        const response = await fetch(TRANSFER_ROUTE, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'x-dsh-session-transfer-confirmation': 'transfer-session',
+          },
+          body: JSON.stringify({
+            sessionId: request.sessionId,
+            workspaceId: request.workspaceId,
+            mode: request.mode,
+          }),
+        });
+        const body = await readJson(response);
+        if (!response.ok || body?.ok !== true) {
+          const failure = body?.error ?? {};
+          return {
+            ok: false,
+            error: failure.message || `HTTP ${response.status}`,
+            code: typeof failure.code === 'string' ? failure.code : '',
+            copyId: typeof failure.copyId === 'string' ? failure.copyId : '',
+          };
+        }
+        await refreshStores(ctx);
+        return { ok: true, value: body.value ?? {} };
       } catch (error) {
         return { ok: false, error: String(error?.message ?? error), code: '' };
       }
@@ -352,6 +442,22 @@ window.__ModuleLoader__.load({
       searchMore: '仅显示前 20 条内容匹配，请缩小搜索范围。',
       loadFailed: '聊天记录管理不可用：',
       footnote: '我也是有底线的。',
+
+      menuMove: '移动到工作区',
+      menuCopy: '复制到工作区',
+      transferMoveTitle: '移动会话到工作区',
+      transferCopyTitle: '复制会话到工作区',
+      transferMoveDesc: '会话的完整对话记录会复制到所选工作区，随后原会话从当前工作区永久删除。',
+      transferCopyDesc: '会话的完整对话记录会复制到所选工作区，原会话保持不变。',
+      transferOrigin: '当前工作区：',
+      transferPick: '选择目标工作区',
+      transferNoTargets: '没有其他工作区可放入该会话。',
+      transferEmpty: '仅显示目录仍然存在的工作区。',
+      transferBusy: '正在处理…',
+      transferDoneMove: '已移动到',
+      transferDoneCopy: '已复制到',
+      transferFailed: '操作失败：',
+      transferClose: '关闭',
     };
 
     const en = {
@@ -545,6 +651,22 @@ window.__ModuleLoader__.load({
       searchMore: 'Showing the first 20 content matches. Narrow your search.',
       loadFailed: 'Chat history manager unavailable: ',
       footnote: 'Original Version Enhancements · the chat history part is adapted from dsh-chat-manager (MIT).',
+
+      menuMove: 'Move to workspace',
+      menuCopy: 'Copy to workspace',
+      transferMoveTitle: 'Move session to a workspace',
+      transferCopyTitle: 'Copy session to a workspace',
+      transferMoveDesc: 'A full copy of the conversation is created in the chosen workspace, then the original session is permanently deleted.',
+      transferCopyDesc: 'A full copy of the conversation is created in the chosen workspace; the original stays where it is.',
+      transferOrigin: 'Current workspace: ',
+      transferPick: 'Choose the target workspace',
+      transferNoTargets: 'No other workspace can take this session.',
+      transferEmpty: 'Only workspaces whose directory still exists are listed.',
+      transferBusy: 'Working…',
+      transferDoneMove: 'Moved to',
+      transferDoneCopy: 'Copied to',
+      transferFailed: 'Failed: ',
+      transferClose: 'Close',
     };
 
     /* ------------------------------------------------------------------ */
@@ -811,6 +933,26 @@ window.__ModuleLoader__.load({
       .ove-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
       .ove-warn { margin: 0; font-size: 13px; line-height: 20px; color: var(--dsw-alias-state-warning-primary, #b45309); }
       .ove-dialog-note { font-size: 12px; line-height: 18px; }
+
+      .ove-transfer-dialog { width: min(460px, 100%); }
+      .ove-transfer-tone-move { color: #2563eb; }
+      .ove-transfer-tone-copy { color: #16a34a; }
+      .ove-transfer-note { margin: 0; font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-tertiary); }
+      .ove-transfer-list { display: grid; gap: 4px; max-height: 280px; overflow-y: auto; overflow-x: hidden; }
+      .ove-transfer-row {
+        display: flex; align-items: center; gap: 10px; width: 100%; min-width: 0; box-sizing: border-box;
+        padding: 9px 10px; border: 0; border-radius: 8px;
+        background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary);
+        font: inherit; font-size: 13px; line-height: 20px; text-align: left; cursor: pointer;
+      }
+      .ove-transfer-row:hover { background: var(--dsw-alias-bg-layer-1); }
+      .ove-transfer-row:disabled { opacity: .5; cursor: default; }
+      .ove-transfer-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .ove-transfer-path {
+        flex: 0 0 auto; min-width: 0; max-width: 48%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        font-size: 12px; color: var(--dsw-alias-label-tertiary);
+      }
+      .ove-transfer-empty { margin: 0; font-size: 13px; line-height: 20px; color: var(--dsw-alias-label-tertiary); }
 
       .ove-auto { display: flex; height: 100%; max-height: 100%; min-height: 0; overflow: hidden; background: var(--dsw-alias-bg-base); position: relative; }
       .ove-auto-main { flex: 1 1 auto; min-width: 0; max-height: 100%; display: flex; flex-direction: column; min-height: 0; }
@@ -1470,6 +1612,178 @@ window.__ModuleLoader__.load({
         className: 'ove-menu-item',
         onClick: select,
       }, h(TrashIcon), h('span', null, label));
+    }
+
+    /* ------------------------------------------------------------------ */
+    /* Session context menu: move or copy into another workspace           */
+    /* ------------------------------------------------------------------ */
+
+    /**
+     * Folder-and-arrow glyph for "move", two stacked cards for "copy".
+     * @param props - which of the two actions the row performs.
+     * @returns the inline icon.
+     */
+    function TransferIcon({ mode }) {
+      const common = {
+        viewBox: '0 0 16 16',
+        width: 14,
+        height: 14,
+        fill: 'none',
+        stroke: 'currentColor',
+        strokeWidth: 1.4,
+        strokeLinecap: 'round',
+        strokeLinejoin: 'round',
+        'aria-hidden': 'true',
+        focusable: 'false',
+        className: 'ove-menu-icon',
+        style: { display: 'block', pointerEvents: 'none' },
+      };
+      if (mode === 'move') {
+        return h('svg', common,
+          h('path', { d: 'M1.8 4.7h3.3l1 1.2h4.1v5.5H1.8z' }),
+          h('path', { d: 'M10.9 8.4h3.3M12.9 6.7l1.7 1.7-1.7 1.7' }));
+      }
+      return h('svg', common,
+        h('path', { d: 'M5.9 5.4V3.9A1.4 1.4 0 0 1 7.3 2.5h4.4A1.4 1.4 0 0 1 13.1 3.9v4.4a1.4 1.4 0 0 1-1.4 1.4h-1.5' }),
+        h('rect', { x: 2.6, y: 5.9, width: 7.6, height: 7.6, rx: 1.5 }));
+    }
+
+    /**
+     * The row-level styles ship with the row itself: the session menu can open
+     * on a page where no other surface of this plugin is mounted.
+     * @returns the style element.
+     */
+    const transferMenuStyles = () => h('style', {
+      key: 'styles',
+      'data-plugin-css': `${NS}-menu-transfer`,
+    }, `
+      .ove-menu-item.ove-menu-move { color: #2563eb; }
+      .ove-menu-item.ove-menu-copy { color: #16a34a; }
+      .ove-menu-item.ove-menu-move:hover, .ove-menu-item.ove-menu-move:focus-visible {
+        background: rgba(37, 99, 235, .12);
+      }
+      .ove-menu-item.ove-menu-copy:hover, .ove-menu-item.ove-menu-copy:focus-visible {
+        background: rgba(22, 163, 74, .12);
+      }
+    `);
+
+    /**
+     * Right-click row action: move or copy one session into another workspace.
+     * @param props - owner props, menu hook, workspace snapshot, translator, mode.
+     * @returns the menu row.
+     */
+    function SessionTransferMenuItem({ sessionId, displayTitle, useMenuOpenState, useWorkspaces, t, mode }) {
+      const tr = typeof t === 'function' ? t : (key) => key;
+      const [, closeMenu] = useMenuOpenState();
+      const workspaces = typeof useWorkspaces === 'function' ? useWorkspaces((snapshot) => snapshot) : undefined;
+      const label = tr(mode === 'move' ? 'menuMove' : 'menuCopy');
+
+      const select = () => {
+        closeMenu(false);
+        openTransfer({ id: sessionId, title: displayTitle || sessionId }, mode, workspaces, tr);
+      };
+
+      return h(React.Fragment, null,
+        transferMenuStyles(),
+        h('button', {
+          type: 'button',
+          role: 'menuitem',
+          className: `ove-menu-item ove-menu-${mode === 'move' ? 'move' : 'copy'}`,
+          onClick: select,
+        }, h(TransferIcon, { mode }), h('span', null, label)));
+    }
+
+    /**
+     * Target-workspace chooser for a pending move or copy.
+     * @param props - injected translator and the plugin context.
+     * @returns the overlay, or nothing while no session is pending.
+     */
+    function SessionTransferDialog({ t, ctx }) {
+      const tr = typeof t === 'function' ? t : (key) => key;
+      const state = React.useSyncExternalStore(subscribeTransfer, getTransfer, getTransfer);
+      const [busy, setBusy] = React.useState(false);
+
+      React.useEffect(() => {
+        if (state.target === null) return undefined;
+        const onKey = (event) => {
+          if (event.key === 'Escape' && !transferState.busy) {
+            publishTransfer({ target: null, targets: [], busy: false, error: '', done: '' });
+          }
+        };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+      }, [state.target]);
+
+      if (state.target === null) return null;
+
+      const move = state.mode === 'move';
+      const close = () => {
+        if (transferState.busy) return;
+        publishTransfer({ target: null, targets: [], busy: false, error: '', done: '' });
+      };
+
+      const run = async (workspace) => {
+        if (transferState.busy) return;
+        publishTransfer({ busy: true, error: '', done: '' });
+        setBusy(true);
+        const result = await requestTransfer(ctx, {
+          sessionId: transferState.target.id,
+          workspaceId: workspace.id,
+          mode: transferState.mode,
+        });
+        setBusy(false);
+        if (result.ok) {
+          publishTransfer({
+            busy: false,
+            done: `${tr(state.mode === 'move' ? 'transferDoneMove' : 'transferDoneCopy')} ${workspace.title}`,
+          });
+        } else {
+          publishTransfer({ busy: false, error: `${tr('transferFailed')}${result.error}` });
+        }
+      };
+
+      const rows = state.targets.length === 0
+        ? h('p', { className: 'ove-transfer-empty' }, tr('transferNoTargets'))
+        : h('div', { className: 'ove-transfer-list' }, state.targets.map((workspace) => h('button', {
+          key: workspace.id,
+          type: 'button',
+          className: 'ove-transfer-row',
+          disabled: busy,
+          onClick: () => { void run(workspace); },
+        },
+          h('span', { className: 'ove-transfer-name' }, workspace.title),
+          workspace.path.length > 0 && h('span', { className: 'ove-transfer-path' }, workspace.path))));
+
+      const dialog = h('div', {
+        className: 'ove-dialog ove-transfer-dialog',
+        role: 'dialog',
+        'aria-modal': 'true',
+        'aria-label': tr(move ? 'transferMoveTitle' : 'transferCopyTitle'),
+      },
+        h('h2', { className: `ove-dialog-title ove-transfer-tone-${move ? 'move' : 'copy'}` }, tr(move ? 'transferMoveTitle' : 'transferCopyTitle')),
+        h('p', { className: 'ove-dialog-desc' }, tr(move ? 'transferMoveDesc' : 'transferCopyDesc')),
+        h('p', { className: 'ove-dialog-target' }, `${tr('transferOrigin')}${state.origin}`),
+        h('p', { className: 'ove-transfer-note' }, tr('transferPick')),
+        rows,
+        state.error.length > 0 && h('p', { className: 'ove-error', role: 'alert' }, state.error),
+        state.done.length > 0 && h('p', { className: 'ove-notice ove-notice-success' }, state.done),
+        h('div', { className: 'ove-dialog-actions' },
+          h('button', {
+            type: 'button',
+            className: 'ove-btn',
+            disabled: busy,
+            onClick: close,
+          }, busy ? tr('transferBusy') : tr('transferClose'))),
+        h('p', { className: 'ove-transfer-note' }, tr('transferEmpty')));
+
+      return overlayPortal(h(React.Fragment, null,
+        // The dialog can open from the session menu before any other surface of
+        // this plugin has mounted, so it always ships its own CSS.
+        h('style', { key: 'styles', 'data-plugin-css': `${NS}-transfer` }, CSS),
+        h('div', {
+          className: 'ove-overlay ove-overlay-top',
+          onMouseDown: (event) => { if (event.target === event.currentTarget) close(); },
+        }, dialog)));
     }
 
     /* ------------------------------------------------------------------ */
@@ -3008,10 +3322,27 @@ window.__ModuleLoader__.load({
                 }, ArchivedPage)),
                 ctx.slots.inject('sidebar.workspaces.session.menu.item', () => ctx.slots.register({
                   name: 'sidebar.workspaces.session.menu.item',
+                  id: 'original-version-enhancements.move',
+                  order: 480,
+                  inject: () => ({ t: translator, ctx, mode: 'move' }),
+                }, SessionTransferMenuItem)),
+                ctx.slots.inject('sidebar.workspaces.session.menu.item', () => ctx.slots.register({
+                  name: 'sidebar.workspaces.session.menu.item',
+                  id: 'original-version-enhancements.copy',
+                  order: 490,
+                  inject: () => ({ t: translator, ctx, mode: 'copy' }),
+                }, SessionTransferMenuItem)),
+                ctx.slots.inject('sidebar.workspaces.session.menu.item', () => ctx.slots.register({
+                  name: 'sidebar.workspaces.session.menu.item',
                   id: 'original-version-enhancements.delete',
                   order: 500,
                   inject: () => ({ t: translator, ctx }),
                 }, SessionDeleteMenuItem)),
+                ctx.slots.inject('shell.overlay', () => ctx.slots.register({
+                  name: 'shell.overlay',
+                  id: 'original-version-enhancements.transfer-dialog',
+                  inject: () => ({ t: translator, ctx }),
+                }, SessionTransferDialog)),
                 ctx.slots.inject('shell.overlay', () => ctx.slots.register({
                   name: 'shell.overlay',
                   id: 'original-version-enhancements.delete-dialog',
@@ -3024,6 +3355,7 @@ window.__ModuleLoader__.load({
               // Do not resurrect a half-open dialog when the switch is flipped
               // back on: its target may already be gone.
               publishDelete({ target: null, busy: false, error: '', code: '' });
+              publishTransfer({ target: null, targets: [], busy: false, error: '', done: '' });
             }
           };
           const unsubscribe = subscribeFlags(sync);
