@@ -36,6 +36,9 @@
 跳过写入句柄直接移除磁盘上的会话目录。该操作会让宿主中的会话立即失效，
 建议删除后重启 DeepSeek Harness；侧边栏的残留行也会在重启后消失。
 
+删除成功后会清理归档标记；插件启动时也会清理「存储已不存在」的归档标记，
+避免归档页出现幽灵行。
+
 聊天记录管理改编自 [dsh-chat-manager](https://github.com/WSL043/dsh-chat-manager)
 v1.5.21（MIT），详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 与原版的差异：无法取得句柄时提供显式「强制删除」；取消归档走官方 Client 服务而不是额外路由。

@@ -70,6 +70,24 @@ export function apply(ctx) {
     return
   }
 
+  // Drop archive markers whose session storage no longer exists, including
+  // ids removed before this reconciliation shipped.
+  ctx.effect(() => {
+    let cancelled = false
+    const reconcile = async () => {
+      const registry = ctx.workspaceRegistry
+      const ids = Array.isArray(registry?.archivedSessionIds) ? [...registry.archivedSessionIds] : []
+      for (const id of ids) {
+        if (cancelled) return
+        try {
+          if (await persistence.stat(id) === undefined) await registry.unarchiveSession(id)
+        } catch { /* an unreadable marker is left for a later run */ }
+      }
+    }
+    reconcile().catch(() => undefined)
+    return () => { cancelled = true }
+  }, 'original-version-enhancements: archive marker reconciliation')
+
   const deleteHandler = createDeleteRequestHandler({
     isTrustedRequest,
     deleteSession: async (sessionId, options) => {
