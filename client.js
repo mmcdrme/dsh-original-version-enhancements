@@ -85,6 +85,20 @@ window.__ModuleLoader__.load({
 
     const getDelete = () => deleteState;
 
+    /**
+     * Mount an overlay on `document.body`. The settings panel and the app frame
+     * both clip positioned overlays, and the session menu can open this dialog
+     * on a page where no other plugin surface (and therefore no stylesheet) is
+     * mounted, so the overlay carries its own styles and escapes both.
+     * @param node - the React node to mount.
+     * @returns the portal, or the node itself when portals are unavailable.
+     */
+    const overlayPortal = (node) => (
+      typeof document !== 'undefined' && typeof ReactDOM?.createPortal === 'function'
+        ? ReactDOM.createPortal(node, document.body)
+        : node
+    );
+
     const refreshStores = async (ctx) => {
       const tasks = [];
       for (const store of [ctx.sessions, ctx.workspaces]) {
@@ -333,6 +347,8 @@ window.__ModuleLoader__.load({
       dialogDesc: '只删除已归档且未加载的本机会话记录，无法恢复。',
       forceHint: '该会话仍被宿主加载。强制删除会直接移除磁盘上的会话记录；宿主中的该会话随后失效，建议删除后重启 DeepSeek Harness。',
       forceDelete: '强制删除',
+      retryDelete: '重试',
+      retryHint: '如果刚重启过 DeepSeek Harness，可以重试普通删除。',
       searchMore: '仅显示前 20 条内容匹配，请缩小搜索范围。',
       loadFailed: '聊天记录管理不可用：',
       footnote: '我也是有底线的。',
@@ -524,6 +540,8 @@ window.__ModuleLoader__.load({
       dialogDesc: 'Only an unloaded, archived local session can be deleted. This cannot be undone.',
       forceHint: 'The session is still loaded by the Host. Forcing removes its disk record anyway; the in-memory session becomes invalid, so restart DeepSeek Harness afterwards.',
       forceDelete: 'Force delete',
+      retryDelete: 'Try again',
+      retryHint: 'If you just restarted DeepSeek Harness, retry the normal deletion.',
       searchMore: 'Showing the first 20 content matches. Narrow your search.',
       loadFailed: 'Chat history manager unavailable: ',
       footnote: 'Original Version Enhancements · the chat history part is adapted from dsh-chat-manager (MIT).',
@@ -792,6 +810,7 @@ window.__ModuleLoader__.load({
       }
       .ove-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
       .ove-warn { margin: 0; font-size: 13px; line-height: 20px; color: var(--dsw-alias-state-warning-primary, #b45309); }
+      .ove-dialog-note { font-size: 12px; line-height: 18px; }
 
       .ove-auto { display: flex; height: 100%; max-height: 100%; min-height: 0; overflow: hidden; background: var(--dsw-alias-bg-base); position: relative; }
       .ove-auto-main { flex: 1 1 auto; min-width: 0; max-height: 100%; display: flex; flex-direction: column; min-height: 0; }
@@ -1226,6 +1245,7 @@ window.__ModuleLoader__.load({
       const [deleteBusy, setDeleteBusy] = React.useState(false);
       const [deleteError, setDeleteError] = React.useState('');
       const [deleteCode, setDeleteCode] = React.useState('');
+      const deleteBusyRef = React.useRef(false);
 
       const normalized = query.trim();
 
@@ -1308,17 +1328,23 @@ window.__ModuleLoader__.load({
       };
 
       const cancelDelete = () => {
-        if (deleteBusy) return;
+        if (deleteBusyRef.current) return;
         setPending(null);
         setDeleteError('');
         setDeleteCode('');
       };
 
       const confirmDelete = async (force) => {
-        if (pending === null || deleteBusy) return;
+        // `deleteBusy` only reflects the previous render; the ref makes a
+        // double click idempotent so the second outcome cannot overwrite the
+        // first one after the dialog has closed.
+        if (pending === null || deleteBusyRef.current) return;
+        deleteBusyRef.current = true;
         setDeleteBusy(true);
         setDeleteError('');
+        setDeleteCode('');
         const result = await requestDelete(ctx, pending, force);
+        deleteBusyRef.current = false;
         setDeleteBusy(false);
         if (result.ok) {
           setNotice(`${tr('delete')} · ${pending.title}`);
@@ -1475,41 +1501,49 @@ window.__ModuleLoader__.load({
         return () => window.removeEventListener('keydown', onKey);
       }, [busy, onCancel]);
 
-      return h('div', {
-        className: `ove-overlay ${overlayClass ?? ''}`.trim(),
-        onMouseDown: (event) => { if (event.target === event.currentTarget) onCancel(); },
+      const actions = h('div', { className: 'ove-dialog-actions' },
+        h('button', {
+          type: 'button',
+          className: 'ove-btn',
+          ref: cancelRef,
+          disabled: busy,
+          onClick: onCancel,
+        }, tr('cancel')),
+        canForce && h('button', {
+          type: 'button',
+          className: 'ove-btn',
+          disabled: busy,
+          onClick: () => onConfirm(false),
+        }, tr('retryDelete')),
+        h('button', {
+          type: 'button',
+          className: 'ove-btn ove-btn-danger',
+          disabled: busy,
+          onClick: () => onConfirm(canForce),
+        }, busy ? tr('deleting') : canForce ? tr('forceDelete') : tr('confirmDelete')));
+
+      const dialog = h('div', {
+        className: 'ove-dialog',
+        role: 'dialog',
+        'aria-modal': 'true',
+        'aria-label': tr('dialogTitle'),
       },
+        h('h2', { className: 'ove-dialog-title' }, tr('dialogTitle')),
+        h('p', { className: 'ove-dialog-desc' }, tr('dialogDesc')),
+        h('p', { className: 'ove-dialog-target' }, target.title),
+        error && h('p', { className: 'ove-error', role: 'alert' }, error),
+        canForce && h('p', { className: 'ove-warn' }, tr('forceHint')),
+        canForce && h('p', { className: 'ove-muted ove-dialog-note' }, tr('retryHint')),
+        actions);
+
+      return overlayPortal(h(React.Fragment, null,
+        // The dialog can be opened from the session menu before any other
+        // surface of this plugin has mounted, so it always ships its own CSS.
+        h('style', { key: 'styles', 'data-plugin-css': `${NS}-delete` }, CSS),
         h('div', {
-          className: 'ove-dialog',
-          role: 'dialog',
-          'aria-modal': 'true',
-          'aria-label': tr('dialogTitle'),
-        },
-          h('h2', { className: 'ove-dialog-title' }, tr('dialogTitle')),
-          h('p', { className: 'ove-dialog-desc' }, tr('dialogDesc')),
-          h('p', { className: 'ove-dialog-target' }, target.title),
-          error && h('p', { className: 'ove-error', role: 'alert' }, error),
-          canForce && h('p', { className: 'ove-warn' }, tr('forceHint')),
-          h('div', { className: 'ove-dialog-actions' },
-            h('button', {
-              type: 'button',
-              className: 'ove-btn',
-              ref: cancelRef,
-              disabled: busy,
-              onClick: onCancel,
-            }, tr('cancel')),
-            canForce && h('button', {
-              type: 'button',
-              className: 'ove-btn ove-btn-danger',
-              disabled: busy,
-              onClick: () => onConfirm(true),
-            }, tr('forceDelete')),
-            !canForce && h('button', {
-              type: 'button',
-              className: 'ove-btn ove-btn-danger',
-              disabled: busy,
-              onClick: () => onConfirm(false),
-            }, busy ? tr('deleting') : tr('confirmDelete')))));
+          className: `ove-overlay ${overlayClass ?? 'ove-overlay-top'}`.trim(),
+          onMouseDown: (event) => { if (event.target === event.currentTarget) onCancel(); },
+        }, dialog)));
     }
 
     /**
@@ -1521,11 +1555,16 @@ window.__ModuleLoader__.load({
       const state = React.useSyncExternalStore(subscribeDelete, getDelete, getDelete);
       if (state.target === null) return null;
 
-      const cancel = () => { if (!deleteState.busy) publishDelete({ target: null, error: '', code: '' }); };
+      const cancel = () => {
+        if (deleteState.busy) return;
+        publishDelete({ target: null, busy: false, error: '', code: '' });
+      };
       const confirm = async (force) => {
+        // Read the shared state, not this render's snapshot: a double click
+        // must not start a second request that then overwrites the outcome.
         const target = deleteState.target;
         if (target === null || deleteState.busy) return;
-        publishDelete({ busy: true, error: '' });
+        publishDelete({ busy: true, error: '', code: '' });
         const result = await requestDelete(ctx, target, force);
         if (result.ok) publishDelete({ target: null, busy: false, error: '', code: '' });
         else publishDelete({ busy: false, error: result.error, code: result.code });
@@ -2982,6 +3021,9 @@ window.__ModuleLoader__.load({
             } else if (!enabled && disposers.length > 0) {
               for (const dispose of disposers) dispose();
               disposers = [];
+              // Do not resurrect a half-open dialog when the switch is flipped
+              // back on: its target may already be gone.
+              publishDelete({ target: null, busy: false, error: '', code: '' });
             }
           };
           const unsubscribe = subscribeFlags(sync);
@@ -2990,6 +3032,7 @@ window.__ModuleLoader__.load({
             unsubscribe();
             for (const dispose of disposers) dispose();
             disposers = [];
+            publishDelete({ target: null, busy: false, error: '', code: '' });
           };
         }, 'original-version-enhancements: chat manager surfaces');
 

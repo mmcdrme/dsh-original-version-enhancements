@@ -12,6 +12,40 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'nod
 const failure = (code, message) => ({ ok: false, error: { code, message } })
 const MAX_REQUEST_BYTES = 8 * 1024
 
+/* ------------------------------------------------------------------ */
+/* Agent-lifecycle tracking                                            */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Shared tracker state, kept on `globalThis` so it survives a plugin reload.
+ * DSH keeps every resumed Agent loaded for the whole Host-process lifetime,
+ * while reloading this plugin disposes its Cordis effects. A module-local
+ * handle map therefore forgot exactly the sessions it had loaded, and the next
+ * deletion of one of them was refused as "still loaded by the Host". The map
+ * and the in-flight deletion reservations live here instead, and the service
+ * wrappers are installed once per Host process.
+ */
+const TRACKER_STATE = Symbol.for('dsh-original-version-enhancements.agent-tracker.v1')
+const TRACKER_INSTALLED = Symbol.for('dsh-original-version-enhancements.agent-tracker.installed.v1')
+
+/** @returns the process-wide handle map and deletion reservations. */
+const sharedTrackerState = () => {
+  const current = globalThis[TRACKER_STATE]
+  if (current !== undefined && current.handles instanceof Map && current.reservations instanceof Set) return current
+  const created = { handles: new Map(), reservations: new Set() }
+  globalThis[TRACKER_STATE] = created
+  return created
+}
+
+/** Read the live Agent without letting a disposed service fail the deletion. */
+const liveAgentOf = (agents, sessionId) => {
+  try {
+    return typeof agents?.get === 'function' ? agents.get(sessionId) : undefined
+  } catch {
+    return undefined
+  }
+}
+
 /**
  * Retain the lifecycle capability returned by the public AgentFactory so a
  * loaded session can be stopped and detached before its storage is removed.
@@ -21,115 +55,93 @@ const MAX_REQUEST_BYTES = 8 * 1024
  * @returns reserve/dispose/release hooks used by the deletion path.
  */
 export function installAgentHandleTracker(agents, sessions) {
+  const state = sharedTrackerState()
   const originalSymbol = Symbol.for('cordis.original')
-  const wrapperOrigin = Symbol.for('dsh-chat-manager.agent-tracker-origin')
-  const agentService = agents[originalSymbol] ?? agents
+  const agentService = agents?.[originalSymbol] ?? agents
   const sessionService = sessions?.[originalSymbol] ?? sessions
-  const handles = new Map()
-  const reservations = new Set()
-  let released = false
-  const originalCreate = agentService.create
-  const originalResume = agentService.resume
-  const originalAgentEnter = agentService.enter
-  const originalSessionEnter = sessionService?.enter
 
   const assertAvailable = (sessionId) => {
-    if (released) return
-    if (typeof sessionId === 'string' && reservations.has(sessionId)) {
+    if (typeof sessionId === 'string' && state.reservations.has(sessionId)) {
       throw new Error(`session "${sessionId}" is being permanently deleted`)
     }
   }
 
-  const track = (handle) => {
-    if (!released && handle?.agent?.id !== undefined && typeof handle.dispose === 'function') {
-      handles.set(handle.agent.id, handle)
+  const remember = (handle) => {
+    const id = handle?.agent?.id
+    if (typeof id !== 'string' || typeof handle.dispose !== 'function') return handle
+    state.handles.set(id, handle)
+    // Handles are single-shot: drop those whose Agent has already gone so a
+    // long-lived Host process cannot accumulate them.
+    if (state.handles.size > 64) {
+      for (const [trackedId, tracked] of state.handles) {
+        if (tracked !== handle && liveAgentOf(agents, trackedId) !== tracked.agent) state.handles.delete(trackedId)
+      }
     }
     return handle
   }
-  const wrappedCreate = async function (...args) {
-    assertAvailable(args[0]?.sessionId)
-    return track(await Reflect.apply(originalCreate, this, args))
-  }
-  const wrappedResume = async function (...args) {
-    assertAvailable(args[0]?.resumeSessionId)
-    return track(await Reflect.apply(originalResume, this, args))
-  }
-  const wrappedAgentEnter = typeof originalAgentEnter === 'function'
-    ? function (...args) {
-        assertAvailable(args[0]?.id)
-        return Reflect.apply(originalAgentEnter, this, args)
-      }
-    : undefined
-  const wrappedSessionEnter = typeof originalSessionEnter === 'function'
-    ? function (...args) {
-        assertAvailable(args[0]?.id)
-        return Reflect.apply(originalSessionEnter, this, args)
-      }
-    : undefined
 
-  const unwrapReleased = (method) => {
-    while (method?.[wrapperOrigin]?.released()) method = method[wrapperOrigin].original
-    return method
-  }
-  for (const [wrapped, original] of [
-    [wrappedCreate, originalCreate], [wrappedResume, originalResume],
-    [wrappedAgentEnter, originalAgentEnter], [wrappedSessionEnter, originalSessionEnter],
-  ]) {
-    if (wrapped) Object.defineProperty(wrapped, wrapperOrigin, { value: { original, released: () => released } })
-  }
+  if (agentService !== undefined && agentService[TRACKER_INSTALLED] !== true) {
+    const originalCreate = agentService.create
+    const originalResume = agentService.resume
+    const originalAgentEnter = agentService.enter
+    const originalSessionEnter = sessionService?.enter
+    const wrappedCreate = async function (...args) {
+      assertAvailable(args[0]?.sessionId)
+      return remember(await Reflect.apply(originalCreate, this, args))
+    }
+    const wrappedResume = async function (...args) {
+      assertAvailable(args[0]?.resumeSessionId)
+      return remember(await Reflect.apply(originalResume, this, args))
+    }
+    const wrappedAgentEnter = typeof originalAgentEnter === 'function'
+      ? function (...args) {
+          assertAvailable(args[0]?.id)
+          return Reflect.apply(originalAgentEnter, this, args)
+        }
+      : undefined
+    const wrappedSessionEnter = typeof originalSessionEnter === 'function'
+      ? function (...args) {
+          assertAvailable(args[0]?.id)
+          return Reflect.apply(originalSessionEnter, this, args)
+        }
+      : undefined
 
-  agentService.create = wrappedCreate
-  agentService.resume = wrappedResume
-  if (wrappedAgentEnter !== undefined) agentService.enter = wrappedAgentEnter
-  if (wrappedSessionEnter !== undefined) sessionService.enter = wrappedSessionEnter
-  let releaseStarted = false
-  let resolveRelease
-  let releaseTask
-
-  const finishRelease = () => {
-    if (!releaseStarted || released || reservations.size !== 0) return
-    released = true
-    handles.clear()
-    if (agentService.create === wrappedCreate) agentService.create = unwrapReleased(originalCreate)
-    if (agentService.resume === wrappedResume) agentService.resume = unwrapReleased(originalResume)
-    if (wrappedAgentEnter !== undefined && agentService.enter === wrappedAgentEnter) agentService.enter = unwrapReleased(originalAgentEnter)
-    if (wrappedSessionEnter !== undefined && sessionService.enter === wrappedSessionEnter) sessionService.enter = unwrapReleased(originalSessionEnter)
-    resolveRelease?.()
+    Object.defineProperty(agentService, TRACKER_INSTALLED, { value: true, configurable: true })
+    if (typeof originalCreate === 'function') agentService.create = wrappedCreate
+    if (typeof originalResume === 'function') agentService.resume = wrappedResume
+    if (wrappedAgentEnter !== undefined) agentService.enter = wrappedAgentEnter
+    if (wrappedSessionEnter !== undefined) sessionService.enter = wrappedSessionEnter
   }
 
   return {
     reserve(sessionId) {
-      if (releaseStarted || reservations.has(sessionId)) return undefined
-      reservations.add(sessionId)
+      if (state.reservations.has(sessionId)) return undefined
+      state.reservations.add(sessionId)
       let active = true
       return () => {
         if (!active) return
         active = false
-        reservations.delete(sessionId)
-        finishRelease()
+        state.reservations.delete(sessionId)
       }
     },
     async dispose(sessionId) {
-      const handle = handles.get(sessionId)
-      if (handle !== undefined && agents.get(sessionId) === handle.agent) {
-        await handle.dispose()
-        handles.delete(sessionId)
-        return true
+      const handle = state.handles.get(sessionId)
+      if (handle === undefined) return false
+      const live = liveAgentOf(agents, sessionId)
+      if (live !== undefined && live !== handle.agent) {
+        // A later lifecycle replaced the Agent this handle owns, so the handle
+        // can no longer stop what is running under this id.
+        state.handles.delete(sessionId)
+        return false
       }
-      handles.delete(sessionId)
-      // A session loaded before this plugin started has no retained handle; it
-      // must be reloaded with the plugin active (or DSH restarted) first.
-      return false
+      state.handles.delete(sessionId)
+      await handle.dispose()
+      return true
     },
-    release() {
-      if (released) return releaseTask
-      if (!releaseStarted) {
-        releaseStarted = true
-        releaseTask = new Promise(resolve => { resolveRelease = resolve })
-        finishRelease()
-      }
-      return releaseTask
-    },
+    // Handles intentionally outlive this plugin generation: releasing them
+    // would put the Host back into the state that made deletion fail after a
+    // reload. The wrappers only record capabilities and never act on their own.
+    release() {},
   }
 }
 
@@ -268,10 +280,42 @@ export async function deleteSessionSafely(deps, { sessionRoot, sessionId, force 
   }
 }
 
+const UNLOAD_POLL_MS = 50
+
+/**
+ * Wait until neither the session store nor the agent registry still holds the
+ * session. A handle's teardown awaits its own detach, but registry listeners
+ * can settle a tick later; polling briefly avoids reporting "still loaded" for
+ * a deletion that already completed.
+ * @param deps - sessions/agents services plus an optional test timeout.
+ * @param sessionId - the session to wait for.
+ * @param timeoutMs - upper bound for the wait.
+ * @returns whether both registries released the session.
+ */
+const waitForUnload = async (deps, sessionId, timeoutMs) => {
+  const unloaded = () => {
+    try {
+      return deps.sessions.get(sessionId) === undefined && deps.agents.get(sessionId) === undefined
+    } catch {
+      return false
+    }
+  }
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    if (unloaded()) return true
+    if (Date.now() >= deadline) return false
+    await new Promise(resolveTimeout => setTimeout(resolveTimeout, UNLOAD_POLL_MS))
+  }
+}
+
 async function deleteReservedSession(deps, { sessionRoot, sessionId }, ownership) {
   const { usesHandles, force } = ownership
   const storedHeaders = async () => (await deps.sessionPersistence.list()).map(item => usesHandles ? item.header : item)
+  const snapshot = usesHandles
+    ? await deps.sessionPersistence.stat(sessionId).catch(() => undefined)
+    : undefined
   let header = (await storedHeaders()).find(item => item.id === sessionId)
+    ?? snapshot?.header
     ?? deps.sessions.get(sessionId)?.header
   if (header === undefined) {
     // A stale archive marker can outlive its transcript. Only acknowledge an
@@ -298,6 +342,13 @@ async function deleteReservedSession(deps, { sessionRoot, sessionId }, ownership
     return failure('session-not-found', '会话不存在或已经删除。')
   }
 
+  if (!force && snapshot?.formatStatus !== undefined && snapshot.formatStatus !== 'current') {
+    // Opening a historical log for write publishes a migration. Deleting it
+    // instead only after an upgrade avoids rewriting a log we are about to
+    // remove, and keeps the write-lease proof meaningful.
+    return failure('unsupported-format', '该会话使用旧版存储格式。请先在 DSH 里打开它完成升级，然后再删除。')
+  }
+
   if (!force && deps.agents.get(sessionId) !== undefined) {
     let disposed = false
     if (typeof deps.agentHandles?.dispose === 'function') {
@@ -308,21 +359,31 @@ async function deleteReservedSession(deps, { sessionRoot, sessionId }, ownership
       }
     }
     if (!disposed) {
-      return failure('lifecycle-unavailable', '该会话仍被宿主加载，且当前没有可用的宿主生命周期句柄。请重启 DeepSeek Harness 后再试。')
+      return failure(
+        'lifecycle-unavailable',
+        '该会话仍被宿主加载，而插件没有它的生命周期句柄（通常是宿主上次重载插件之前就已打开的会话）。可以「强制删除」，或重启 DeepSeek Harness 后重试。',
+      )
     }
   }
 
-  if (!force && (deps.sessions.get(sessionId) !== undefined || deps.agents.get(sessionId) !== undefined)) {
-    return failure('lifecycle-unavailable', '宿主未能完整摘载该会话，未删除任何内容。')
+  // Registry teardown can trail the handle's own detach by a tick; wait for it
+  // instead of refusing a deletion whose unload is already under way.
+  if (!force && !await waitForUnload(deps, sessionId, deps.unloadTimeoutMs ?? 4000)) {
+    return failure('lifecycle-unavailable', '宿主没有在限期内完整摘载该会话，未删除任何内容。请稍后重试。')
   }
 
   let location
   let raw
   if (force) {
     // The loaded session still holds the writer lease, so the exclusive open
-    // cannot be acquired; resolve the current log path without the lease.
+    // cannot be acquired; the observed snapshot locates the artifact without it.
     location = usesHandles
-      ? { kind: 'jsonl', path: await deps.sessionPersistence.resolveCurrentLog(sessionId) }
+      ? {
+          kind: 'jsonl',
+          path: snapshot?.location?.kind === 'jsonl' && typeof snapshot.location.path === 'string'
+            ? snapshot.location.path
+            : await deps.sessionPersistence.resolveCurrentLog(sessionId),
+        }
       : deps.sessionPersistence.locate(header)
     raw = { meta: header }
   } else {
