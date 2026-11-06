@@ -8,6 +8,7 @@ window.__ModuleLoader__.load({
     const NS = 'original-version-enhancements';
     /** Route prefix registered by the Host half. */
     const ROUTE_ROOT = '/plugins/original-version-enhancements';
+    const DELETE_ROUTE = `${ROUTE_ROOT}/sessions/delete`;
     /** The four accepted work-details modes, in the same order as Settings. */
     const MODES = ['compact', 'standard', 'detailed', 'verbose'];
     /** Saved values from older generations of the same Host setting. */
@@ -55,6 +56,40 @@ window.__ModuleLoader__.load({
 
     const useFlags = () => React.useSyncExternalStore(subscribeFlags, getFlags, getFlags);
 
+    /* ------------------------------------------------------------------ */
+    /* Pending permanent-deletion target, shared by the page and the menu  */
+    /* ------------------------------------------------------------------ */
+
+    const deleteListeners = new Set();
+    let deleteState = { target: null, busy: false, error: '' };
+
+    const publishDelete = (patch) => {
+      deleteState = { ...deleteState, ...patch };
+      for (const listener of deleteListeners) listener();
+    };
+
+    const subscribeDelete = (listener) => {
+      deleteListeners.add(listener);
+      return () => { deleteListeners.delete(listener); };
+    };
+
+    const getDelete = () => deleteState;
+
+    const refreshStores = async (ctx) => {
+      const tasks = [];
+      for (const name of ['sessions', 'workspaces']) {
+        const store = ctx.get(name);
+        if (typeof store?.refresh === 'function') {
+          tasks.push(Promise.resolve(store.refresh()).catch(() => undefined));
+        }
+      }
+      await Promise.all(tasks);
+    };
+
+    /* ------------------------------------------------------------------ */
+    /* Dictionaries                                                        */
+    /* ------------------------------------------------------------------ */
+
     const zh = {
       group: '工作步骤展示',
       'mode.compact': '简洁',
@@ -74,9 +109,11 @@ window.__ModuleLoader__.load({
       'switch.steps': '工作步骤展示快捷切换',
       'switch.steps.desc': '在会话标题栏与右侧文件面板的「用资源管理器打开」左侧显示四个档位图标。',
       'switch.chat': '聊天记录管理',
-      'switch.chat.desc': '在下方管理已归档会话：搜索聊天内容、取消归档或永久删除。',
-      chatTitle: '已归档会话',
-      chatIntro: '搜索已归档会话的名称、工作区或聊天内容；永久删除只针对已归档且未被宿主加载的本机会话，无法恢复。',
+      'switch.chat.desc': '启用后，「已归档会话」会作为独立设置页出现，会话右键菜单也会多出「永久删除」。',
+      pageHint: '归档会话的搜索、取消归档与永久删除位于「设置 → 已归档会话」。',
+
+      archivesTitle: '已归档会话',
+      archivesIntro: '搜索已归档会话的名称、工作区或聊天内容；永久删除只针对已归档且未被宿主加载的本机会话，无法恢复。',
       searchPlaceholder: '搜索名称、工作区或聊天内容',
       searchLabel: '搜索已归档会话',
       searching: '正在搜索归档内容…',
@@ -85,12 +122,13 @@ window.__ModuleLoader__.load({
       ungrouped: '未分组',
       restore: '取消归档',
       delete: '永久删除',
+      menuDelete: '永久删除',
       cancel: '取消',
       confirmDelete: '确认永久删除',
       deleting: '正在删除…',
       restoring: '正在取消归档…',
-      deleteTitle: '永久删除会话？',
-      deleteDesc: '只删除已归档且未加载的本机会话记录，无法恢复。',
+      dialogTitle: '永久删除会话？',
+      dialogDesc: '只删除已归档且未加载的本机会话记录，无法恢复。',
       searchMore: '仅显示前 20 条内容匹配，请缩小搜索范围。',
       loadFailed: '聊天记录管理不可用：',
       footnote: '原版功能增强 · 聊天记录管理部分改编自 dsh-chat-manager（MIT）。',
@@ -115,9 +153,11 @@ window.__ModuleLoader__.load({
       'switch.steps': 'Work details quick switch',
       'switch.steps.desc': 'Shows the four work-details icons left of Open in File Explorer in the session header and the file panel.',
       'switch.chat': 'Chat history manager',
-      'switch.chat.desc': 'Manage archived sessions below: search messages, unarchive, or delete permanently.',
-      chatTitle: 'Archived sessions',
-      chatIntro: 'Search archived session names, workspaces, or chat content. Permanent deletion only applies to unloaded archived local sessions and cannot be undone.',
+      'switch.chat.desc': 'Adds a separate Archived sessions settings page and a permanent-delete row to the session context menu.',
+      pageHint: 'Archive search, unarchive and permanent deletion live in Settings → Archived sessions.',
+
+      archivesTitle: 'Archived sessions',
+      archivesIntro: 'Search archived session names, workspaces, or chat content. Permanent deletion only applies to unloaded archived local sessions and cannot be undone.',
       searchPlaceholder: 'Search names, workspaces or messages',
       searchLabel: 'Search archived sessions',
       searching: 'Searching archived messages…',
@@ -126,16 +166,21 @@ window.__ModuleLoader__.load({
       ungrouped: 'Ungrouped',
       restore: 'Unarchive',
       delete: 'Delete permanently',
+      menuDelete: 'Delete permanently',
       cancel: 'Cancel',
       confirmDelete: 'Confirm permanent deletion',
       deleting: 'Deleting…',
       restoring: 'Unarchiving…',
-      deleteTitle: 'Permanently delete session?',
-      deleteDesc: 'Only an unloaded, archived local session can be deleted. This cannot be undone.',
+      dialogTitle: 'Permanently delete session?',
+      dialogDesc: 'Only an unloaded, archived local session can be deleted. This cannot be undone.',
       searchMore: 'Showing the first 20 content matches. Narrow your search.',
       loadFailed: 'Chat history manager unavailable: ',
       footnote: 'Original Version Enhancements · the chat history part is adapted from dsh-chat-manager (MIT).',
     };
+
+    /* ------------------------------------------------------------------ */
+    /* Styles                                                              */
+    /* ------------------------------------------------------------------ */
 
     const CSS = `
       .tqs-root {
@@ -238,6 +283,7 @@ window.__ModuleLoader__.load({
         box-shadow: 0 1px 2px rgba(0, 0, 0, .25);
       }
       .ove-switch[aria-checked="true"] .ove-switch-thumb { transform: translateX(16px); }
+      .ove-hint { margin: 0; font-size: 13px; line-height: 20px; color: var(--dsw-alias-label-tertiary); }
       .ove-chat { display: grid; gap: 12px; }
       .ove-search {
         box-sizing: border-box;
@@ -274,10 +320,71 @@ window.__ModuleLoader__.load({
       .ove-btn:hover:not(:disabled) { background: var(--dsw-alias-bg-layer-2); }
       .ove-btn:disabled { opacity: .5; cursor: default; }
       .ove-btn-danger { color: var(--dsw-alias-state-error-primary); }
-      .ove-confirm { display: grid; gap: 8px; width: 100%; padding: 10px 0 0; }
-      .ove-confirm-text { font-size: 13px; line-height: 20px; color: var(--dsw-alias-label-secondary); }
       .ove-footnote { margin: 0; font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-tertiary); }
+
+      .ove-menu-item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        width: 100%;
+        box-sizing: border-box;
+        padding: 8px 10px;
+        border: 0;
+        border-radius: 6px;
+        background: transparent;
+        color: var(--dsw-alias-state-error-primary);
+        font-size: 13px;
+        line-height: 20px;
+        text-align: left;
+        cursor: pointer;
+        -webkit-tap-highlight-color: transparent;
+      }
+      .ove-menu-item:hover, .ove-menu-item:focus-visible {
+        background: var(--dsw-alias-bg-layer-2);
+        outline: none;
+      }
+      .ove-menu-icon { flex: none; display: block; }
+
+      .ove-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 1000;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        background: rgba(0, 0, 0, .4);
+        pointer-events: auto;
+      }
+      .ove-dialog {
+        box-sizing: border-box;
+        width: min(420px, 100%);
+        display: grid;
+        gap: 12px;
+        padding: 20px;
+        border-radius: 14px;
+        border: .5px solid var(--dsw-alias-border-l2);
+        background: var(--dsw-alias-bg-layer-2);
+        color: var(--dsw-alias-label-primary);
+        box-shadow: 0 12px 40px rgba(0, 0, 0, .35);
+      }
+      .ove-dialog-title { margin: 0; font-size: 16px; line-height: 24px; font-weight: 600; }
+      .ove-dialog-desc { margin: 0; font-size: 13px; line-height: 20px; color: var(--dsw-alias-label-tertiary); }
+      .ove-dialog-target {
+        margin: 0;
+        padding: 8px 10px;
+        border-radius: 8px;
+        background: var(--dsw-alias-bg-base);
+        font-size: 13px;
+        line-height: 20px;
+        overflow-wrap: anywhere;
+      }
+      .ove-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
     `;
+
+    /* ------------------------------------------------------------------ */
+    /* Work-details switcher                                               */
+    /* ------------------------------------------------------------------ */
 
     /**
      * Resolve the saved Host value into one of the four offered modes.
@@ -430,138 +537,18 @@ window.__ModuleLoader__.load({
       );
     }
 
+    /* ------------------------------------------------------------------ */
+    /* Plugin page: the two feature switches                               */
+    /* ------------------------------------------------------------------ */
+
     /**
-     * Feature switches plus the archived-session manager.
-     * @param props - standard settings-section props plus the plugin translator.
+     * Feature switches; the archive surface now has its own settings entry.
+     * @param props - injected translator.
      * @returns the plugin page.
      */
-    function PluginPage({ useSessions, useWorkspaces, t, ctx }) {
+    function PluginPage({ t }) {
       const tr = typeof t === 'function' ? t : (key) => key;
       const flags = useFlags();
-      const sessions = typeof useSessions === 'function' ? useSessions((s) => s) : undefined;
-      const workspaces = typeof useWorkspaces === 'function' ? useWorkspaces((s) => s) : undefined;
-
-      const [query, setQuery] = React.useState('');
-      const [matches, setMatches] = React.useState(new Map());
-      const [hasMore, setHasMore] = React.useState(false);
-      const [searching, setSearching] = React.useState(false);
-      const [searchError, setSearchError] = React.useState('');
-      const [busy, setBusy] = React.useState(null);
-      const [pendingDelete, setPendingDelete] = React.useState(null);
-      const [actionError, setActionError] = React.useState('');
-      const [notice, setNotice] = React.useState('');
-
-      const normalized = query.trim();
-      const showChat = flags.chatManager;
-
-      React.useEffect(() => {
-        if (!showChat || normalized.length === 0) {
-          setMatches(new Map());
-          setHasMore(false);
-          setSearching(false);
-          return undefined;
-        }
-        const controller = new AbortController();
-        const timer = setTimeout(async () => {
-          setSearching(true);
-          setSearchError('');
-          try {
-            const response = await fetch(`${ROUTE_ROOT}/archives/search`, {
-              method: 'POST',
-              headers: { 'content-type': 'application/json' },
-              body: JSON.stringify({ query: normalized }),
-              signal: controller.signal,
-            });
-            const body = await response.json();
-            if (!response.ok || body?.ok !== true) {
-              throw Error(body?.error?.message || `HTTP ${response.status}`);
-            }
-            if (controller.signal.aborted) return;
-            const next = new Map();
-            for (const item of body.value?.items ?? []) next.set(item.sessionId, item.snippet);
-            setMatches(next);
-            setHasMore(body.value?.hasMore === true);
-          } catch (error) {
-            if (!controller.signal.aborted) setSearchError(String(error?.message ?? error));
-          } finally {
-            if (!controller.signal.aborted) setSearching(false);
-          }
-        }, 250);
-        return () => { clearTimeout(timer); controller.abort(); };
-      }, [showChat, normalized]);
-
-      const archivedIds = Array.isArray(workspaces?.archivedSessionIds) ? workspaces.archivedSessionIds : [];
-      const owners = new Map();
-      for (const workspace of workspaces?.items ?? []) {
-        for (const id of workspace.sessionIds ?? []) owners.set(id, workspace.title);
-      }
-      const rows = [...archivedIds].reverse().map((id) => ({
-        id,
-        title: sessions?.byId?.[id]?.displayTitle || id,
-        workspace: owners.get(id) || tr('ungrouped'),
-        snippet: matches.get(id),
-      })).filter((row) => normalized.length === 0
-        || `${row.title} ${row.workspace}`.toLowerCase().includes(normalized.toLowerCase())
-        || row.snippet !== undefined);
-
-      const refreshStores = async () => {
-        const tasks = [];
-        for (const name of ['sessions', 'workspaces']) {
-          const store = ctx.get(name);
-          if (typeof store?.refresh === 'function') {
-            tasks.push(Promise.resolve(store.refresh()).catch(() => undefined));
-          }
-        }
-        await Promise.all(tasks);
-      };
-
-      const restore = async (row) => {
-        if (busy !== null) return;
-        setBusy(row.id);
-        setActionError('');
-        setNotice('');
-        try {
-          const service = ctx.get('workspaces');
-          if (typeof service?.unarchiveSession !== 'function') {
-            throw new Error(tr('loadFailed') + 'workspaces.unarchiveSession');
-          }
-          await service.unarchiveSession(row.id);
-          setNotice(`${tr('restore')} · ${row.title}`);
-          await refreshStores();
-        } catch (error) {
-          setActionError(String(error?.message ?? error));
-        } finally {
-          setBusy(null);
-        }
-      };
-
-      const remove = async (row) => {
-        if (busy !== null) return;
-        setBusy(row.id);
-        setActionError('');
-        setNotice('');
-        try {
-          const response = await fetch(`${ROUTE_ROOT}/sessions/delete`, {
-            method: 'POST',
-            headers: {
-              'content-type': 'application/json',
-              'x-dsh-session-delete-confirmation': 'delete-session',
-            },
-            body: JSON.stringify({ sessionId: row.id }),
-          });
-          const body = await response.json();
-          if (!response.ok || body?.ok !== true) {
-            throw Error(body?.error?.message || `HTTP ${response.status}`);
-          }
-          setPendingDelete(null);
-          setNotice(`${tr('delete')} · ${row.title}`);
-          await refreshStores();
-        } catch (error) {
-          setActionError(String(error?.message ?? error));
-        } finally {
-          setBusy(null);
-        }
-      };
 
       const toggle = (key) => setFlag(key, !flags[key]);
 
@@ -601,72 +588,290 @@ window.__ModuleLoader__.load({
                   onClick: () => toggle('chatManager'),
                 }, h('span', { className: 'ove-switch-thumb' }))))),
 
-          showChat && h('div', { className: 'ove-chat' },
-            h('div', { className: 'ove-head' },
-              h('h2', { className: 'ove-group-title' }, tr('chatTitle')),
-              h('p', { className: 'ove-intro' }, tr('chatIntro'))),
-            h('input', {
-              type: 'search',
-              className: 'ove-search',
-              value: query,
-              maxLength: 500,
-              placeholder: tr('searchPlaceholder'),
-              'aria-label': tr('searchLabel'),
-              onChange: (event) => { setQuery(event.target.value); setActionError(''); },
-            }),
-            searching && h('p', { className: 'ove-muted', role: 'status' }, tr('searching')),
-            hasMore && h('p', { className: 'ove-muted', role: 'status' }, tr('searchMore')),
-            searchError && h('p', { className: 'ove-error', role: 'alert' }, `${tr('loadFailed')}${searchError}`),
-            actionError && h('p', { className: 'ove-error', role: 'alert' }, actionError),
-            notice && h('p', { className: 'ove-muted', role: 'status' }, notice),
-            rows.length === 0 && h('p', { className: 'ove-muted' },
-              archivedIds.length === 0 ? tr('noArchives') : tr('noRows')),
-            rows.length > 0 && h('div', { className: 'ove-card' },
-              rows.map((row) => h('div', { key: row.id, className: 'ove-row-item' },
-                h('div', { className: 'ove-item-text' },
-                  h('div', { className: 'ove-item-title' }, row.title),
-                  h('div', { className: 'ove-item-sub' }, row.workspace),
-                  row.snippet !== undefined && h('p', { className: 'ove-snippet' }, row.snippet)),
-                h('div', { className: 'ove-actions' },
-                  h('button', {
-                    type: 'button',
-                    className: 'ove-btn',
-                    disabled: busy !== null,
-                    onClick: () => restore(row),
-                  }, busy === row.id ? tr('restoring') : tr('restore')),
-                  pendingDelete !== row.id && h('button', {
-                    type: 'button',
-                    className: 'ove-btn ove-btn-danger',
-                    disabled: busy !== null,
-                    onClick: () => { setPendingDelete(row.id); setActionError(''); setNotice(''); },
-                  }, tr('delete'))),
-                pendingDelete === row.id && h('div', { className: 'ove-confirm' },
-                  h('div', { className: 'ove-confirm-text' }, `${tr('deleteTitle')} ${row.title} — ${tr('deleteDesc')}`),
-                  h('div', { className: 'ove-actions' },
-                    h('button', {
-                      type: 'button',
-                      className: 'ove-btn',
-                      disabled: busy !== null,
-                      onClick: () => setPendingDelete(null),
-                    }, tr('cancel')),
-                    h('button', {
-                      type: 'button',
-                      className: 'ove-btn ove-btn-danger',
-                      disabled: busy !== null,
-                      onClick: () => remove(row),
-                    }, busy === row.id ? tr('deleting') : tr('confirmDelete'))))
+          h('p', { className: 'ove-hint' }, tr('pageHint')),
+          h('p', { className: 'ove-footnote' }, tr('footnote'))),
+      );
+    }
 
-              )))
-          ),
+    /* ------------------------------------------------------------------ */
+    /* Archived sessions page                                              */
+    /* ------------------------------------------------------------------ */
+
+    /**
+     * Archived-session search, unarchive, and permanent deletion.
+     * @param props - standard settings props, translator, and the plugin context.
+     * @returns the archived sessions page.
+     */
+    function ArchivedPage({ useSessions, useWorkspaces, t, ctx }) {
+      const tr = typeof t === 'function' ? t : (key) => key;
+      const sessions = useSessions((s) => s);
+      const workspaces = useWorkspaces((s) => s);
+
+      const [query, setQuery] = React.useState('');
+      const [matches, setMatches] = React.useState(new Map());
+      const [hasMore, setHasMore] = React.useState(false);
+      const [searching, setSearching] = React.useState(false);
+      const [searchError, setSearchError] = React.useState('');
+      const [busy, setBusy] = React.useState(null);
+      const [actionError, setActionError] = React.useState('');
+      const [notice, setNotice] = React.useState('');
+
+      const normalized = query.trim();
+
+      React.useEffect(() => {
+        if (normalized.length === 0) {
+          setMatches(new Map());
+          setHasMore(false);
+          setSearching(false);
+          return undefined;
+        }
+        const controller = new AbortController();
+        const timer = setTimeout(async () => {
+          setSearching(true);
+          setSearchError('');
+          try {
+            const response = await fetch(`${ROUTE_ROOT}/archives/search`, {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ query: normalized }),
+              signal: controller.signal,
+            });
+            const body = await response.json();
+            if (!response.ok || body?.ok !== true) {
+              throw Error(body?.error?.message || `HTTP ${response.status}`);
+            }
+            if (controller.signal.aborted) return;
+            const next = new Map();
+            for (const item of body.value?.items ?? []) next.set(item.sessionId, item.snippet);
+            setMatches(next);
+            setHasMore(body.value?.hasMore === true);
+          } catch (error) {
+            if (!controller.signal.aborted) setSearchError(String(error?.message ?? error));
+          } finally {
+            if (!controller.signal.aborted) setSearching(false);
+          }
+        }, 250);
+        return () => { clearTimeout(timer); controller.abort(); };
+      }, [normalized]);
+
+      const archivedIds = Array.isArray(workspaces?.archivedSessionIds) ? workspaces.archivedSessionIds : [];
+      const owners = new Map();
+      for (const workspace of workspaces?.items ?? []) {
+        for (const id of workspace.sessionIds ?? []) owners.set(id, workspace.title);
+      }
+      const rows = [...archivedIds].reverse().map((id) => ({
+        id,
+        title: sessions?.byId?.[id]?.displayTitle || id,
+        workspace: owners.get(id) || tr('ungrouped'),
+        snippet: matches.get(id),
+      })).filter((row) => normalized.length === 0
+        || `${row.title} ${row.workspace}`.toLowerCase().includes(normalized.toLowerCase())
+        || row.snippet !== undefined);
+
+      const restore = async (row) => {
+        if (busy !== null) return;
+        setBusy(row.id);
+        setActionError('');
+        setNotice('');
+        try {
+          const service = ctx.get('workspaces');
+          if (typeof service?.unarchiveSession !== 'function') {
+            throw new Error(tr('loadFailed') + 'workspaces.unarchiveSession');
+          }
+          await service.unarchiveSession(row.id);
+          setNotice(`${tr('restore')} · ${row.title}`);
+          await refreshStores(ctx);
+        } catch (error) {
+          setActionError(String(error?.message ?? error));
+        } finally {
+          setBusy(null);
+        }
+      };
+
+      return h(React.Fragment, null,
+        h('style', { key: 'styles', 'data-plugin-css': `${NS}-archives` }, CSS),
+        h('div', { className: 'ove-page' },
+          h('div', { className: 'ove-head' },
+            h('h1', { className: 'ove-title' }, tr('archivesTitle')),
+            h('p', { className: 'ove-intro' }, tr('archivesIntro'))),
+
+          h('input', {
+            type: 'search',
+            className: 'ove-search',
+            value: query,
+            maxLength: 500,
+            placeholder: tr('searchPlaceholder'),
+            'aria-label': tr('searchLabel'),
+            onChange: (event) => { setQuery(event.target.value); setActionError(''); },
+          }),
+          searching && h('p', { className: 'ove-muted', role: 'status' }, tr('searching')),
+          hasMore && h('p', { className: 'ove-muted', role: 'status' }, tr('searchMore')),
+          searchError && h('p', { className: 'ove-error', role: 'alert' }, `${tr('loadFailed')}${searchError}`),
+          actionError && h('p', { className: 'ove-error', role: 'alert' }, actionError),
+          notice && h('p', { className: 'ove-muted', role: 'status' }, notice),
+          rows.length === 0 && h('p', { className: 'ove-muted' },
+            archivedIds.length === 0 ? tr('noArchives') : tr('noRows')),
+          rows.length > 0 && h('div', { className: 'ove-card' },
+            rows.map((row) => h('div', { key: row.id, className: 'ove-row-item' },
+              h('div', { className: 'ove-item-text' },
+                h('div', { className: 'ove-item-title' }, row.title),
+                h('div', { className: 'ove-item-sub' }, row.workspace),
+                row.snippet !== undefined && h('p', { className: 'ove-snippet' }, row.snippet)),
+              h('div', { className: 'ove-actions' },
+                h('button', {
+                  type: 'button',
+                  className: 'ove-btn',
+                  disabled: busy !== null,
+                  onClick: () => restore(row),
+                }, busy === row.id ? tr('restoring') : tr('restore')),
+                h('button', {
+                  type: 'button',
+                  className: 'ove-btn ove-btn-danger',
+                  disabled: busy !== null,
+                  onClick: () => {
+                    publishDelete({ target: { id: row.id, title: row.title }, busy: false, error: '' });
+                  },
+                }, tr('delete')))))),
 
           h('p', { className: 'ove-footnote' }, tr('footnote'))),
       );
     }
 
+    /* ------------------------------------------------------------------ */
+    /* Session context menu: permanent deletion                            */
+    /* ------------------------------------------------------------------ */
+
+    const TrashIcon = () => h('svg', {
+      viewBox: '0 0 16 16',
+      width: 16,
+      height: 16,
+      fill: 'none',
+      stroke: 'currentColor',
+      strokeWidth: 1.3,
+      strokeLinecap: 'round',
+      strokeLinejoin: 'round',
+      'aria-hidden': 'true',
+      focusable: 'false',
+      className: 'ove-menu-icon',
+      style: { display: 'block', pointerEvents: 'none' },
+    },
+      h('path', { d: 'M3 4.5h10M6.5 4.5V3.25h3V4.5M4.5 4.5l.6 8.25h5.8l.6-8.25' }),
+      h('path', { d: 'M6.75 7v3.5M9.25 7v3.5' }));
+
+    /**
+     * Right-click row action: delete one session permanently.
+     * @param props - owner props, menu hook, translator.
+     * @returns the menu row.
+     */
+    function SessionDeleteMenuItem({ sessionId, displayTitle, useMenuOpenState, t }) {
+      const tr = typeof t === 'function' ? t : (key) => key;
+      const [, closeMenu] = useMenuOpenState();
+
+      return h('button', {
+        type: 'button',
+        role: 'menuitem',
+        className: 'ove-menu-item',
+        onClick: () => {
+          closeMenu(false);
+          publishDelete({ target: { id: sessionId, title: displayTitle || sessionId }, busy: false, error: '' });
+        },
+      }, h(TrashIcon), h('span', null, tr('menuDelete')));
+    }
+
+    /* ------------------------------------------------------------------ */
+    /* Confirmation dialog (frame overlay)                                 */
+    /* ------------------------------------------------------------------ */
+
+    /**
+     * Shared permanent-deletion confirmation.
+     * @param props - injected translator and the plugin context.
+     * @returns the dialog, or nothing while no target is pending.
+     */
+    function DeleteDialog({ t, ctx }) {
+      const tr = typeof t === 'function' ? t : (key) => key;
+      const state = React.useSyncExternalStore(subscribeDelete, getDelete, getDelete);
+      const cancelRef = React.useRef(null);
+      const open = state.target !== null;
+
+      React.useEffect(() => {
+        if (!open) return undefined;
+        cancelRef.current?.focus?.();
+        const onKey = (event) => {
+          if (event.key === 'Escape' && !deleteState.busy) {
+            publishDelete({ target: null, error: '' });
+          }
+        };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+      }, [open]);
+
+      if (!open) return null;
+
+      const close = () => { if (!deleteState.busy) publishDelete({ target: null, error: '' }); };
+
+      const confirm = async () => {
+        const target = deleteState.target;
+        if (target === null || deleteState.busy) return;
+        publishDelete({ busy: true, error: '' });
+        try {
+          const response = await fetch(DELETE_ROUTE, {
+            method: 'POST',
+            headers: {
+              'content-type': 'application/json',
+              'x-dsh-session-delete-confirmation': 'delete-session',
+            },
+            body: JSON.stringify({ sessionId: target.id }),
+          });
+          const body = await response.json();
+          if (!response.ok || body?.ok !== true) {
+            throw Error(body?.error?.message || `HTTP ${response.status}`);
+          }
+          publishDelete({ target: null, busy: false, error: '' });
+          await refreshStores(ctx);
+        } catch (error) {
+          publishDelete({ busy: false, error: String(error?.message ?? error) });
+        }
+      };
+
+      return h('div', {
+        className: 'ove-overlay',
+        onMouseDown: (event) => { if (event.target === event.currentTarget) close(); },
+      },
+        h('div', {
+          className: 'ove-dialog',
+          role: 'dialog',
+          'aria-modal': 'true',
+          'aria-label': tr('dialogTitle'),
+        },
+          h('h2', { className: 'ove-dialog-title' }, tr('dialogTitle')),
+          h('p', { className: 'ove-dialog-desc' }, tr('dialogDesc')),
+          h('p', { className: 'ove-dialog-target' }, state.target.title),
+          state.error && h('p', { className: 'ove-error', role: 'alert' }, state.error),
+          h('div', { className: 'ove-dialog-actions' },
+            h('button', {
+              type: 'button',
+              className: 'ove-btn',
+              ref: cancelRef,
+              disabled: state.busy,
+              onClick: close,
+            }, tr('cancel')),
+            h('button', {
+              type: 'button',
+              className: 'ove-btn ove-btn-danger',
+              disabled: state.busy,
+              onClick: confirm,
+            }, state.busy ? tr('deleting') : tr('confirmDelete')))));
+    }
+
+    /* ------------------------------------------------------------------ */
+    /* Plugin wiring                                                       */
+    /* ------------------------------------------------------------------ */
+
     return {
       inject: ['slots', 'locale', 'configForms', 'workspaces', 'sessions'],
       apply(ctx) {
         const text = (key) => ctx.locale.getSnapshot().active === 'zh' ? (zh[key] ?? key) : (en[key] ?? key);
+        const translator = (key) => text(key);
 
         ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'original-version-enhancements: dictionaries');
 
@@ -675,8 +880,49 @@ window.__ModuleLoader__.load({
           id: 'original-version-enhancements',
           order: 22,
           label: () => text('pageTitle'),
-          inject: () => ({ t: (key) => text(key), ctx }),
+          inject: () => ({ t: translator }),
         }, PluginPage)), 'original-version-enhancements: plugin page');
+
+        // The archive page, the session menu row, and the dialog exist only
+        // while the chat-manager switch is on; toggling disposes them live.
+        ctx.effect(() => {
+          let disposers = [];
+          const sync = () => {
+            const enabled = getFlags().chatManager;
+            if (enabled && disposers.length === 0) {
+              disposers = [
+                ctx.slots.inject('settings.section', () => ctx.slots.register({
+                  name: 'settings.section',
+                  id: 'archived-sessions',
+                  order: 25,
+                  label: () => text('archivesTitle'),
+                  inject: () => ({ t: translator, ctx }),
+                }, ArchivedPage)),
+                ctx.slots.inject('sidebar.workspaces.session.menu.item', () => ctx.slots.register({
+                  name: 'sidebar.workspaces.session.menu.item',
+                  id: 'original-version-enhancements.delete',
+                  order: 500,
+                  inject: () => ({ t: translator, ctx }),
+                }, SessionDeleteMenuItem)),
+                ctx.slots.inject('shell.overlay', () => ctx.slots.register({
+                  name: 'shell.overlay',
+                  id: 'original-version-enhancements.delete-dialog',
+                  inject: () => ({ t: translator, ctx }),
+                }, DeleteDialog)),
+              ];
+            } else if (!enabled && disposers.length > 0) {
+              for (const dispose of disposers) dispose();
+              disposers = [];
+            }
+          };
+          const unsubscribe = subscribeFlags(sync);
+          sync();
+          return () => {
+            unsubscribe();
+            for (const dispose of disposers) dispose();
+            disposers = [];
+          };
+        }, 'original-version-enhancements: chat manager surfaces');
 
         ctx.effect(() => ctx.configForms.whileServed(['ui-chat'], () => {
           const form = ctx.configForms.get('ui-chat');
