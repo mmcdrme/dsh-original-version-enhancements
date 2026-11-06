@@ -629,6 +629,21 @@ export function createAutomationSurface(options) {
     sendJson(res, 200, { ok: true, value: { deleted, failed } })
   }
 
+  const clear = async (req, res) => {
+    const body = await accept(req, res)
+    if (body === undefined) return
+    try {
+      const result = await service.deleteInactive()
+      const deleted = Number.isFinite(result?.deleted) ? result.deleted : 0
+      sendJson(res, 200, { ok: true, value: { deleted } })
+      if (deleted > 0) void reconcile()
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      warn(`automation: clearing ended tasks failed: ${message}`)
+      sendJson(res, 503, failure('schedule-clear-failed', `清除运行记录失败：${message}`))
+    }
+  }
+
   const bind = async (req, res) => {
     const body = await accept(req, res)
     if (body === undefined) return
@@ -660,5 +675,5 @@ export function createAutomationSurface(options) {
     }
   }
 
-  return { handlers: { catalog, create, update, run, autoClean, remove, bind }, reconcile }
+  return { handlers: { catalog, create, update, run, autoClean, remove, clear, bind }, reconcile }
 }

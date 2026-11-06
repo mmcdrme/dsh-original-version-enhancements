@@ -59,8 +59,15 @@ v1.5.21（MIT），详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 - **全选在列表上方**：`全选` 复选框独占一行、位于任务列表之上并与行首勾选框对齐，
   只作用于当前分栏与搜索词命中的任务。
 - **免对话创建**：在面板里直接新建任务，不必先进入一段对话；`新建` 打开编辑抽屉。
+  新建时默认「重复」勾选、规则为「按分钟、每 30 分钟」，一次性时间默认落在 30 分钟后；
+  取消「重复」勾选即只运行一次，此时才显示日期与时间。
+- **自定义规则示例**：选择「自定义」时，RRULE 输入框下方给出三条可直接点选填入的示例
+  （每周一三五、每两天、每月 1 号），避免手写 RRULE。
 - **立即投递**：行内与编辑抽屉都提供「立即投递」，调用宿主 `run` 立即把任务内容投递到
   目标会话；投递成功后行内显示「上次投递」时间。
+- **暂停所选**：批量操作栏里的黄色按钮，把所选任务中仍开启的一次性暂停。
+- **清除运行记录**：标题栏按钮，二次确认后调用宿主 `deleteInactive`，删除所有已结束任务
+  及其运行记录；已开启、已暂停的任务与原会话不受影响。
 - **批量删除**：勾选多个任务后一次删除，带二次确认；已投递的消息与目标会话保留。
 - **多会话绑定**：勾选一个或多个任务后一次绑定到多个会话（同标题、同指令、同重复规则），
   每个任务 × 每个会话各一份；已归档会话被过滤，已经绑定过的会话自动跳过，
@@ -94,9 +101,10 @@ v1.5.21（MIT），详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 - `POST /plugins/original-version-enhancements/automation/run` — 立即投递
 - `POST /plugins/original-version-enhancements/automation/auto-clean` — 设置/清除任务的自动清理
 - `POST /plugins/original-version-enhancements/automation/delete` — 批量删除
+- `POST /plugins/original-version-enhancements/automation/clear` — 清除全部已结束任务及其运行记录
 - `POST /plugins/original-version-enhancements/automation/bind` — 把任务复制到多个会话
 
-后七条需要 Host 的 `schedule` 服务；未挂载该服务的组合里它们不会注册。
+后八条需要 Host 的 `schedule` 服务；未挂载该服务的组合里它们不会注册。
 
 ## 安装 / Install
 
