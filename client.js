@@ -851,11 +851,10 @@ window.__ModuleLoader__.load({
          the full row. They take no vertical space, so the list stays put. */
       .ove-list-top { position: relative; height: 0; overflow: visible; }
       .ove-list-top > * { position: absolute; top: 1px; left: 172px; right: 0; max-width: calc(100% - 172px); }
-      /* A receipt is plain text, not a white card: it must not paint a block
-         over the row it floats above. */
+      /* Operation receipts keep their coloured chip; only the action bar is
+         bare. */
       .ove-list-top .ove-notice, .ove-list-top .ove-error {
-        margin: 0; padding: 0; background: none;
-        overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+        margin: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
       }
       /* The action bar is a floating control cluster, not a white card: the
          count sits right next to the bind button on the right edge. */
