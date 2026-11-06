@@ -820,7 +820,9 @@ window.__ModuleLoader__.load({
       .ove-menu-row:disabled { opacity: .5; cursor: default; }
 
       .ove-tabs { display: flex; gap: 2px; margin-bottom: 12px; flex-wrap: wrap; }
-      .ove-select-bar { display: flex; align-items: flex-start; padding: 4px 12px 6px; }
+      /* The select-all row shares the search field's left edge so the whole
+         list column lines up with the search box above it. */
+      .ove-select-bar { display: flex; align-items: flex-start; padding: 4px 0 6px; }
       .ove-select-all { display: inline-flex; align-items: flex-start; gap: 12px; font-size: 12px; line-height: 20px; color: var(--dsw-alias-label-tertiary); cursor: pointer; white-space: nowrap; }
       .ove-select-all > span { line-height: 24px; }
       .ove-tab-count { margin-left: 6px; font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
@@ -844,27 +846,32 @@ window.__ModuleLoader__.load({
       .ove-search-input:focus { outline: 2px solid var(--dsw-alias-brand-primary, #4f7cff); outline-offset: -1px; }
       .ove-search-icon { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: var(--dsw-alias-label-tertiary); display: flex; pointer-events: none; }
 
-      /* The selection bar and receipts float over the select-all row: the left
-         edge starts right after the select-all checkbox, the right edge uses
+      /* The selection bar and receipts float over the select-all row: their
+         left edge sits 100px right of the select-all label, the right edge uses
          the full row. They take no vertical space, so the list stays put. */
       .ove-list-top { position: relative; height: 0; overflow: visible; }
-      .ove-list-top > * { position: absolute; top: 1px; left: 72px; right: 0; max-width: calc(100% - 72px); }
+      .ove-list-top > * { position: absolute; top: 1px; left: 172px; right: 0; max-width: calc(100% - 172px); }
+      /* A receipt is plain text, not a white card: it must not paint a block
+         over the row it floats above. */
       .ove-list-top .ove-notice, .ove-list-top .ove-error {
-        margin: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+        margin: 0; padding: 0; background: none;
+        overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
       }
+      /* The action bar is a floating control cluster, not a white card: the
+         count sits right next to the bind button on the right edge. */
       .ove-bulk {
         display: flex; flex-wrap: nowrap; align-items: center; gap: 8px;
-        padding: 0 10px; height: 26px; box-sizing: border-box; border-radius: 8px;
-        background: var(--dsw-alias-bg-layer-2); border: .5px solid var(--dsw-alias-border-l1);
-        box-shadow: 0 2px 8px rgba(0, 0, 0, .12);
+        padding: 0; height: 26px; box-sizing: border-box;
+        background: transparent; border: 0; box-shadow: none;
       }
-      .ove-bulk-count { font-size: 12px; color: var(--dsw-alias-label-secondary); margin-right: auto; }
+      .ove-bulk-count { font-size: 12px; color: var(--dsw-alias-label-secondary); margin-left: auto; margin-right: 4px; }
 
       .ove-task-list { display: grid; gap: 2px; }
-      .ove-task { position: relative; display: flex; align-items: flex-start; gap: 12px; padding: 10px 12px; border-radius: 10px; cursor: pointer; }
+      .ove-task { position: relative; display: flex; align-items: flex-start; gap: 12px; padding: 10px 12px 10px 0; border-radius: 10px; cursor: pointer; }
       .ove-task:hover { background: var(--dsw-alias-bg-layer-1); }
       .ove-task[data-active="true"] { background: var(--dsw-alias-bg-layer-2); }
-      .ove-task-check { margin-top: 5px; width: 15px; height: 15px; accent-color: var(--dsw-alias-brand-primary, #4f7cff); cursor: pointer; flex: none; }
+      /* No UA left margin: the row checkbox must line up with the search box. */
+      .ove-task-check { margin-top: 5px; margin-left: 0; width: 15px; height: 15px; accent-color: var(--dsw-alias-brand-primary, #4f7cff); cursor: pointer; flex: none; }
       .ove-task-icon { color: var(--dsw-alias-label-tertiary); margin-top: 2px; display: flex; flex: none; }
       .ove-task-body { flex: 1 1 auto; min-width: 0; display: grid; gap: 2px; }
       .ove-task-title { font-size: 15px; line-height: 24px; overflow-wrap: anywhere; }
