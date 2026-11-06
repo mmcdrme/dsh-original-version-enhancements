@@ -838,28 +838,39 @@ window.__ModuleLoader__.load({
       .ove-search-input:focus { outline: 2px solid var(--dsw-alias-brand-primary, #4f7cff); outline-offset: -1px; }
       .ove-search-icon { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: var(--dsw-alias-label-tertiary); display: flex; pointer-events: none; }
 
-      .ove-list-top { min-height: 18px; display: flex; flex-direction: column; gap: 6px; }
+      /* One fixed-height strip: the selection bar, an error or a receipt share
+         it, so acting on a task never changes the list's height. */
+      .ove-list-top { height: 36px; display: flex; align-items: center; overflow: hidden; }
+      .ove-list-top > * { width: 100%; }
+      .ove-list-top .ove-notice, .ove-list-top .ove-error {
+        margin: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+      }
       .ove-bulk {
-        display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
-        padding: 6px 12px; border-radius: 10px; background: var(--dsw-alias-bg-layer-1);
-        border: .5px solid var(--dsw-alias-border-l1);
+        display: flex; flex-wrap: nowrap; align-items: center; gap: 8px;
+        padding: 0 12px; height: 36px; box-sizing: border-box; border-radius: 10px;
+        background: var(--dsw-alias-bg-layer-1); border: .5px solid var(--dsw-alias-border-l1);
       }
       .ove-bulk-count { font-size: 12px; color: var(--dsw-alias-label-secondary); margin-right: auto; }
 
       .ove-task-list { display: grid; gap: 2px; }
-      .ove-task { display: flex; align-items: flex-start; gap: 12px; padding: 10px 12px; border-radius: 10px; cursor: pointer; }
+      .ove-task { position: relative; display: flex; align-items: flex-start; gap: 12px; padding: 10px 12px; border-radius: 10px; cursor: pointer; }
       .ove-task:hover { background: var(--dsw-alias-bg-layer-1); }
       .ove-task[data-active="true"] { background: var(--dsw-alias-bg-layer-2); }
       .ove-task-check { margin-top: 5px; width: 15px; height: 15px; accent-color: var(--dsw-alias-brand-primary, #4f7cff); cursor: pointer; flex: none; }
       .ove-task-icon { color: var(--dsw-alias-label-tertiary); margin-top: 2px; display: flex; flex: none; }
       .ove-task-body { flex: 1 1 auto; min-width: 0; display: grid; gap: 2px; }
       .ove-task-title { font-size: 15px; line-height: 24px; overflow-wrap: anywhere; }
-      .ove-task-context { font-weight: 700; }
-      .ove-task-context-workspace { font-weight: 800; color: var(--dsw-alias-label-primary, #111827); }
-      .ove-task-context-session { font-weight: 800; color: #2563eb; }
-      .ove-task-context-sep { font-weight: 800; color: var(--dsw-alias-label-secondary); }
+      .ove-task-context { font-weight: 400; color: var(--dsw-alias-label-tertiary); }
+      .ove-task-context-workspace { font-weight: 700; color: var(--dsw-alias-label-primary, #111827); }
+      .ove-task-context-session { font-weight: 400; color: #2563eb; }
       .ove-task-meta { font-size: 13px; line-height: 20px; color: var(--dsw-alias-label-tertiary); overflow-wrap: anywhere; }
-      .ove-task-hover { display: flex; align-items: center; gap: 8px; opacity: 0; transition: opacity .12s; flex: none; }
+      /* The actions float over the row's right edge instead of reserving width,
+         so the meta line can run to the full width before wrapping. */
+      .ove-task-hover {
+        position: absolute; top: 8px; right: 12px; display: flex; align-items: center;
+        gap: 6px; opacity: 0; transition: opacity .12s; background: inherit;
+        border-radius: 8px; padding: 2px 2px;
+      }
       /* Only real pointer hover reveals the row actions: a focused checkbox used
          to keep them visible after a click, so every row looked "hovered". */
       .ove-task:hover .ove-task-hover { opacity: 1; }
@@ -2677,11 +2688,11 @@ window.__ModuleLoader__.load({
                       className: 'ove-btn',
                       onClick: () => setSelected(new Set()),
                     }, tr('auto.clearSelection')))
-                  : null,
-                notice !== null
-                  ? h('p', { className: `ove-notice ove-notice-${notice.tone}`, role: 'status' }, notice.text)
-                  : null,
-                actionError.length > 0 ? h('p', { className: 'ove-error' }, actionError) : null),
+                  : actionError.length > 0
+                    ? h('p', { className: 'ove-error', role: 'alert' }, actionError)
+                    : notice !== null
+                      ? h('p', { className: `ove-notice ove-notice-${notice.tone}`, role: 'status' }, notice.text)
+                      : null),
 
               loading && rows.length === 0 ? h('p', { className: 'ove-muted' }, tr('auto.loading')) : null,
               loadError.length > 0
@@ -2748,17 +2759,17 @@ window.__ModuleLoader__.load({
                     const context = taskContext(task);
                     if (context.workspace.length === 0 && context.session.length === 0) return null;
                     return h('span', { className: 'ove-task-context' },
-                      '（',
+                      ' (',
                       context.workspace.length > 0
                         ? h('span', { className: 'ove-task-context-workspace' }, context.workspace)
                         : null,
                       context.workspace.length > 0 && context.session.length > 0
-                        ? h('span', { className: 'ove-task-context-sep' }, '/')
+                        ? h('span', null, '/')
                         : null,
                       context.session.length > 0
                         ? h('span', { className: 'ove-task-context-session' }, context.session)
                         : null,
-                      '）');
+                      ')');
                   })()),
                 h('div', { className: 'ove-task-meta' },
                   (() => {

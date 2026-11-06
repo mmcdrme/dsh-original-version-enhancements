@@ -1,6 +1,6 @@
 {
   "name": "@local/dsh-original-version-enhancements",
-  "version": "1.7.3",
+  "version": "1.7.4",
   "private": true,
   "description": "原版功能增强：四档工作详情切换、已归档会话管理（搜索/恢复/确认删除），以及自动化任务增强面板（批量删除、多会话绑定、投递后自动清理）。",
   "type": "module",
