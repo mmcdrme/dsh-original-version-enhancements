@@ -1,14 +1,22 @@
-# 工作步骤快捷切换 / Work Steps Quick Switch
+# 原版功能增强 / Original Version Enhancements
 
-一个 DSH Web 客户端插件，把「设置 → 通用设置 → 工作步骤展示」的四个档位
+「原版功能增强」是一个 DSH Web 客户端插件，把「设置 → 通用设置 → 工作步骤展示」的四个档位
 （简洁 / 标准 / 详细 / 完全展开）复制成四个图标按钮，放在「用资源管理器打开」
 工作区按钮的左侧。会话标题栏和右侧文件面板标题栏各有一份，两个入口都紧邻
 官方 open-in-app 控件。
 
-> A DSH Web client plugin that puts the four Work details levels
-> (Compact / Standard / Detailed / Verbose) immediately left of the
-> **Open in File Explorer** workspace action, in both the session header
+> Original Version Enhancements is a DSH Web client plugin that puts the four
+> Work details levels (Compact / Standard / Detailed / Verbose) immediately left
+> of the **Open in File Explorer** workspace action, in both the session header
 > and the file panel header.
+
+## 名称 / Name
+
+- 插件显示名：**原版功能增强**（English: Original Version Enhancements）
+- GitHub 仓库：`dsh-original-version-addition`
+- npm 包名保持 `@local/dsh-work-steps-quick-switch`，cordis 条目 id 保持
+  `work-steps-quick-switch`。它们是已安装实例的稳定标识，改名会导致现有安装
+  失联，因此只更新展示名。
 
 ## 行为 / Behavior
 
@@ -38,7 +46,13 @@
 plugin_manager install_bundle <本目录绝对路径>
 ```
 
-安装后刷新 Web 页面即可在文件面板标题栏看到这组按钮。
+也可以克隆仓库：
+
+```text
+git clone https://github.com/mmcdrme/dsh-original-version-addition.git
+```
+
+安装后刷新 Web 页面即可在会话标题栏和文件面板标题栏看到这组按钮。
 
 ## 结构 / Layout
 

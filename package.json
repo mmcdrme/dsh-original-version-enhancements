@@ -2,7 +2,7 @@
   "name": "@local/dsh-work-steps-quick-switch",
   "version": "1.0.1",
   "private": true,
-  "description": "Adds a four-step compact work-details switcher beside every Open in File Explorer workspace action.",
+  "description": "Original Version Enhancements (原版功能增强): adds a four-step compact work-details switcher beside every Open in File Explorer workspace action.",
   "type": "module",
   "exports": {
     ".": "./index.js",
