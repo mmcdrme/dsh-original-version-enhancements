@@ -166,4 +166,12 @@ test/delete-session.test.mjs 永久删除的回归测试（node --test test/）
 cordis.patch.yml          插入本插件条目
 locale/{zh,en}.json       插件管理页标题与描述
 icon.svg                  插件管理页图标
+LICENSE                   MIT 许可（含改编自 dsh-chat-manager 的版权声明）
 ```
+
+## 许可 / License
+
+本项目以 MIT 许可发布，正文见 [LICENSE](LICENSE)。
+`host/archive-manager.mjs` 与 `host/delete-session.mjs` 改编自
+[dsh-chat-manager](https://github.com/WSL043/dsh-chat-manager)
+（Copyright (c) 2026 WSL043，MIT），其版权声明同样包含在 [LICENSE](LICENSE) 中。
