@@ -59,11 +59,12 @@ v1.5.21（MIT），详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 - **全选在列表上方**：`全选` 复选框独占一行、位于任务列表之上并与行首勾选框对齐，
   只作用于当前分栏与搜索词命中的任务。
 - **免对话创建**：在面板里直接新建任务，不必先进入一段对话；`新建` 打开编辑抽屉。
-  新建默认「按分钟、每 30 分钟」；「重复」勾选框只在「按分钟」下出现，默认不勾选——
-  不勾选时该间隔就是一次性延迟（30 分钟后运行一次），勾选后才按分钟循环。
+  「重复」下拉与官方页一致——每周 / 周一至周五 / 每天 / 每 N 小时 / 每 N 分钟 / 每月 /
+  仅一次（指定时间）/ 自定义规则，并额外提供 **仅一次（延时）**：填分钟数，到点只运行一次。
+  新建默认「仅一次（延时）：30 分钟」；原来的「重复」勾选框已取消，一次性与循环直接由下拉选择。
 - **运行历史记录**：编辑已有任务时，抽屉顶部有「编辑任务」和「运行历史记录」（带条数）两个页签，
   运行记录按时间倒序列在第二个页签里（时间 + 目标会话），**只读展示**，不提供删除或隐藏。
-- **自定义规则示例**：选择「自定义」时，RRULE 输入框下方给出三条可直接点选填入的示例
+- **自定义规则示例**：选择「自定义规则」时，RRULE 输入框下方给出三条可直接点选填入的示例
   （每周一三五、每两天、每月 1 号），避免手写 RRULE。
 - **立即投递**：行内与编辑抽屉都提供「立即投递」，调用宿主 `run` 立即把任务内容投递到
   目标会话；投递成功后行内显示「上次投递」与运行次数。
@@ -75,12 +76,11 @@ v1.5.21（MIT），详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
   一次性任务若时间已过则拒绝复制并提示原因。
 - **关联会话列表**：只列出正常会话（已归档、以工作区名占位的空会话、同名重复项都不显示），
   避免下拉里出现成片的同名条目。
-- **投递后自动清理**：逐任务开关，只有不勾选「重复」的任务可用（循环任务该开关置灰、不会误删）。
-  一次性任务投递完成（状态 `ended` 且有投递回执）后由 Host 侧自动删除；
+- **投递后清理（仅一次）**：逐任务开关，只在「仅一次（延时）/ 仅一次（指定时间）」的任务上出现
+  （循环任务不显示该开关，避免误删）。一次性任务投递完成（状态 `ended` 且有投递回执）后由 Host 侧删除；
   宿主 `schedule/changed` 事件与插件启动时都会执行对账。编辑抽屉里的勾选会随保存一起写入。
 
-自动清理状态保存在 profile 目录的 `original-version-enhancements.automation.json`。
-
+投递后清理的标记保存在 profile 目录的 `original-version-enhancements.automation.json`。
 ## 开关与持久化
 
 - 三个开关（工作步骤展示快捷切换、聊天记录管理、自动化任务增强）位于插件页顶部，实时生效，无需刷新。
@@ -96,12 +96,12 @@ v1.5.21（MIT），详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 - `POST /plugins/original-version-enhancements/archives/search` — 归档内容搜索
 - `POST /plugins/original-version-enhancements/sessions/delete` — 永久删除
   （需要 `x-dsh-session-delete-confirmation: delete-session` 确认头与同源校验）
-- `POST /plugins/original-version-enhancements/automation/catalog` — 任务目录、自动清理标记与每个任务的记录条数
+- `POST /plugins/original-version-enhancements/automation/catalog` — 任务目录、投递后清理标记与每个任务的记录条数
 - `POST /plugins/original-version-enhancements/automation/history` — 单个任务的运行记录
 - `POST /plugins/original-version-enhancements/automation/create` — 新建任务
 - `POST /plugins/original-version-enhancements/automation/update` — 修改任务（标题 / 内容 / 规则 / 目标 / 启停）
 - `POST /plugins/original-version-enhancements/automation/run` — 立即投递
-- `POST /plugins/original-version-enhancements/automation/auto-clean` — 设置/清除任务的自动清理
+- `POST /plugins/original-version-enhancements/automation/auto-clean` — 设置/清除任务的投递后清理
 - `POST /plugins/original-version-enhancements/automation/delete` — 批量删除
 - `POST /plugins/original-version-enhancements/automation/bind` — 把任务复制到多个会话
 
@@ -128,7 +128,7 @@ index.js                  Host 半侧：归档搜索、永久删除、自动化�
 client.js                 Web 客户端：插件页、三个开关、四个 SVG 图标、聊天记录管理 UI、自动化增强面板
 host/archive-manager.mjs  归档内容搜索（改编自 dsh-chat-manager）
 host/delete-session.mjs   已归档会话的安全删除（改编自 dsh-chat-manager）
-host/automation.mjs       自动化任务增强（批量删除、多会话绑定、投递后自动清理）
+host/automation.mjs       自动化任务增强（批量删除、多会话绑定、投递后清理）
 cordis.patch.yml          插入本插件条目
 locale/{zh,en}.json       插件管理页标题与描述
 icon.svg                  插件管理页图标

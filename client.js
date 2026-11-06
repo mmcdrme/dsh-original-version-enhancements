@@ -226,13 +226,14 @@ window.__ModuleLoader__.load({
       'auto.emptyAction': '新建自动化任务',
       'auto.noMatches': '没有匹配的自动化任务',
       'auto.nextAt': '下次计划时间',
-      'auto.cleanShort': '自动清理',
+      'auto.cleanShort': '清理',
       'auto.inMinutes': '{n} 分钟后',
       'auto.inHours': '{n} 小时后',
       'auto.inDays': '{n} 天后',
       'auto.once': '仅一次',
       'auto.after': '{n} 分钟后执行',
       'auto.every': '每 {n} 分钟',
+      'auto.everyHour': '每 {n} 小时',
       'auto.daily': '每天',
       'auto.weekly': '每周',
       'auto.custom': '自定义',
@@ -254,17 +255,24 @@ window.__ModuleLoader__.load({
       'auto.workspace': '关联工作区',
       'auto.workspaceDefault': '不指定（跟随默认）',
       'auto.repeat': '重复',
-      'auto.repeat.at': '一次',
-      'auto.repeat.every': '按分钟',
+      'auto.repeat.delay': '仅一次（延时）',
+      'auto.repeat.once': '仅一次（指定时间）',
+      'auto.repeat.minutely': '每 N 分钟',
+      'auto.repeat.hourly': '每 N 小时',
       'auto.repeat.daily': '每天',
       'auto.repeat.weekly': '每周',
-      'auto.repeat.rrule': '自定义',
+      'auto.repeat.weekdays': '周一至周五',
+      'auto.repeat.monthly': '每月',
+      'auto.repeat.rrule': '自定义规则',
       'auto.date': '日期',
       'auto.time': '时间',
-      'auto.interval': '间隔（分钟）',
+      'auto.delayMinutes': '延时（分钟）',
+      'auto.intervalMinutes': '间隔（分钟）',
+      'auto.intervalHours': '间隔（小时）',
+      'auto.monthDay': '每月几号',
       'auto.weekday': '星期',
       'auto.rule': 'RRULE',
-      'auto.clean': '投递后自动清理',
+      'auto.clean': '投递后清理（仅一次）',
       'auto.save': '保存',
       'auto.saving': '正在保存…',
       'auto.saved': '已保存',
@@ -273,11 +281,8 @@ window.__ModuleLoader__.load({
       'auto.running': '投递中…',
       'auto.lastDelivery': '上次投递',
       'auto.notDelivered': '尚未投递',
-      'auto.cleanOnceOnly': '只有不勾选「重复」的任务会在投递后清理',
       'auto.bindSkipped': '已跳过 {count} 个已绑定的会话',
       'auto.bindTasks': '任务：{names}',
-      'auto.repeatToggle': '重复',
-      'auto.repeatHint': '不勾选则 {n} 分钟后只运行一次',
       'auto.records': '运行记录',
       'auto.recordsEmpty': '暂无运行记录',
       'auto.pauseSelected': '暂停所选',
@@ -403,13 +408,14 @@ window.__ModuleLoader__.load({
       'auto.emptyAction': 'Create an automation task',
       'auto.noMatches': 'No matching automation tasks',
       'auto.nextAt': 'Next run',
-      'auto.cleanShort': 'Auto-clean',
+      'auto.cleanShort': 'Clean',
       'auto.inMinutes': 'in {n} min',
       'auto.inHours': 'in {n} h',
       'auto.inDays': 'in {n} d',
       'auto.once': 'Once',
       'auto.after': 'in {n} min',
       'auto.every': 'Every {n} min',
+      'auto.everyHour': 'Every {n} hours',
       'auto.daily': 'Daily',
       'auto.weekly': 'Weekly',
       'auto.custom': 'Custom',
@@ -431,17 +437,24 @@ window.__ModuleLoader__.load({
       'auto.workspace': 'Workspace',
       'auto.workspaceDefault': 'Not set (use default)',
       'auto.repeat': 'Repeat',
-      'auto.repeat.at': 'Once',
-      'auto.repeat.every': 'Every N minutes',
+      'auto.repeat.delay': 'Once (after a delay)',
+      'auto.repeat.once': 'Once (at a set time)',
+      'auto.repeat.minutely': 'Every N minutes',
+      'auto.repeat.hourly': 'Every N hours',
       'auto.repeat.daily': 'Daily',
       'auto.repeat.weekly': 'Weekly',
-      'auto.repeat.rrule': 'Custom',
+      'auto.repeat.weekdays': 'Monday to Friday',
+      'auto.repeat.monthly': 'Monthly',
+      'auto.repeat.rrule': 'Custom rule',
       'auto.date': 'Date',
       'auto.time': 'Time',
-      'auto.interval': 'Interval (minutes)',
+      'auto.delayMinutes': 'Delay (minutes)',
+      'auto.intervalMinutes': 'Interval (minutes)',
+      'auto.intervalHours': 'Interval (hours)',
+      'auto.monthDay': 'Day of month',
       'auto.weekday': 'Weekday',
       'auto.rule': 'RRULE',
-      'auto.clean': 'Auto-clean after delivery',
+      'auto.clean': 'Clean up after delivery (one-shot)',
       'auto.save': 'Save',
       'auto.saving': 'Saving…',
       'auto.saved': 'Saved',
@@ -450,11 +463,8 @@ window.__ModuleLoader__.load({
       'auto.running': 'Delivering…',
       'auto.lastDelivery': 'Last delivery',
       'auto.notDelivered': 'Not delivered yet',
-      'auto.cleanOnceOnly': 'Only tasks without Repeat are cleaned after delivery',
       'auto.bindSkipped': 'Skipped {count} conversations that already had the task',
       'auto.bindTasks': 'Tasks: {names}',
-      'auto.repeatToggle': 'Repeat',
-      'auto.repeatHint': 'Leave unchecked to run once after {n} minutes',
       'auto.records': 'Run records',
       'auto.recordsEmpty': 'No run records yet',
       'auto.pauseSelected': 'Pause selected',
@@ -1541,8 +1551,12 @@ window.__ModuleLoader__.load({
           return tr('auto.once');
         case 'after':
           return tr('auto.after').replace('{n}', String(Math.round((task.afterSeconds ?? 0) / 60)));
-        case 'every':
-          return tr('auto.every').replace('{n}', String(Math.round((task.everySeconds ?? 0) / 60)));
+        case 'every': {
+          const seconds = task.everySeconds ?? 0;
+          return seconds >= 3600 && seconds % 3600 === 0
+            ? tr('auto.everyHour').replace('{n}', String(Math.round(seconds / 3600)))
+            : tr('auto.every').replace('{n}', String(Math.round(seconds / 60)));
+        }
         case 'daily':
           return `${tr('auto.daily')} ${String(task.time ?? '').slice(0, 5)}`.trim();
         case 'weekly':
@@ -1605,6 +1619,37 @@ window.__ModuleLoader__.load({
     /** Local `HH:mm` of one instant. */
     const clockOf = (when) => `${String(when.getHours()).padStart(2, '0')}:${String(when.getMinutes()).padStart(2, '0')}`;
 
+    /** The `BYMONTHDAY` day of a monthly rule, or 1. */
+    const monthDayOf = (rule) => {
+      const match = /BYMONTHDAY=(\d+)/i.exec(typeof rule === 'string' ? rule : '');
+      const day = match === null ? Number.NaN : Number(match[1]);
+      return Number.isFinite(day) && day >= 1 && day <= 31 ? day : 1;
+    };
+
+    /**
+     * Which repeat choice in the editor describes one stored task.
+     * @param task - one catalog row, or null.
+     * @returns the editor kind.
+     */
+    const repeatKindOf = (task) => {
+      const kind = typeof task?.kind === 'string' ? task.kind : 'every';
+      const rule = typeof task?.rrule === 'string' ? task.rrule : '';
+      if (kind === 'after') return 'delay';
+      if (kind === 'at') return 'once';
+      if (kind === 'every') {
+        const seconds = typeof task.everySeconds === 'number' ? task.everySeconds : 0;
+        return seconds >= 3600 && seconds % 3600 === 0 ? 'hourly' : 'minutely';
+      }
+      if (kind === 'daily') return 'daily';
+      if (kind === 'weekly') return 'weekly';
+      if (kind === 'rrule' || kind === 'cron') {
+        if (/FREQ=WEEKLY/i.test(rule) && /BYDAY=MO,TU,WE,TH,FR/i.test(rule)) return 'weekdays';
+        if (/FREQ=MONTHLY/i.test(rule) && /BYMONTHDAY=/i.test(rule)) return 'monthly';
+        return 'rrule';
+      }
+      return 'minutely';
+    };
+
     /**
      * Build the initial editor draft for a new task or an existing row.
      * @param task - the row being edited, or null for a new task.
@@ -1613,37 +1658,35 @@ window.__ModuleLoader__.load({
      */
     const draftOf = (task, cleanFlags) => {
       const target = task?.target ?? { kind: 'new_once' };
-      const existingKind = typeof task?.kind === 'string' ? task.kind : 'every';
-      // 按分钟 owns the one-shot case: unchecked Repeat means "run once N minutes
-      // from now" (a Host `after` rule), checked means "every N minutes".
-      const kind = ['every', 'daily', 'weekly', 'rrule'].includes(existingKind)
-        ? existingKind
-        : (existingKind === 'cron' ? 'rrule' : 'every');
-      const repeat = existingKind === 'every';
+      const kind = task === null || task === undefined ? 'delay' : repeatKindOf(task);
       const soon = new Date(Date.now() + 30 * 60 * 1000);
+      const at = typeof task?.scheduledAt === 'string' ? new Date(task.scheduledAt) : null;
+      const atValid = at !== null && Number.isFinite(at.getTime());
       const delayMinutes = () => {
         if (typeof task?.afterSeconds === 'number' && task.afterSeconds > 0) {
           return String(Math.max(1, Math.round(task.afterSeconds / 60)));
         }
-        if (typeof task?.scheduledAt === 'string') {
-          const at = Date.parse(task.scheduledAt);
-          if (Number.isFinite(at)) return String(Math.max(1, Math.round((at - Date.now()) / 60000)));
-        }
+        if (atValid) return String(Math.max(1, Math.round((at.getTime() - Date.now()) / 60000)));
         return '30';
+      };
+      const everySeconds = typeof task?.everySeconds === 'number' && task.everySeconds > 0 ? task.everySeconds : 1800;
+      const intervalOf = () => {
+        if (kind === 'delay') return delayMinutes();
+        if (kind === 'hourly') return String(Math.max(1, Math.round(everySeconds / 3600)));
+        return String(Math.max(1, Math.round(everySeconds / 60)));
       };
       const draft = {
         id: task?.id ?? '',
         title: task?.title ?? '',
         prompt: task?.prompt ?? '',
-        repeat,
         kind,
-        date: dateOf(soon),
-        atTime: clockOf(soon),
-        time: typeof task?.time === 'string' ? task.time.slice(0, 5) : clockOf(soon),
-        everyMinutes: repeat
-          ? (task?.everySeconds ? String(Math.round(task.everySeconds / 60)) : '30')
-          : delayMinutes(),
+        interval: intervalOf(),
+        date: atValid && kind === 'once' ? dateOf(at) : dateOf(soon),
+        time: atValid && kind === 'once'
+          ? clockOf(at)
+          : (typeof task?.time === 'string' ? task.time.slice(0, 5) : clockOf(soon)),
         weekday: Array.isArray(task?.weekdays) && task.weekdays.length > 0 ? task.weekdays[0] : 1,
+        monthDay: `${monthDayOf(task?.rrule)}`,
         rrule: task?.rrule ?? `DTSTART;TZID=${timeZone()}:${dateOf(soon).replace(/-/g, '')}T${clockOf(soon).replace(':', '')}00\nRRULE:FREQ=WEEKLY;BYDAY=MO`,
         targetKind: target.kind === 'session' ? 'session' : target.kind === 'new' ? 'new' : 'new_once',
         sessionId: target.kind === 'session' ? target.sessionId : '',
@@ -1662,19 +1705,32 @@ window.__ModuleLoader__.load({
      */
     const timingOfDraft = (draft) => {
       const zone = timeZone();
+      const count = Number(draft.interval);
+      const valid = Number.isFinite(count) && count >= 1;
+      const stamp = `DTSTART;TZID=${zone}:${draft.date.replace(/-/g, '')}T${draft.time.replace(':', '')}00`;
       switch (draft.kind) {
-        case 'every': {
-          const minutes = Number(draft.everyMinutes);
-          if (!Number.isFinite(minutes) || minutes < 1) return undefined;
-          // Unchecked Repeat turns the interval into a one-shot delay.
-          return draft.repeat === true
-            ? { kind: 'every', every_seconds: Math.round(minutes * 60) }
-            : { kind: 'after', after_seconds: Math.round(minutes * 60) };
-        }
+        case 'delay':
+          return valid ? { kind: 'after', after_seconds: Math.round(count * 60) } : undefined;
+        case 'minutely':
+          return valid ? { kind: 'every', every_seconds: Math.round(count * 60) } : undefined;
+        case 'hourly':
+          return valid ? { kind: 'every', every_seconds: Math.round(count * 3600) } : undefined;
         case 'daily':
           return { kind: 'daily', daily: { time: draft.time, time_zone: zone } };
         case 'weekly':
           return { kind: 'weekly', weekly: { time: draft.time, time_zone: zone, weekdays: [draft.weekday] } };
+        case 'weekdays':
+          return { kind: 'rrule', rrule: `${stamp}\nRRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR` };
+        case 'monthly': {
+          const day = Number(draft.monthDay);
+          if (!Number.isFinite(day) || day < 1 || day > 31) return undefined;
+          return { kind: 'rrule', rrule: `${stamp}\nRRULE:FREQ=MONTHLY;BYMONTHDAY=${Math.round(day)}` };
+        }
+        case 'once': {
+          const when = new Date(`${draft.date}T${draft.time}:00`);
+          if (!Number.isFinite(when.getTime())) return undefined;
+          return { kind: 'at', at: when.toISOString() };
+        }
         case 'rrule':
           return draft.rrule.trim().length > 0 ? { kind: 'rrule', rrule: draft.rrule } : undefined;
         default:
@@ -1839,7 +1895,7 @@ window.__ModuleLoader__.load({
         setDraftError('');
         // Only a one-shot rule ends on its own, so only it can be cleaned up
         // after delivery; a recurring rule keeps the flag off.
-        const clean = draft.kind === 'every' && draft.repeat !== true && draft.autoClean === true;
+        const clean = (draft.kind === 'delay' || draft.kind === 'once') && draft.autoClean === true;
         const result = draft.id === ''
           ? await automationCall('create', {
             title: draft.title.trim(),
@@ -2111,7 +2167,7 @@ window.__ModuleLoader__.load({
       const panelTask = draft !== null && draft.id !== ''
         ? rows.find((task) => task.id === draft.id) ?? null
         : null;
-      const oneShot = draft !== null && draft.kind === 'every' && draft.repeat !== true;
+      const oneShot = draft !== null && (draft.kind === 'delay' || draft.kind === 'once');
 
       const tabs = [
         ['active', tr('auto.tab.active'), 'ove-tone-active'],
@@ -2233,41 +2289,48 @@ window.__ModuleLoader__.load({
               value: draft.kind,
               onChange: (event) => updateDraft({ kind: event.target.value }),
             },
-            h('option', { value: 'every' }, tr('auto.repeat.every')),
-            h('option', { value: 'daily' }, tr('auto.repeat.daily')),
             h('option', { value: 'weekly' }, tr('auto.repeat.weekly')),
+            h('option', { value: 'weekdays' }, tr('auto.repeat.weekdays')),
+            h('option', { value: 'daily' }, tr('auto.repeat.daily')),
+            h('option', { value: 'hourly' }, tr('auto.repeat.hourly')),
+            h('option', { value: 'minutely' }, tr('auto.repeat.minutely')),
+            h('option', { value: 'monthly' }, tr('auto.repeat.monthly')),
+            h('option', { value: 'delay' }, tr('auto.repeat.delay')),
+            h('option', { value: 'once' }, tr('auto.repeat.once')),
             h('option', { value: 'rrule' }, tr('auto.repeat.rrule')))),
-          draft.kind === 'every'
-            ? h('div', { className: 'ove-field' },
-              h('label', { className: 'ove-repeat-row' },
-                h('input', {
-                  type: 'checkbox',
-                  className: 'ove-auto-check',
-                  checked: draft.repeat === true,
-                  onChange: () => updateDraft({ repeat: draft.repeat !== true }),
-                }),
-                h('span', { className: 'ove-label' }, tr('auto.repeatToggle')),
-                h('span', { className: 'ove-repeat-hint' },
-                  tr('auto.repeatHint').replace('{n}', String(draft.everyMinutes)))),
-              h('label', { className: 'ove-field' },
-                h('span', { className: 'ove-label' }, tr('auto.interval')),
-                h('input', {
-                  type: 'number',
-                  min: 1,
-                  className: 'ove-input',
-                  value: draft.everyMinutes,
-                  onChange: (event) => updateDraft({ everyMinutes: event.target.value }),
-                })))
-            : null,
-          draft.kind === 'daily'
+          draft.kind === 'delay' || draft.kind === 'minutely' || draft.kind === 'hourly'
             ? h('label', { className: 'ove-field' },
-              h('span', { className: 'ove-label' }, tr('auto.time')),
+              h('span', { className: 'ove-label' }, tr(draft.kind === 'delay'
+                ? 'auto.delayMinutes'
+                : draft.kind === 'hourly' ? 'auto.intervalHours' : 'auto.intervalMinutes')),
               h('input', {
-                type: 'time',
+                type: 'number',
+                min: 1,
                 className: 'ove-input',
-                value: draft.time,
-                onChange: (event) => updateDraft({ time: event.target.value }),
+                value: draft.interval,
+                onChange: (event) => updateDraft({ interval: event.target.value }),
               }))
+            : null,
+          draft.kind === 'once' || draft.kind === 'daily' || draft.kind === 'weekdays' || draft.kind === 'monthly'
+            ? h('div', { className: 'ove-inline' },
+              draft.kind === 'once'
+                ? h('label', { className: 'ove-field' },
+                  h('span', { className: 'ove-label' }, tr('auto.date')),
+                  h('input', {
+                    type: 'date',
+                    className: 'ove-input',
+                    value: draft.date,
+                    onChange: (event) => updateDraft({ date: event.target.value }),
+                  }))
+                : null,
+              h('label', { className: 'ove-field' },
+                h('span', { className: 'ove-label' }, tr('auto.time')),
+                h('input', {
+                  type: 'time',
+                  className: 'ove-input',
+                  value: draft.time,
+                  onChange: (event) => updateDraft({ time: event.target.value }),
+                })))
             : null,
           draft.kind === 'weekly'
             ? h('div', { className: 'ove-inline' },
@@ -2287,6 +2350,18 @@ window.__ModuleLoader__.load({
                   value: draft.time,
                   onChange: (event) => updateDraft({ time: event.target.value }),
                 })))
+            : null,
+          draft.kind === 'monthly'
+            ? h('label', { className: 'ove-field' },
+              h('span', { className: 'ove-label' }, tr('auto.monthDay')),
+              h('input', {
+                type: 'number',
+                min: 1,
+                max: 31,
+                className: 'ove-input',
+                value: draft.monthDay,
+                onChange: (event) => updateDraft({ monthDay: event.target.value }),
+              }))
             : null,
           draft.kind === 'rrule'
             ? h('div', { className: 'ove-field' },
@@ -2310,17 +2385,17 @@ window.__ModuleLoader__.load({
                     }),
                   }, tr(example.label))))))
             : null,
-          h('div', { className: 'ove-field' },
-            h('label', { className: 'ove-check-row' },
-              h('input', {
-                type: 'checkbox',
-                className: 'ove-auto-check',
-                checked: oneShot && draft.autoClean,
-                disabled: !oneShot,
-                onChange: () => updateDraft({ autoClean: !draft.autoClean }),
-              }),
-              h('span', { className: 'ove-label' }, tr('auto.clean')),
-              oneShot ? null : h('span', { className: 'ove-muted' }, tr('auto.cleanOnceOnly')))),
+          oneShot
+            ? h('div', { className: 'ove-field' },
+              h('label', { className: 'ove-check-row' },
+                h('input', {
+                  type: 'checkbox',
+                  className: 'ove-auto-check',
+                  checked: draft.autoClean === true,
+                  onChange: () => updateDraft({ autoClean: !draft.autoClean }),
+                }),
+                h('span', { className: 'ove-label' }, tr('auto.clean'))))
+            : null,
           panelTask !== null
             ? h('div', { className: 'ove-detail-actions-row' },
               h('button', {
@@ -2508,18 +2583,20 @@ window.__ModuleLoader__.load({
                     void runNow(task);
                   },
                 }, busy === 'run' ? tr('auto.running') : tr('auto.run')),
-                h('label', {
-                  className: 'ove-clean-toggle',
-                  title: tr('auto.autoCleanHint'),
-                  onClick: (event) => event.stopPropagation(),
-                },
-                h('input', {
-                  type: 'checkbox',
-                  className: 'ove-auto-check',
-                  checked: autoClean[task.id] === true,
-                  onChange: () => void toggleClean(task),
-                }),
-                tr('auto.cleanShort')))))),
+                task.kind === 'after' || task.kind === 'at'
+                  ? h('label', {
+                    className: 'ove-clean-toggle',
+                    title: tr('auto.autoCleanHint'),
+                    onClick: (event) => event.stopPropagation(),
+                  },
+                  h('input', {
+                    type: 'checkbox',
+                    className: 'ove-auto-check',
+                    checked: autoClean[task.id] === true,
+                    onChange: () => void toggleClean(task),
+                  }),
+                  tr('auto.cleanShort'))
+                  : null)))),
               ' '))),
           editor,
 
