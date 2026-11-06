@@ -112,7 +112,7 @@ window.__ModuleLoader__.load({
       saveFailed: '工作步骤展示设置保存失败',
 
       pageTitle: '原版功能增强',
-      pageIntro: '把官方界面缺少的快捷操作集中在这里，并按需开关。开关保存在当前浏览器。',
+      pageIntro: '把官方界面缺少的快捷操作集中在这里，并可以按需开关。',
       featuresTitle: '功能开关',
       'switch.steps': '工作步骤展示快捷切换',
       'switch.steps.desc': '在会话标题栏与右侧文件面板的「用资源管理器打开」左侧显示四个档位图标。',
@@ -139,7 +139,7 @@ window.__ModuleLoader__.load({
       dialogDesc: '只删除已归档且未加载的本机会话记录，无法恢复。',
       searchMore: '仅显示前 20 条内容匹配，请缩小搜索范围。',
       loadFailed: '聊天记录管理不可用：',
-      footnote: '原版功能增强 · 聊天记录管理部分改编自 dsh-chat-manager（MIT）。',
+      footnote: '我也是有底线的。',
     };
 
     const en = {
