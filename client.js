@@ -107,6 +107,40 @@ window.__ModuleLoader__.load({
       }
     };
 
+    /**
+     * Ask the Host to remove one session; shared by the page and menu dialogs.
+     * @param ctx - the client plugin context.
+     * @param target - the session id and display title.
+     * @param force - bypass the persistence lease for a pre-loaded session.
+     * @returns the outcome and the Host failure code when one is returned.
+     */
+    const requestDelete = async (ctx, target, force) => {
+      try {
+        const response = await fetch(DELETE_ROUTE, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'x-dsh-session-delete-confirmation': 'delete-session',
+            ...(force ? { 'x-dsh-session-delete-force': 'force' } : {}),
+          },
+          body: JSON.stringify({ sessionId: target.id }),
+        });
+        const body = await readJson(response);
+        if (!response.ok || body?.ok !== true) {
+          const failure = body?.error ?? {};
+          return {
+            ok: false,
+            error: failure.message || `HTTP ${response.status}`,
+            code: typeof failure.code === 'string' ? failure.code : '',
+          };
+        }
+        await refreshStores(ctx);
+        return { ok: true };
+      } catch (error) {
+        return { ok: false, error: String(error?.message ?? error), code: '' };
+      }
+    };
+
     /* ------------------------------------------------------------------ */
     /* Dictionaries                                                        */
     /* ------------------------------------------------------------------ */
@@ -381,6 +415,7 @@ window.__ModuleLoader__.load({
         background: rgba(0, 0, 0, .4);
         pointer-events: auto;
       }
+      .ove-overlay-top { z-index: 2147483000; }
       .ove-dialog {
         box-sizing: border-box;
         width: min(420px, 100%);
@@ -641,6 +676,10 @@ window.__ModuleLoader__.load({
       const [busy, setBusy] = React.useState(null);
       const [actionError, setActionError] = React.useState('');
       const [notice, setNotice] = React.useState('');
+      const [pending, setPending] = React.useState(null);
+      const [deleteBusy, setDeleteBusy] = React.useState(false);
+      const [deleteError, setDeleteError] = React.useState('');
+      const [deleteCode, setDeleteCode] = React.useState('');
 
       const normalized = query.trim();
 
@@ -714,6 +753,37 @@ window.__ModuleLoader__.load({
         }
       };
 
+      const openDelete = (row) => {
+        setPending({ id: row.id, title: row.title });
+        setDeleteError('');
+        setDeleteCode('');
+        setActionError('');
+        setNotice('');
+      };
+
+      const cancelDelete = () => {
+        if (deleteBusy) return;
+        setPending(null);
+        setDeleteError('');
+        setDeleteCode('');
+      };
+
+      const confirmDelete = async (force) => {
+        if (pending === null || deleteBusy) return;
+        setDeleteBusy(true);
+        setDeleteError('');
+        const result = await requestDelete(ctx, pending, force);
+        setDeleteBusy(false);
+        if (result.ok) {
+          setNotice(`${tr('delete')} · ${pending.title}`);
+          setPending(null);
+          setDeleteCode('');
+        } else {
+          setDeleteError(result.error);
+          setDeleteCode(result.code);
+        }
+      };
+
       return h(React.Fragment, null,
         h('style', { key: 'styles', 'data-plugin-css': `${NS}-archives` }, CSS),
         h('div', { className: 'ove-page' },
@@ -755,11 +825,24 @@ window.__ModuleLoader__.load({
                   className: 'ove-btn ove-btn-danger',
                   disabled: busy !== null,
                   onClick: () => {
-                    publishDelete({ target: { id: row.id, title: row.title }, busy: false, error: '', code: '' });
+                    openDelete(row);
                   },
                 }, tr('delete')))))),
 
           h('p', { className: 'ove-footnote' }, tr('footnote'))),
+
+        // Rendered inside the settings panel so the confirmation stays above
+        // the page instead of falling behind the settings modal.
+        pending !== null && h(DeleteConfirm, {
+          t,
+          target: pending,
+          busy: deleteBusy,
+          error: deleteError,
+          code: deleteCode,
+          onCancel: cancelDelete,
+          onConfirm: confirmDelete,
+          overlayClass: 'ove-overlay-top',
+        }),
       );
     }
 
@@ -826,64 +909,29 @@ window.__ModuleLoader__.load({
      * @param props - injected translator and the plugin context.
      * @returns the dialog, or nothing while no target is pending.
      */
-    function DeleteDialog({ t, ctx }) {
+    /**
+     * Confirmation card shared by the archive page and the session menu.
+     * @param props - target, pending state, handlers, translator, overlay class.
+     * @returns the confirmation overlay.
+     */
+    function DeleteConfirm({ t, target, busy, error, code, onCancel, onConfirm, overlayClass }) {
       const tr = typeof t === 'function' ? t : (key) => key;
-      const state = React.useSyncExternalStore(subscribeDelete, getDelete, getDelete);
       const cancelRef = React.useRef(null);
-      const open = state.target !== null;
+      const canForce = code === 'lifecycle-unavailable' || code === 'lifecycle-error';
 
       React.useEffect(() => {
-        if (!open) return undefined;
         cancelRef.current?.focus?.();
-        const onKey = (event) => {
-          if (event.key === 'Escape' && !deleteState.busy) {
-            publishDelete({ target: null, error: '', code: '' });
-          }
-        };
+      }, []);
+
+      React.useEffect(() => {
+        const onKey = (event) => { if (event.key === 'Escape' && !busy) onCancel(); };
         window.addEventListener('keydown', onKey);
         return () => window.removeEventListener('keydown', onKey);
-      }, [open]);
-
-      if (!open) return null;
-
-      const close = () => { if (!deleteState.busy) publishDelete({ target: null, error: '', code: '' }); };
-
-      const confirm = async (force = false) => {
-        const target = deleteState.target;
-        if (target === null || deleteState.busy) return;
-        publishDelete({ busy: true, error: '' });
-        try {
-          const response = await fetch(DELETE_ROUTE, {
-            method: 'POST',
-            headers: {
-              'content-type': 'application/json',
-              'x-dsh-session-delete-confirmation': 'delete-session',
-              ...(force ? { 'x-dsh-session-delete-force': 'force' } : {}),
-            },
-            body: JSON.stringify({ sessionId: target.id }),
-          });
-          const body = await readJson(response);
-          if (!response.ok || body?.ok !== true) {
-            const failure = body?.error ?? {};
-            publishDelete({
-              busy: false,
-              error: failure.message || `HTTP ${response.status}`,
-              code: typeof failure.code === 'string' ? failure.code : '',
-            });
-            return;
-          }
-          publishDelete({ target: null, busy: false, error: '', code: '' });
-          await refreshStores(ctx);
-        } catch (error) {
-          publishDelete({ busy: false, error: String(error?.message ?? error), code: '' });
-        }
-      };
-
-      const canForce = state.code === 'lifecycle-unavailable' || state.code === 'lifecycle-error';
+      }, [busy, onCancel]);
 
       return h('div', {
-        className: 'ove-overlay',
-        onMouseDown: (event) => { if (event.target === event.currentTarget) close(); },
+        className: `ove-overlay ${overlayClass ?? ''}`.trim(),
+        onMouseDown: (event) => { if (event.target === event.currentTarget) onCancel(); },
       },
         h('div', {
           className: 'ove-dialog',
@@ -893,29 +941,59 @@ window.__ModuleLoader__.load({
         },
           h('h2', { className: 'ove-dialog-title' }, tr('dialogTitle')),
           h('p', { className: 'ove-dialog-desc' }, tr('dialogDesc')),
-          h('p', { className: 'ove-dialog-target' }, state.target.title),
-          state.error && h('p', { className: 'ove-error', role: 'alert' }, state.error),
+          h('p', { className: 'ove-dialog-target' }, target.title),
+          error && h('p', { className: 'ove-error', role: 'alert' }, error),
           canForce && h('p', { className: 'ove-warn' }, tr('forceHint')),
           h('div', { className: 'ove-dialog-actions' },
             h('button', {
               type: 'button',
               className: 'ove-btn',
               ref: cancelRef,
-              disabled: state.busy,
-              onClick: close,
+              disabled: busy,
+              onClick: onCancel,
             }, tr('cancel')),
             canForce && h('button', {
               type: 'button',
               className: 'ove-btn ove-btn-danger',
-              disabled: state.busy,
-              onClick: () => confirm(true),
+              disabled: busy,
+              onClick: () => onConfirm(true),
             }, tr('forceDelete')),
             !canForce && h('button', {
               type: 'button',
               className: 'ove-btn ove-btn-danger',
-              disabled: state.busy,
-              onClick: () => confirm(false),
-            }, state.busy ? tr('deleting') : tr('confirmDelete')))));
+              disabled: busy,
+              onClick: () => onConfirm(false),
+            }, busy ? tr('deleting') : tr('confirmDelete')))));
+    }
+
+    /**
+     * Session-menu deletion confirmation bound to the shared pending target.
+     * @param props - injected translator and the plugin context.
+     * @returns the confirmation overlay, or nothing while no target is pending.
+     */
+    function DeleteDialog({ t, ctx }) {
+      const state = React.useSyncExternalStore(subscribeDelete, getDelete, getDelete);
+      if (state.target === null) return null;
+
+      const cancel = () => { if (!deleteState.busy) publishDelete({ target: null, error: '', code: '' }); };
+      const confirm = async (force) => {
+        const target = deleteState.target;
+        if (target === null || deleteState.busy) return;
+        publishDelete({ busy: true, error: '' });
+        const result = await requestDelete(ctx, target, force);
+        if (result.ok) publishDelete({ target: null, busy: false, error: '', code: '' });
+        else publishDelete({ busy: false, error: result.error, code: result.code });
+      };
+
+      return h(DeleteConfirm, {
+        t,
+        target: state.target,
+        busy: state.busy,
+        error: state.error,
+        code: state.code,
+        onCancel: cancel,
+        onConfirm: confirm,
+      });
     }
 
     /* ------------------------------------------------------------------ */
