@@ -6,6 +6,7 @@ import {
   createDeleteRequestHandler,
   deleteSessionSafely,
   hostRequestFence,
+  installAgentHandleTracker,
 } from './host/delete-session.mjs'
 import {
   createArchiveSearchHandler,
@@ -14,8 +15,18 @@ import {
 
 const ROUTE_ROOT = '/plugins/original-version-enhancements'
 
+/** The Host services these routes consume; Cordis waits for all of them. */
+export const inject = [
+  'webServer',
+  'sessionPersistence',
+  'sessions',
+  'agents',
+  'workspaceRegistry',
+  'sessionQuery',
+]
+
 /**
- * Read an optional Host service without making it a hard dependency.
+ * Read an optional Host service without turning it into a hard dependency.
  * @param ctx - the plugin context.
  * @param name - the Cordis service key.
  * @returns the service, or undefined when this composition does not mount it.
@@ -29,21 +40,21 @@ const optional = (ctx, name) => {
 }
 
 export function apply(ctx) {
-  const webServer = optional(ctx, 'webServer')
-  if (typeof webServer?.register !== 'function') return
-
   const isTrustedRequest = req => hostRequestFence(optional(ctx, 'connection'))(req)
+
+  const agentHandles = installAgentHandleTracker(ctx.agents, ctx.sessions)
+  ctx.effect(() => () => agentHandles.release(), 'original-version-enhancements: agent lifecycle tracking')
 
   const searchHandler = createArchiveSearchHandler({
     isTrustedRequest,
     search: (query, signal) => searchArchivedSessions({
-      workspaceRegistry: optional(ctx, 'workspaceRegistry'),
-      sessionQuery: optional(ctx, 'sessionQuery'),
+      workspaceRegistry: ctx.workspaceRegistry,
+      sessionQuery: ctx.sessionQuery,
     }, query, signal),
   })
 
   ctx.effect(
-    () => webServer.register({
+    () => ctx.webServer.register({
       kind: 'exact',
       path: `${ROUTE_ROOT}/archives/search`,
       handler: searchHandler,
@@ -51,7 +62,7 @@ export function apply(ctx) {
     'original-version-enhancements: archived content search route',
   )
 
-  const persistence = optional(ctx, 'sessionPersistence')
+  const persistence = ctx.sessionPersistence
   const sessionRoot = persistence?.config?.root ?? persistence?.root
   if (typeof sessionRoot !== 'string' || sessionRoot.length === 0) {
     // Without the per-session JSONL backend the page still offers search and
@@ -61,15 +72,25 @@ export function apply(ctx) {
 
   const deleteHandler = createDeleteRequestHandler({
     isTrustedRequest,
-    deleteSession: sessionId => deleteSessionSafely({
-      sessions: optional(ctx, 'sessions'),
-      agents: optional(ctx, 'agents'),
-      sessionPersistence: persistence,
-    }, { sessionRoot, sessionId }),
+    deleteSession: async (sessionId, options) => {
+      const result = await deleteSessionSafely({
+        sessions: ctx.sessions,
+        agents: ctx.agents,
+        agentHandles,
+        sessionPersistence: persistence,
+      }, { sessionRoot, sessionId, force: options?.force === true })
+      if (result.ok) {
+        // Keep the archive registry free of ids whose storage was removed.
+        try {
+          await ctx.workspaceRegistry.unarchiveSession(sessionId)
+        } catch { /* the caller still gets the deletion result */ }
+      }
+      return result
+    },
   })
 
   ctx.effect(
-    () => webServer.register({
+    () => ctx.webServer.register({
       kind: 'exact',
       path: `${ROUTE_ROOT}/sessions/delete`,
       handler: deleteHandler,

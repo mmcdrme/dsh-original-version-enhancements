@@ -26,7 +26,9 @@ used under the MIT License:
 > OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 > SOFTWARE.
 
-Local differences from the original: no Agent lifecycle wrappers are installed;
-a session that is still loaded by the Host is refused instead of being stopped;
-the restore path uses the official Client `workspaces.unarchiveSession` call
-rather than a Host route.
+Local differences from the original: the Agent lifecycle tracker is the same
+approach as v1.5.21, but sessions loaded before the tracker started have no
+retained handle; for those the Client offers an explicit "force delete" that
+removes the on-disk record without the persistence write lease and warns that
+the in-memory session becomes invalid. The restore path uses the official
+Client `workspaces.unarchiveSession` call rather than a Host route.

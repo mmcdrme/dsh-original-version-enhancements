@@ -12,6 +12,127 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'nod
 const failure = (code, message) => ({ ok: false, error: { code, message } })
 const MAX_REQUEST_BYTES = 8 * 1024
 
+/**
+ * Retain the lifecycle capability returned by the public AgentFactory so a
+ * loaded session can be stopped and detached before its storage is removed.
+ * Adapted from dsh-chat-manager v1.5.21.
+ * @param agents - the Host agent registry.
+ * @param sessions - the Host session store.
+ * @returns reserve/dispose/release hooks used by the deletion path.
+ */
+export function installAgentHandleTracker(agents, sessions) {
+  const originalSymbol = Symbol.for('cordis.original')
+  const wrapperOrigin = Symbol.for('dsh-chat-manager.agent-tracker-origin')
+  const agentService = agents[originalSymbol] ?? agents
+  const sessionService = sessions?.[originalSymbol] ?? sessions
+  const handles = new Map()
+  const reservations = new Set()
+  let released = false
+  const originalCreate = agentService.create
+  const originalResume = agentService.resume
+  const originalAgentEnter = agentService.enter
+  const originalSessionEnter = sessionService?.enter
+
+  const assertAvailable = (sessionId) => {
+    if (released) return
+    if (typeof sessionId === 'string' && reservations.has(sessionId)) {
+      throw new Error(`session "${sessionId}" is being permanently deleted`)
+    }
+  }
+
+  const track = (handle) => {
+    if (!released && handle?.agent?.id !== undefined && typeof handle.dispose === 'function') {
+      handles.set(handle.agent.id, handle)
+    }
+    return handle
+  }
+  const wrappedCreate = async function (...args) {
+    assertAvailable(args[0]?.sessionId)
+    return track(await Reflect.apply(originalCreate, this, args))
+  }
+  const wrappedResume = async function (...args) {
+    assertAvailable(args[0]?.resumeSessionId)
+    return track(await Reflect.apply(originalResume, this, args))
+  }
+  const wrappedAgentEnter = typeof originalAgentEnter === 'function'
+    ? function (...args) {
+        assertAvailable(args[0]?.id)
+        return Reflect.apply(originalAgentEnter, this, args)
+      }
+    : undefined
+  const wrappedSessionEnter = typeof originalSessionEnter === 'function'
+    ? function (...args) {
+        assertAvailable(args[0]?.id)
+        return Reflect.apply(originalSessionEnter, this, args)
+      }
+    : undefined
+
+  const unwrapReleased = (method) => {
+    while (method?.[wrapperOrigin]?.released()) method = method[wrapperOrigin].original
+    return method
+  }
+  for (const [wrapped, original] of [
+    [wrappedCreate, originalCreate], [wrappedResume, originalResume],
+    [wrappedAgentEnter, originalAgentEnter], [wrappedSessionEnter, originalSessionEnter],
+  ]) {
+    if (wrapped) Object.defineProperty(wrapped, wrapperOrigin, { value: { original, released: () => released } })
+  }
+
+  agentService.create = wrappedCreate
+  agentService.resume = wrappedResume
+  if (wrappedAgentEnter !== undefined) agentService.enter = wrappedAgentEnter
+  if (wrappedSessionEnter !== undefined) sessionService.enter = wrappedSessionEnter
+  let releaseStarted = false
+  let resolveRelease
+  let releaseTask
+
+  const finishRelease = () => {
+    if (!releaseStarted || released || reservations.size !== 0) return
+    released = true
+    handles.clear()
+    if (agentService.create === wrappedCreate) agentService.create = unwrapReleased(originalCreate)
+    if (agentService.resume === wrappedResume) agentService.resume = unwrapReleased(originalResume)
+    if (wrappedAgentEnter !== undefined && agentService.enter === wrappedAgentEnter) agentService.enter = unwrapReleased(originalAgentEnter)
+    if (wrappedSessionEnter !== undefined && sessionService.enter === wrappedSessionEnter) sessionService.enter = unwrapReleased(originalSessionEnter)
+    resolveRelease?.()
+  }
+
+  return {
+    reserve(sessionId) {
+      if (releaseStarted || reservations.has(sessionId)) return undefined
+      reservations.add(sessionId)
+      let active = true
+      return () => {
+        if (!active) return
+        active = false
+        reservations.delete(sessionId)
+        finishRelease()
+      }
+    },
+    async dispose(sessionId) {
+      const handle = handles.get(sessionId)
+      if (handle !== undefined && agents.get(sessionId) === handle.agent) {
+        await handle.dispose()
+        handles.delete(sessionId)
+        return true
+      }
+      handles.delete(sessionId)
+      // A session loaded before this plugin started has no retained handle; it
+      // must be reloaded with the plugin active (or DSH restarted) first.
+      return false
+    },
+    release() {
+      if (released) return releaseTask
+      if (!releaseStarted) {
+        releaseStarted = true
+        releaseTask = new Promise(resolve => { resolveRelease = resolve })
+        finishRelease()
+      }
+      return releaseTask
+    },
+  }
+}
+
 const sendJson = (res, status, body) => {
   res.writeHead(status, {
     'content-type': 'application/json; charset=utf-8',
@@ -122,7 +243,7 @@ const pathExists = async (path) => {
  * @param target - the session root and the exact session id.
  * @returns a tagged result understood by the settings page.
  */
-export async function deleteSessionSafely(deps, { sessionRoot, sessionId }) {
+export async function deleteSessionSafely(deps, { sessionRoot, sessionId, force = false }) {
   const persistence = deps.sessionPersistence
   const usesHandles = persistence.supportsRawArtifacts === undefined
     && persistence.name === 'session-persistence-jsonl'
@@ -133,16 +254,22 @@ export async function deleteSessionSafely(deps, { sessionRoot, sessionId }) {
     return failure('unsupported-backend', '当前会话存储不是可逐会话删除的 JSONL 后端。')
   }
 
-  const ownership = { usesHandles, handle: undefined }
+  const releaseReservation = deps.agentHandles?.reserve?.(sessionId)
+  if (typeof deps.agentHandles?.reserve === 'function' && releaseReservation === undefined) {
+    return failure('deletion-in-progress', '该会话正在删除中，请等待当前操作完成。')
+  }
+
+  const ownership = { usesHandles, handle: undefined, force }
   try {
     return await deleteReservedSession(deps, { sessionRoot, sessionId }, ownership)
   } finally {
     try { await ownership.handle?.close() } catch { /* the lease is already gone */ }
+    finally { releaseReservation?.() }
   }
 }
 
 async function deleteReservedSession(deps, { sessionRoot, sessionId }, ownership) {
-  const { usesHandles } = ownership
+  const { usesHandles, force } = ownership
   const storedHeaders = async () => (await deps.sessionPersistence.list()).map(item => usesHandles ? item.header : item)
   let header = (await storedHeaders()).find(item => item.id === sessionId)
     ?? deps.sessions.get(sessionId)?.header
@@ -171,41 +298,67 @@ async function deleteReservedSession(deps, { sessionRoot, sessionId }, ownership
     return failure('session-not-found', '会话不存在或已经删除。')
   }
 
-  if (deps.agents.get(sessionId) !== undefined) {
-    return failure('session-loaded', '该会话仍被宿主加载。请先停止并归档该会话，再回到这里永久删除。')
+  if (!force && deps.agents.get(sessionId) !== undefined) {
+    let disposed = false
+    if (typeof deps.agentHandles?.dispose === 'function') {
+      try {
+        disposed = await deps.agentHandles.dispose(sessionId)
+      } catch {
+        return failure('lifecycle-error', 'DSH 未能安全停止并摘载该会话，未删除任何内容。')
+      }
+    }
+    if (!disposed) {
+      return failure('lifecycle-unavailable', '该会话仍被宿主加载，且当前没有可用的宿主生命周期句柄。请重启 DeepSeek Harness 后再试。')
+    }
   }
 
-  // inspect() waits for the persistence backend's asynchronous retirement
-  // drain. A never-materialized blank session is already fully removed here.
-  try {
-    const inspected = usesHandles
-      ? { meta: (ownership.handle = await deps.sessionPersistence.open(sessionId, 'write')).header }
-      : await deps.sessionPersistence.inspect(sessionId)
-    if (!sameHeader(header, inspected.meta)) {
-      return failure('unsafe-location', '会话在摘载期间发生了身份变化，未删除任何文件。')
-    }
-    header = inspected.meta
-  } catch (error) {
-    const stillStored = (await storedHeaders()).some(item => item.id === sessionId)
-    if (!stillStored && deps.sessions.get(sessionId) === undefined && deps.agents.get(sessionId) === undefined) {
-      if (usesHandles && await deps.sessionPersistence.stat(sessionId) === undefined) {
-        return { ok: true, value: { deleted: true } }
-      }
-      const missingPaths = usesHandles ? undefined : locationPaths(sessionRoot, deps.sessionPersistence.locate(header))
-      if (missingPaths !== undefined && !await pathExists(missingPaths.sessionDirectory)) {
-        return { ok: true, value: { deleted: true } }
-      }
-      return failure('storage-state-unknown', 'DSH 已摘载会话，但无法确认其存储是否已删除。')
-    }
-    return failure('storage-state-unknown', '无法确认会话存储状态，未继续删除。')
+  if (!force && (deps.sessions.get(sessionId) !== undefined || deps.agents.get(sessionId) !== undefined)) {
+    return failure('lifecycle-unavailable', '宿主未能完整摘载该会话，未删除任何内容。')
   }
 
-  const location = usesHandles
-    ? { kind: 'jsonl', path: await deps.sessionPersistence.resolveCurrentLog(sessionId) }
-    : deps.sessionPersistence.locate(header)
-  const raw = usesHandles ? { meta: ownership.handle.header } : await deps.sessionPersistence.readRaw(sessionId)
+  let location
+  let raw
+  if (force) {
+    // The loaded session still holds the writer lease, so the exclusive open
+    // cannot be acquired; resolve the current log path without the lease.
+    location = usesHandles
+      ? { kind: 'jsonl', path: await deps.sessionPersistence.resolveCurrentLog(sessionId) }
+      : deps.sessionPersistence.locate(header)
+    raw = { meta: header }
+  } else {
+    // inspect() waits for the persistence backend's asynchronous retirement
+    // drain. A never-materialized blank session is already fully removed here.
+    try {
+      const inspected = usesHandles
+        ? { meta: (ownership.handle = await deps.sessionPersistence.open(sessionId, 'write')).header }
+        : await deps.sessionPersistence.inspect(sessionId)
+      if (!sameHeader(header, inspected.meta)) {
+        return failure('unsafe-location', '会话在摘载期间发生了身份变化，未删除任何文件。')
+      }
+      header = inspected.meta
+    } catch (error) {
+      const stillStored = (await storedHeaders()).some(item => item.id === sessionId)
+      if (!stillStored && deps.sessions.get(sessionId) === undefined && deps.agents.get(sessionId) === undefined) {
+        if (usesHandles && await deps.sessionPersistence.stat(sessionId) === undefined) {
+          return { ok: true, value: { deleted: true } }
+        }
+        const missingPaths = usesHandles ? undefined : locationPaths(sessionRoot, deps.sessionPersistence.locate(header))
+        if (missingPaths !== undefined && !await pathExists(missingPaths.sessionDirectory)) {
+          return { ok: true, value: { deleted: true } }
+        }
+        return failure('storage-state-unknown', 'DSH 已摘载会话，但无法确认其存储是否已删除。')
+      }
+      return failure('storage-state-unknown', '无法确认会话存储状态，未继续删除。')
+    }
+
+    location = usesHandles
+      ? { kind: 'jsonl', path: await deps.sessionPersistence.resolveCurrentLog(sessionId) }
+      : deps.sessionPersistence.locate(header)
+    raw = usesHandles ? { meta: ownership.handle.header } : await deps.sessionPersistence.readRaw(sessionId)
+  }
+
   const paths = locationPaths(sessionRoot, location)
-  if (paths === undefined || raw === undefined || !sameHeader(header, raw.meta)) {
+  if (paths === undefined || raw === undefined || (!force && !sameHeader(header, raw.meta))) {
     return failure('unsafe-location', '无法验证该会话的独立 JSONL 存储位置。')
   }
 
@@ -219,7 +372,7 @@ async function deleteReservedSession(deps, { sessionRoot, sessionId }, ownership
   if (validated === undefined) {
     return failure('unsafe-location', '会话存储位置未通过安全校验，未删除任何文件。')
   }
-  if (deps.sessions.get(sessionId) !== undefined || deps.agents.get(sessionId) !== undefined) {
+  if (!force && (deps.sessions.get(sessionId) !== undefined || deps.agents.get(sessionId) !== undefined)) {
     return failure('session-reopened', '该会话在删除过程中被重新打开，已取消删除。')
   }
 
@@ -310,6 +463,7 @@ export function createDeleteRequestHandler({ deleteSession, isTrustedRequest = s
   return async (req, res) => {
     const contentType = req.headers['content-type']
     const confirmation = req.headers['x-dsh-session-delete-confirmation']
+    const force = req.headers['x-dsh-session-delete-force'] === 'force'
 
     if (req.method !== 'POST') {
       sendJson(res, 405, failure('method-not-allowed', '只允许使用 POST 删除会话。'))
@@ -347,7 +501,7 @@ export function createDeleteRequestHandler({ deleteSession, isTrustedRequest = s
     }
 
     try {
-      const result = await deleteSession(body.sessionId)
+      const result = await deleteSession(body.sessionId, { force })
       sendJson(res, result.ok ? 200 : 409, result)
     } catch {
       sendJson(res, 500, failure('internal', '删除过程中发生未预期错误，未确认删除成功。'))

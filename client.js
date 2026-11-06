@@ -69,7 +69,7 @@ window.__ModuleLoader__.load({
     /* ------------------------------------------------------------------ */
 
     const deleteListeners = new Set();
-    let deleteState = { target: null, busy: false, error: '' };
+    let deleteState = { target: null, busy: false, error: '', code: '' };
 
     const publishDelete = (patch) => {
       deleteState = { ...deleteState, ...patch };
@@ -85,13 +85,26 @@ window.__ModuleLoader__.load({
 
     const refreshStores = async (ctx) => {
       const tasks = [];
-      for (const name of ['sessions', 'workspaces']) {
-        const store = ctx.get(name);
+      for (const store of [ctx.sessions, ctx.workspaces]) {
         if (typeof store?.refresh === 'function') {
           tasks.push(Promise.resolve(store.refresh()).catch(() => undefined));
         }
       }
       await Promise.all(tasks);
+    };
+
+    /**
+     * Read a JSON body, turning an empty or non-JSON answer into a status error.
+     * @param response - the fetch response.
+     * @returns the parsed JSON payload.
+     */
+    const readJson = async (response) => {
+      const text = await response.text();
+      try {
+        return JSON.parse(text);
+      } catch {
+        throw Error(`HTTP ${response.status}`);
+      }
     };
 
     /* ------------------------------------------------------------------ */
@@ -137,6 +150,8 @@ window.__ModuleLoader__.load({
       restoring: '正在取消归档…',
       dialogTitle: '永久删除会话？',
       dialogDesc: '只删除已归档且未加载的本机会话记录，无法恢复。',
+      forceHint: '该会话仍被宿主加载。强制删除会直接移除磁盘上的会话记录；宿主中的该会话随后失效，建议删除后重启 DeepSeek Harness。',
+      forceDelete: '强制删除',
       searchMore: '仅显示前 20 条内容匹配，请缩小搜索范围。',
       loadFailed: '聊天记录管理不可用：',
       footnote: '我也是有底线的。',
@@ -181,6 +196,8 @@ window.__ModuleLoader__.load({
       restoring: 'Unarchiving…',
       dialogTitle: 'Permanently delete session?',
       dialogDesc: 'Only an unloaded, archived local session can be deleted. This cannot be undone.',
+      forceHint: 'The session is still loaded by the Host. Forcing removes its disk record anyway; the in-memory session becomes invalid, so restart DeepSeek Harness afterwards.',
+      forceDelete: 'Force delete',
       searchMore: 'Showing the first 20 content matches. Narrow your search.',
       loadFailed: 'Chat history manager unavailable: ',
       footnote: 'Original Version Enhancements · the chat history part is adapted from dsh-chat-manager (MIT).',
@@ -388,6 +405,7 @@ window.__ModuleLoader__.load({
         overflow-wrap: anywhere;
       }
       .ove-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
+      .ove-warn { margin: 0; font-size: 13px; line-height: 20px; color: var(--dsw-alias-state-warning-primary, #b45309); }
     `;
 
     /* ------------------------------------------------------------------ */
@@ -644,7 +662,7 @@ window.__ModuleLoader__.load({
               body: JSON.stringify({ query: normalized }),
               signal: controller.signal,
             });
-            const body = await response.json();
+            const body = await readJson(response);
             if (!response.ok || body?.ok !== true) {
               throw Error(body?.error?.message || `HTTP ${response.status}`);
             }
@@ -682,7 +700,7 @@ window.__ModuleLoader__.load({
         setActionError('');
         setNotice('');
         try {
-          const service = ctx.get('workspaces');
+          const service = ctx.workspaces;
           if (typeof service?.unarchiveSession !== 'function') {
             throw new Error(tr('loadFailed') + 'workspaces.unarchiveSession');
           }
@@ -737,7 +755,7 @@ window.__ModuleLoader__.load({
                   className: 'ove-btn ove-btn-danger',
                   disabled: busy !== null,
                   onClick: () => {
-                    publishDelete({ target: { id: row.id, title: row.title }, busy: false, error: '' });
+                    publishDelete({ target: { id: row.id, title: row.title }, busy: false, error: '', code: '' });
                   },
                 }, tr('delete')))))),
 
@@ -778,7 +796,7 @@ window.__ModuleLoader__.load({
 
       const select = () => {
         closeMenu(false);
-        publishDelete({ target: { id: sessionId, title: displayTitle || sessionId }, busy: false, error: '' });
+        publishDelete({ target: { id: sessionId, title: displayTitle || sessionId }, busy: false, error: '', code: '' });
       };
 
       if (uiPrimitives?.MenuItemButton) {
@@ -819,7 +837,7 @@ window.__ModuleLoader__.load({
         cancelRef.current?.focus?.();
         const onKey = (event) => {
           if (event.key === 'Escape' && !deleteState.busy) {
-            publishDelete({ target: null, error: '' });
+            publishDelete({ target: null, error: '', code: '' });
           }
         };
         window.addEventListener('keydown', onKey);
@@ -828,9 +846,9 @@ window.__ModuleLoader__.load({
 
       if (!open) return null;
 
-      const close = () => { if (!deleteState.busy) publishDelete({ target: null, error: '' }); };
+      const close = () => { if (!deleteState.busy) publishDelete({ target: null, error: '', code: '' }); };
 
-      const confirm = async () => {
+      const confirm = async (force = false) => {
         const target = deleteState.target;
         if (target === null || deleteState.busy) return;
         publishDelete({ busy: true, error: '' });
@@ -840,19 +858,28 @@ window.__ModuleLoader__.load({
             headers: {
               'content-type': 'application/json',
               'x-dsh-session-delete-confirmation': 'delete-session',
+              ...(force ? { 'x-dsh-session-delete-force': 'force' } : {}),
             },
             body: JSON.stringify({ sessionId: target.id }),
           });
-          const body = await response.json();
+          const body = await readJson(response);
           if (!response.ok || body?.ok !== true) {
-            throw Error(body?.error?.message || `HTTP ${response.status}`);
+            const failure = body?.error ?? {};
+            publishDelete({
+              busy: false,
+              error: failure.message || `HTTP ${response.status}`,
+              code: typeof failure.code === 'string' ? failure.code : '',
+            });
+            return;
           }
-          publishDelete({ target: null, busy: false, error: '' });
+          publishDelete({ target: null, busy: false, error: '', code: '' });
           await refreshStores(ctx);
         } catch (error) {
-          publishDelete({ busy: false, error: String(error?.message ?? error) });
+          publishDelete({ busy: false, error: String(error?.message ?? error), code: '' });
         }
       };
+
+      const canForce = state.code === 'lifecycle-unavailable' || state.code === 'lifecycle-error';
 
       return h('div', {
         className: 'ove-overlay',
@@ -868,6 +895,7 @@ window.__ModuleLoader__.load({
           h('p', { className: 'ove-dialog-desc' }, tr('dialogDesc')),
           h('p', { className: 'ove-dialog-target' }, state.target.title),
           state.error && h('p', { className: 'ove-error', role: 'alert' }, state.error),
+          canForce && h('p', { className: 'ove-warn' }, tr('forceHint')),
           h('div', { className: 'ove-dialog-actions' },
             h('button', {
               type: 'button',
@@ -876,11 +904,17 @@ window.__ModuleLoader__.load({
               disabled: state.busy,
               onClick: close,
             }, tr('cancel')),
-            h('button', {
+            canForce && h('button', {
               type: 'button',
               className: 'ove-btn ove-btn-danger',
               disabled: state.busy,
-              onClick: confirm,
+              onClick: () => confirm(true),
+            }, tr('forceDelete')),
+            !canForce && h('button', {
+              type: 'button',
+              className: 'ove-btn ove-btn-danger',
+              disabled: state.busy,
+              onClick: () => confirm(false),
             }, state.busy ? tr('deleting') : tr('confirmDelete')))));
     }
 
