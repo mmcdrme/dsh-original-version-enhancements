@@ -4,6 +4,14 @@ window.__ModuleLoader__.load({
     const React = require('react');
     const h = React.createElement;
 
+    /** Native menu row primitives, when this composition exposes them. */
+    let uiPrimitives = null;
+    try {
+      uiPrimitives = require('@deepseek-ai/dsh-client-ui-primitives');
+    } catch {
+      uiPrimitives = null;
+    }
+
     /** Locale namespace owned by this plugin. */
     const NS = 'original-version-enhancements';
     /** Route prefix registered by the Host half. */
@@ -325,10 +333,10 @@ window.__ModuleLoader__.load({
       .ove-menu-item {
         display: flex;
         align-items: center;
-        gap: 8px;
+        gap: 7px;
         width: 100%;
         box-sizing: border-box;
-        padding: 8px 10px;
+        padding: 6px 8px;
         border: 0;
         border-radius: 6px;
         background: transparent;
@@ -743,11 +751,11 @@ window.__ModuleLoader__.load({
 
     const TrashIcon = () => h('svg', {
       viewBox: '0 0 16 16',
-      width: 16,
-      height: 16,
+      width: 14,
+      height: 14,
       fill: 'none',
       stroke: 'currentColor',
-      strokeWidth: 1.3,
+      strokeWidth: 1.4,
       strokeLinecap: 'round',
       strokeLinejoin: 'round',
       'aria-hidden': 'true',
@@ -766,16 +774,29 @@ window.__ModuleLoader__.load({
     function SessionDeleteMenuItem({ sessionId, displayTitle, useMenuOpenState, t }) {
       const tr = typeof t === 'function' ? t : (key) => key;
       const [, closeMenu] = useMenuOpenState();
+      const label = tr('menuDelete');
+
+      const select = () => {
+        closeMenu(false);
+        publishDelete({ target: { id: sessionId, title: displayTitle || sessionId }, busy: false, error: '' });
+      };
+
+      if (uiPrimitives?.MenuItemButton) {
+        return h(uiPrimitives.MenuItemButton, {
+          danger: true,
+          icon: uiPrimitives.IconTrashOutlineRegular
+            ? h(uiPrimitives.IconTrashOutlineRegular, {})
+            : undefined,
+          onSelect: select,
+        }, label);
+      }
 
       return h('button', {
         type: 'button',
         role: 'menuitem',
         className: 'ove-menu-item',
-        onClick: () => {
-          closeMenu(false);
-          publishDelete({ target: { id: sessionId, title: displayTitle || sessionId }, busy: false, error: '' });
-        },
-      }, h(TrashIcon), h('span', null, tr('menuDelete')));
+        onClick: select,
+      }, h(TrashIcon), h('span', null, label));
     }
 
     /* ------------------------------------------------------------------ */
