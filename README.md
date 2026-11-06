@@ -1,11 +1,12 @@
 # 原版功能增强 / Original Version Enhancements
 
 「原版功能增强」是一个 DSH Web 客户端插件。它在设置里提供一个自己的页面
-（设置 → 原版功能增强），用开关控制各项增强，并把官方界面缺少的聊天记录管理集中到同一处。
+（设置 → 原版功能增强），用开关控制各项增强，并把官方界面缺少的聊天记录管理、
+自动化任务增强集中到同一处。
 
 > Original Version Enhancements is a DSH Web client plugin. It adds its own
 > settings page (Settings → Original Version Enhancements) with per-feature
-> switches and an archived-session manager.
+> switches, an archived-session manager, and an automation enhancement panel.
 
 ## 功能 / Features
 
@@ -43,12 +44,29 @@
 v1.5.21（MIT），详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 与原版的差异：无法取得句柄时提供显式「强制删除」；取消归档走官方 Client 服务而不是额外路由。
 
+### 3. 自动化任务增强
+
+自动化任务增强把原 `automation-console` 插件的能力并入本插件，并按 DSH 0.2.x
+的新版 Schedule 服务与新版界面重写：
+
+- **独立侧栏面板**：侧栏「自动化增强」（`main` 面板 key 与 `sidebar.panellist` id 均为
+  `original-version-enhancements.automation`，`order: 11`），与官方「自动化任务」页并存。
+  官方页负责创建、编辑、筛选、记录；本面板只补它没有的能力。
+- **批量删除**：多选任务后一次删除，带二次确认；已投递的消息与目标会话保留。
+- **多会话绑定**：把一条任务复制到多个会话（同标题、同指令、同重复规则），
+  每个会话一份；已归档会话会被过滤掉，创建结果逐个回报成功与失败原因。
+- **投递后自动清理**：逐任务开关。一次性任务投递完成（状态 `ended` 且有投递回执）后，
+  由 Host 侧自动删除；循环任务保持运行，宿主 `schedule/changed` 事件与插件启动时都会执行对账。
+
+自动清理状态保存在 profile 目录的 `original-version-enhancements.automation.json`。
+
 ## 开关与持久化
 
-- 两个开关（工作步骤展示快捷切换、聊天记录管理）位于插件页顶部，实时生效，无需刷新。
+- 三个开关（工作步骤展示快捷切换、聊天记录管理、自动化任务增强）位于插件页顶部，实时生效，无需刷新。
 - 关闭「聊天记录管理」会立即移除「已归档会话」设置页与会话右键菜单项；重新开启即可恢复。
+- 关闭「自动化任务增强」会立即移除侧栏面板与对应面板页；官方「自动化任务」页不受影响。
 - 开关保存在当前浏览器的 `localStorage`（`original-version-enhancements.flags.v1`），
-  清除浏览器数据会恢复默认（两项均开启）。
+  清除浏览器数据会恢复默认（三项均开启）。
 
 ## Host 路由
 
@@ -57,6 +75,12 @@ v1.5.21（MIT），详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 - `POST /plugins/original-version-enhancements/archives/search` — 归档内容搜索
 - `POST /plugins/original-version-enhancements/sessions/delete` — 永久删除
   （需要 `x-dsh-session-delete-confirmation: delete-session` 确认头与同源校验）
+- `POST /plugins/original-version-enhancements/automation/catalog` — 任务目录与自动清理标记
+- `POST /plugins/original-version-enhancements/automation/auto-clean` — 设置/清除任务的自动清理
+- `POST /plugins/original-version-enhancements/automation/delete` — 批量删除
+- `POST /plugins/original-version-enhancements/automation/bind` — 把任务复制到多个会话
+
+后四条需要 Host 的 `schedule` 服务；未挂载该服务的组合里它们不会注册。
 
 ## 安装 / Install
 
@@ -75,10 +99,11 @@ git clone https://github.com/mmcdrme/dsh-original-version-enhancements.git
 ## 结构 / Layout
 
 ```text
-index.js                  Host 半侧：注册归档搜索与永久删除路由（缺失服务时降级）
-client.js                 Web 客户端：插件页、开关、四个 SVG 图标、聊天记录管理 UI
+index.js                  Host 半侧：归档搜索、永久删除、自动化任务增强路由
+client.js                 Web 客户端：插件页、三个开关、四个 SVG 图标、聊天记录管理 UI、自动化增强面板
 host/archive-manager.mjs  归档内容搜索（改编自 dsh-chat-manager）
 host/delete-session.mjs   已归档会话的安全删除（改编自 dsh-chat-manager）
+host/automation.mjs       自动化任务增强（批量删除、多会话绑定、投递后自动清理）
 cordis.patch.yml          插入本插件条目
 locale/{zh,en}.json       插件管理页标题与描述
 icon.svg                  插件管理页图标

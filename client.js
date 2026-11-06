@@ -2,6 +2,7 @@ window.__ModuleLoader__.load({
   id: '@local/dsh-original-version-enhancements',
   factory(require) {
     const React = require('react');
+    const ReactDOM = require('react-dom');
     const h = React.createElement;
 
     /** Native menu row primitives, when this composition exposes them. */
@@ -29,7 +30,7 @@ window.__ModuleLoader__.load({
     /* ------------------------------------------------------------------ */
 
     const FLAGS_KEY = 'original-version-enhancements.flags.v1';
-    const DEFAULT_FLAGS = { stepSwitcher: true, chatManager: true };
+    const DEFAULT_FLAGS = { stepSwitcher: true, chatManager: true, automation: true };
     const flagListeners = new Set();
 
     const readFlags = () => {
@@ -39,6 +40,7 @@ window.__ModuleLoader__.load({
         return {
           stepSwitcher: flags.stepSwitcher !== false,
           chatManager: flags.chatManager !== false,
+          automation: flags.automation !== false,
         };
       } catch {
         return { ...DEFAULT_FLAGS };
@@ -165,7 +167,49 @@ window.__ModuleLoader__.load({
       'switch.steps.desc': '在会话标题栏与右侧文件面板的「用资源管理器打开」左侧显示四个档位图标。',
       'switch.chat': '聊天记录管理',
       'switch.chat.desc': '启用后，「已归档会话」会作为独立设置页出现，会话右键菜单也会多出「永久删除」。',
+      'switch.automation': '自动化任务增强',
+      'switch.automation.desc': '在侧栏新增「自动化增强」面板：选中多个任务批量删除、把一条规则绑定到多个会话、投递后自动清理。原版「自动化任务」页保持不变。',
       pageHint: '归档会话的搜索、取消归档与永久删除位于「设置 → 已归档会话」。',
+
+      'auto.panel': '自动化增强',
+      'auto.title': '自动化任务增强',
+      'auto.intro': '原版「自动化任务」页负责创建、编辑与记录；这里补上它没有的批量删除、多会话绑定和投递后自动清理。',
+      'auto.refresh': '刷新',
+      'auto.selectAll': '全选',
+      'auto.selected': '已选 {count} 项',
+      'auto.deleteSelected': '删除所选',
+      'auto.empty': '暂无自动化任务',
+      'auto.emptyHint': '先在原版「自动化任务」页创建任务。',
+      'auto.loading': '正在读取任务…',
+      'auto.error': '读取任务失败',
+      'auto.retry': '重试',
+      'auto.autoClean': '投递后自动清理',
+      'auto.autoCleanHint': '一次性任务投递完成后自动删除',
+      'auto.bind': '绑定到多个会话',
+      'auto.status.active': '已开启',
+      'auto.status.paused': '已暂停',
+      'auto.status.ended': '已结束',
+      'auto.status.unknown': '未知',
+      'auto.target.session': '会话',
+      'auto.target.new': '每次新建会话',
+      'auto.target.newOnce': '新建并复用会话',
+      'auto.target.ungrouped': '未分组',
+      'auto.next': '下次',
+      'auto.delivered': '已投递',
+      'auto.bindTitle': '绑定到其他会话',
+      'auto.bindDesc': '为每个选中的会话复制一份同标题、同指令、同重复规则的任务。',
+      'auto.bindCurrent': '当前目标会话不可重复选择。',
+      'auto.bindEmpty': '没有其他可用会话',
+      'auto.bindConfirm': '创建副本',
+      'auto.binding': '正在创建…',
+      'auto.bindDone': '已创建 {count} 个任务',
+      'auto.bindFailed': '部分会话创建失败：{names}',
+      'auto.deleteTitle': '删除所选任务？',
+      'auto.deleteDesc': '任务会被删除；已投递的消息和目标会话会保留。',
+      'auto.deleteConfirm': '确认删除',
+      'auto.deleting': '正在删除…',
+      'auto.deleted': '已删除 {count} 个任务',
+      'auto.deleteFailed': '有 {count} 个任务删除失败',
 
       archivesTitle: '已归档会话',
       archivesIntro: '搜索已归档会话的名称、工作区或聊天内容；永久删除只针对已归档且未被宿主加载的本机会话，无法恢复。',
@@ -211,7 +255,49 @@ window.__ModuleLoader__.load({
       'switch.steps.desc': 'Shows the four work-details icons left of Open in File Explorer in the session header and the file panel.',
       'switch.chat': 'Chat history manager',
       'switch.chat.desc': 'Adds a separate Archived sessions settings page and a permanent-delete row to the session context menu.',
+      'switch.automation': 'Automation task enhancements',
+      'switch.automation.desc': 'Adds an Automation enhancements sidebar panel: delete selected tasks, bind one rule to several conversations, and auto-clean after delivery. The stock Automation tasks page stays as it is.',
       pageHint: 'Archive search, unarchive and permanent deletion live in Settings → Archived sessions.',
+
+      'auto.panel': 'Automation+',
+      'auto.title': 'Automation task enhancements',
+      'auto.intro': 'The stock Automation tasks page creates, edits and records tasks. This panel adds what it lacks: bulk deletion, multi-conversation binding, and auto-clean after delivery.',
+      'auto.refresh': 'Refresh',
+      'auto.selectAll': 'Select all',
+      'auto.selected': '{count} selected',
+      'auto.deleteSelected': 'Delete selected',
+      'auto.empty': 'No automation tasks',
+      'auto.emptyHint': 'Create one on the stock Automation tasks page first.',
+      'auto.loading': 'Loading tasks…',
+      'auto.error': 'Could not load tasks',
+      'auto.retry': 'Retry',
+      'auto.autoClean': 'Auto-clean after delivery',
+      'auto.autoCleanHint': 'Delete a one-shot task once its delivery completes',
+      'auto.bind': 'Bind to conversations',
+      'auto.status.active': 'Enabled',
+      'auto.status.paused': 'Paused',
+      'auto.status.ended': 'Ended',
+      'auto.status.unknown': 'Unknown',
+      'auto.target.session': 'Conversation',
+      'auto.target.new': 'New conversation each run',
+      'auto.target.newOnce': 'New conversation reused',
+      'auto.target.ungrouped': 'Ungrouped',
+      'auto.next': 'Next',
+      'auto.delivered': 'Delivered',
+      'auto.bindTitle': 'Bind to other conversations',
+      'auto.bindDesc': 'Copies this task — same title, instruction and rule — into every selected conversation.',
+      'auto.bindCurrent': 'The current target conversation cannot be selected again.',
+      'auto.bindEmpty': 'No other conversation available',
+      'auto.bindConfirm': 'Create copies',
+      'auto.binding': 'Creating…',
+      'auto.bindDone': 'Created {count} tasks',
+      'auto.bindFailed': 'Some conversations failed: {names}',
+      'auto.deleteTitle': 'Delete the selected tasks?',
+      'auto.deleteDesc': 'The tasks are removed; delivered messages and their conversations stay.',
+      'auto.deleteConfirm': 'Delete',
+      'auto.deleting': 'Deleting…',
+      'auto.deleted': 'Deleted {count} tasks',
+      'auto.deleteFailed': '{count} tasks could not be deleted',
 
       archivesTitle: 'Archived sessions',
       archivesIntro: 'Search archived session names, workspaces, or chat content. Permanent deletion only applies to unloaded archived local sessions and cannot be undone.',
@@ -441,6 +527,38 @@ window.__ModuleLoader__.load({
       }
       .ove-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
       .ove-warn { margin: 0; font-size: 13px; line-height: 20px; color: var(--dsw-alias-state-warning-primary, #b45309); }
+
+      .ove-auto { display: flex; flex-direction: column; height: 100%; min-height: 0; background: var(--dsw-alias-bg-base); }
+      .ove-auto-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; scrollbar-gutter: stable; }
+      .ove-auto-inner { max-width: 880px; margin: 0 auto; padding: 28px clamp(20px, 4vw, 40px) 48px; display: grid; gap: 18px; }
+      .ove-auto-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+      .ove-auto-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+      .ove-auto-count { font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-tertiary); }
+      .ove-auto-list { border: .5px solid var(--dsw-alias-border-l1); border-radius: 12px; background: var(--dsw-alias-bg-layer-1); }
+      .ove-auto-row { display: flex; align-items: flex-start; gap: 12px; padding: 14px 16px; }
+      .ove-auto-row + .ove-auto-row { border-top: .5px solid var(--dsw-alias-border-l1); }
+      .ove-auto-check { margin-top: 3px; width: 15px; height: 15px; accent-color: var(--dsw-alias-brand-primary, #4f7cff); }
+      .ove-auto-body { flex: 1 1 auto; min-width: 0; display: grid; gap: 4px; }
+      .ove-auto-title { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 14px; line-height: 22px; }
+      .ove-auto-name { font-weight: 500; overflow-wrap: anywhere; }
+      .ove-auto-meta { font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-tertiary); overflow-wrap: anywhere; }
+      .ove-auto-prompt { font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-secondary); overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+      .ove-auto-side { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
+      .ove-chip {
+        display: inline-flex; align-items: center; gap: 4px; padding: 1px 8px; border-radius: 999px;
+        font-size: 11px; line-height: 18px; border: .5px solid var(--dsw-alias-border-l1);
+        color: var(--dsw-alias-label-secondary); white-space: nowrap;
+      }
+      .ove-chip-active { color: var(--dsw-alias-state-success-primary, #15803d); border-color: currentColor; }
+      .ove-chip-paused { color: var(--dsw-alias-state-warning-primary, #b45309); border-color: currentColor; }
+      .ove-chip-ended { color: var(--dsw-alias-label-tertiary); }
+      .ove-auto-clean { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-tertiary); cursor: pointer; }
+      .ove-session-pick { max-height: 260px; overflow: auto; display: grid; gap: 2px; padding: 4px; border-radius: 10px; background: var(--dsw-alias-bg-base); }
+      .ove-session-option { display: flex; align-items: center; gap: 10px; padding: 7px 8px; border-radius: 8px; font-size: 13px; line-height: 20px; cursor: pointer; }
+      .ove-session-option:hover { background: var(--dsw-alias-bg-layer-1); }
+      .ove-session-option span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .ove-notice { margin: 0; font-size: 12px; line-height: 18px; color: var(--dsw-alias-state-success-primary, #15803d); }
+      .ove-overlay-portal { z-index: 2147483000; }
     `;
 
     /* ------------------------------------------------------------------ */
@@ -647,6 +765,19 @@ window.__ModuleLoader__.load({
                   'aria-checked': flags.chatManager,
                   'aria-label': tr('switch.chat'),
                   onClick: () => toggle('chatManager'),
+                }, h('span', { className: 'ove-switch-thumb' }))),
+
+              h('div', { className: 'ove-row' },
+                h('div', { className: 'ove-row-text' },
+                  h('div', { className: 'ove-row-title' }, tr('switch.automation')),
+                  h('div', { className: 'ove-row-desc' }, tr('switch.automation.desc'))),
+                h('button', {
+                  type: 'button',
+                  className: 'ove-switch',
+                  role: 'switch',
+                  'aria-checked': flags.automation,
+                  'aria-label': tr('switch.automation'),
+                  onClick: () => toggle('automation'),
                 }, h('span', { className: 'ove-switch-thumb' }))))),
 
           h('p', { className: 'ove-hint' }, tr('pageHint')),
@@ -997,6 +1128,395 @@ window.__ModuleLoader__.load({
     }
 
     /* ------------------------------------------------------------------ */
+    /* Automation task enhancements                                        */
+    /* ------------------------------------------------------------------ */
+
+    const AUTOMATION_PANEL = 'original-version-enhancements.automation';
+
+    /**
+     * Call one Host automation route.
+     * @param segment - route segment below /automation.
+     * @param payload - JSON request body.
+     * @returns `{ok, value}` or `{ok:false, error, code}`.
+     */
+    const automationCall = async (segment, payload) => {
+      try {
+        const response = await fetch(`${ROUTE_ROOT}/automation/${segment}`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(payload ?? {}),
+        });
+        const body = await readJson(response);
+        if (!response.ok || body?.ok !== true) {
+          return {
+            ok: false,
+            error: body?.error?.message || `HTTP ${response.status}`,
+            code: typeof body?.error?.code === 'string' ? body.error.code : '',
+          };
+        }
+        return { ok: true, value: body.value };
+      } catch (error) {
+        return { ok: false, error: String(error?.message ?? error), code: '' };
+      }
+    };
+
+    /**
+     * Local date-time label for a stored instant.
+     * @param value - ISO timestamp or undefined.
+     * @returns a short human label, or an empty string.
+     */
+    const formatInstant = (value) => {
+      if (typeof value !== 'string' || value.length === 0) return '';
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return value;
+      return date.toLocaleString(undefined, {
+        month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+      });
+    };
+
+    const STATUS_CHIP = { active: 'ove-chip-active', paused: 'ove-chip-paused', ended: 'ove-chip-ended' };
+
+    /**
+     * Batch deletion, multi-conversation binding, and the auto-clean flag for
+     * the tasks the shipped Automation tasks page creates.
+     * @param props - standard panel props and the translator.
+     * @returns the enhancement panel.
+     */
+    function AutomationPage({ useSessions, useWorkspaces, t }) {
+      const tr = typeof t === 'function' ? t : (key) => key;
+      const sessions = useSessions((snapshot) => snapshot);
+      const workspaces = useWorkspaces((snapshot) => snapshot);
+
+      const [rows, setRows] = React.useState([]);
+      const [autoClean, setAutoClean] = React.useState({});
+      const [loading, setLoading] = React.useState(true);
+      const [loadError, setLoadError] = React.useState('');
+      const [selected, setSelected] = React.useState(() => new Set());
+      const [busy, setBusy] = React.useState('');
+      const [notice, setNotice] = React.useState('');
+      const [actionError, setActionError] = React.useState('');
+      const [confirming, setConfirming] = React.useState(false);
+      const [bindTarget, setBindTarget] = React.useState(null);
+      const [bindPicks, setBindPicks] = React.useState(() => new Set());
+
+      const load = React.useCallback(async (signal) => {
+        const result = await automationCall('catalog');
+        if (signal?.aborted) return undefined;
+        if (!result.ok) {
+          setLoadError(result.error);
+          setLoading(false);
+          return undefined;
+        }
+        setRows(Array.isArray(result.value?.tasks) ? result.value.tasks : []);
+        setAutoClean(result.value?.autoClean ?? {});
+        setLoadError('');
+        setLoading(false);
+        return result.value;
+      }, []);
+
+      React.useEffect(() => {
+        const controller = new AbortController();
+        setLoading(true);
+        void load(controller.signal);
+        const timer = setInterval(() => { void load(controller.signal); }, 20000);
+        return () => { controller.abort(); clearInterval(timer); };
+      }, [load]);
+
+      const sessionTitle = (id) => {
+        if (typeof id !== 'string' || id.length === 0) return '';
+        return sessions?.byId?.[id]?.displayTitle || id;
+      };
+
+      const targetLabel = (task) => {
+        const target = task.target ?? {};
+        if (target.kind === 'session') return `${tr('auto.target.session')} · ${sessionTitle(target.sessionId)}`;
+        return tr(target.kind === 'new_once' ? 'auto.target.newOnce' : 'auto.target.new');
+      };
+
+      const statusLabel = (status) => {
+        const key = `auto.status.${status ?? 'unknown'}`;
+        const value = tr(key);
+        return value === key ? tr('auto.status.unknown') : value;
+      };
+
+      const toggleSelect = (id) => {
+        setSelected((current) => {
+          const next = new Set(current);
+          if (next.has(id)) next.delete(id);
+          else next.add(id);
+          return next;
+        });
+      };
+
+      const allSelected = rows.length > 0 && rows.every((task) => selected.has(task.id));
+      const toggleAll = () => setSelected(allSelected ? new Set() : new Set(rows.map((task) => task.id)));
+
+      const removeSelected = async () => {
+        const ids = [...selected];
+        if (ids.length === 0 || busy !== '') return;
+        setBusy('delete');
+        setActionError('');
+        const result = await automationCall('delete', { ids });
+        setBusy('');
+        setConfirming(false);
+        if (!result.ok) {
+          setActionError(result.error);
+          return;
+        }
+        const deleted = result.value?.deleted?.length ?? 0;
+        const failed = result.value?.failed?.length ?? 0;
+        setNotice(failed === 0
+          ? tr('auto.deleted').replace('{count}', String(deleted))
+          : tr('auto.deleteFailed').replace('{count}', String(failed)));
+        setSelected(new Set());
+        await load();
+      };
+
+      const toggleClean = async (task) => {
+        const next = autoClean[task.id] !== true;
+        setAutoClean((current) => ({ ...current, [task.id]: next }));
+        const result = await automationCall('auto-clean', { id: task.id, autoClean: next });
+        if (!result.ok) {
+          setAutoClean((current) => {
+            const restored = { ...current };
+            if (next) delete restored[task.id];
+            else restored[task.id] = true;
+            return restored;
+          });
+          setActionError(result.error);
+        }
+      };
+
+      const openBind = (task) => {
+        setBindTarget(task);
+        setBindPicks(new Set());
+        setActionError('');
+        setNotice('');
+      };
+
+      const confirmBind = async () => {
+        if (bindTarget === null || bindPicks.size === 0 || busy !== '') return;
+        setBusy('bind');
+        setActionError('');
+        const result = await automationCall('bind', { id: bindTarget.id, sessionIds: [...bindPicks] });
+        setBusy('');
+        if (!result.ok) {
+          setActionError(result.error);
+          return;
+        }
+        const created = result.value?.created?.length ?? 0;
+        const failed = result.value?.failed ?? [];
+        setBindTarget(null);
+        setBindPicks(new Set());
+        if (failed.length === 0) {
+          setNotice(tr('auto.bindDone').replace('{count}', String(created)));
+        } else {
+          setActionError(tr('auto.bindFailed').replace('{names}', failed
+            .map((entry) => (entry.message ? `${sessionTitle(entry.sessionId)}（${entry.message}）` : sessionTitle(entry.sessionId)))
+            .join('、')));
+        }
+        await load();
+      };
+
+      const bindCandidates = React.useMemo(() => {
+        const byId = sessions?.byId ?? {};
+        const archived = new Set(Array.isArray(workspaces?.archivedSessionIds) ? workspaces.archivedSessionIds : []);
+        const current = bindTarget?.target?.kind === 'session' ? bindTarget.target.sessionId : undefined;
+        return Object.values(byId)
+          .filter((session) => session !== null && typeof session === 'object' && typeof session.id === 'string')
+          .filter((session) => session.id !== current && !archived.has(session.id))
+          .map((session) => ({ id: session.id, title: session.displayTitle || session.id }))
+          .sort((a, b) => a.title.localeCompare(b.title));
+      }, [sessions, workspaces, bindTarget]);
+
+      const effectiveSelected = rows.filter((task) => selected.has(task.id));
+
+      // Dialogs live outside the main column: a fixed overlay inside the
+      // column can be clipped or lose pointer hits behind the shell chrome.
+      const portal = (node) => (node !== null && node !== undefined
+        && typeof ReactDOM?.createPortal === 'function'
+        && typeof document !== 'undefined')
+        ? ReactDOM.createPortal(node, document.body)
+        : node;
+
+      const list = rows.length === 0 ? null : h('div', { className: 'ove-auto-list' },
+        rows.map((task) => {
+          const meta = [
+            targetLabel(task),
+            task.scheduledAt ? `${tr('auto.next')} ${formatInstant(task.scheduledAt)}` : '',
+            task.lastDelivery ? `${tr('auto.delivered')} ${formatInstant(task.lastDelivery.deliveredAt)}` : '',
+          ].filter((part) => part.length > 0).join(' · ');
+          return h('div', { className: 'ove-auto-row', key: task.id },
+            h('input', {
+              type: 'checkbox',
+              className: 'ove-auto-check',
+              checked: selected.has(task.id),
+              'aria-label': task.title,
+              onChange: () => toggleSelect(task.id),
+            }),
+            h('div', { className: 'ove-auto-body' },
+              h('div', { className: 'ove-auto-title' },
+                h('span', { className: 'ove-auto-name' }, task.title),
+                h('span', {
+                  className: `ove-chip ${STATUS_CHIP[task.status] ?? 'ove-chip-ended'}`,
+                }, statusLabel(task.status))),
+              h('div', { className: 'ove-auto-meta' }, meta),
+              task.prompt ? h('div', { className: 'ove-auto-prompt' }, task.prompt) : null),
+            h('div', { className: 'ove-auto-side' },
+              h('label', { className: 'ove-auto-clean', title: tr('auto.autoCleanHint') },
+                h('input', {
+                  type: 'checkbox',
+                  className: 'ove-auto-check',
+                  checked: autoClean[task.id] === true,
+                  onChange: () => void toggleClean(task),
+                }),
+                tr('auto.autoClean')),
+              h('button', {
+                type: 'button',
+                className: 'ove-btn',
+                onClick: () => openBind(task),
+              }, tr('auto.bind'))));
+        }));
+
+      return h(React.Fragment, null,
+        h('style', { key: 'styles', 'data-plugin-css': `${NS}-automation` }, CSS),
+        h('div', { className: 'ove-auto' },
+          h('div', { className: 'ove-auto-scroll' },
+            h('div', { className: 'ove-auto-inner' },
+              h('div', { className: 'ove-auto-heading' },
+                h('div', { className: 'ove-head' },
+                  h('h1', { className: 'ove-title' }, tr('auto.title')),
+                  h('p', { className: 'ove-intro' }, tr('auto.intro'))),
+                h('button', {
+                  type: 'button',
+                  className: 'ove-btn',
+                  disabled: loading,
+                  onClick: () => { setLoading(true); void load(); },
+                }, tr('auto.refresh'))),
+
+              h('div', { className: 'ove-auto-toolbar' },
+                h('label', { className: 'ove-auto-clean' },
+                  h('input', {
+                    type: 'checkbox',
+                    className: 'ove-auto-check',
+                    checked: allSelected,
+                    disabled: rows.length === 0,
+                    onChange: toggleAll,
+                  }),
+                  tr('auto.selectAll')),
+                h('span', { className: 'ove-auto-count' }, tr('auto.selected').replace('{count}', String(effectiveSelected.length))),
+                h('button', {
+                  type: 'button',
+                  className: 'ove-btn ove-btn-danger',
+                  disabled: effectiveSelected.length === 0 || busy !== '',
+                  onClick: () => setConfirming(true),
+                }, tr('auto.deleteSelected'))),
+
+              notice.length > 0 ? h('p', { className: 'ove-notice' }, notice) : null,
+              actionError.length > 0 ? h('p', { className: 'ove-error' }, actionError) : null,
+
+              loading && rows.length === 0 ? h('p', { className: 'ove-muted' }, tr('auto.loading')) : null,
+              loadError.length > 0
+                ? h('div', { className: 'ove-card' },
+                  h('p', { className: 'ove-error' }, `${tr('auto.error')}：${loadError}`),
+                  h('div', { className: 'ove-actions' },
+                    h('button', { type: 'button', className: 'ove-btn', onClick: () => { setLoading(true); void load(); } }, tr('auto.retry'))))
+                : null,
+              !loading && loadError.length === 0 && rows.length === 0
+                ? h('div', { className: 'ove-card' },
+                  h('p', { className: 'ove-muted' }, tr('auto.empty')),
+                  h('p', { className: 'ove-footnote' }, tr('auto.emptyHint')))
+                : null,
+
+              list)),
+
+        portal(confirming
+          ? h('div', { className: 'ove-overlay ove-overlay-portal' },
+            h('div', { className: 'ove-dialog', role: 'dialog', 'aria-modal': 'true' },
+              h('h2', { className: 'ove-dialog-title' }, tr('auto.deleteTitle')),
+              h('p', { className: 'ove-dialog-desc' }, tr('auto.deleteDesc')),
+              h('p', { className: 'ove-dialog-target' },
+                effectiveSelected.map((task) => task.title).join('、')),
+              h('div', { className: 'ove-dialog-actions' },
+                h('button', {
+                  type: 'button',
+                  className: 'ove-btn',
+                  disabled: busy !== '',
+                  onClick: () => setConfirming(false),
+                }, tr('cancel')),
+                h('button', {
+                  type: 'button',
+                  className: 'ove-btn ove-btn-danger',
+                  disabled: busy !== '',
+                  onClick: () => void removeSelected(),
+                }, busy === 'delete' ? tr('auto.deleting') : tr('auto.deleteConfirm')))))
+          : null),
+
+        portal(bindTarget !== null
+          ? h('div', { className: 'ove-overlay ove-overlay-portal' },
+            h('div', { className: 'ove-dialog', role: 'dialog', 'aria-modal': 'true' },
+              h('h2', { className: 'ove-dialog-title' }, tr('auto.bindTitle')),
+              h('p', { className: 'ove-dialog-desc' }, tr('auto.bindDesc')),
+              h('p', { className: 'ove-dialog-target' }, bindTarget.title),
+              bindCandidates.length === 0
+                ? h('p', { className: 'ove-muted' }, tr('auto.bindEmpty'))
+                : h('div', { className: 'ove-session-pick' }, bindCandidates.map((session) => h('label', {
+                  className: 'ove-session-option',
+                  key: session.id,
+                },
+                h('input', {
+                  type: 'checkbox',
+                  className: 'ove-auto-check',
+                  checked: bindPicks.has(session.id),
+                  onChange: () => setBindPicks((current) => {
+                    const next = new Set(current);
+                    if (next.has(session.id)) next.delete(session.id);
+                    else next.add(session.id);
+                    return next;
+                  }),
+                }),
+                h('span', null, session.title)))),
+              h('div', { className: 'ove-dialog-actions' },
+                h('button', {
+                  type: 'button',
+                  className: 'ove-btn',
+                  disabled: busy !== '',
+                  onClick: () => { setBindTarget(null); setBindPicks(new Set()); },
+                }, tr('cancel')),
+                h('button', {
+                  type: 'button',
+                  className: 'ove-btn',
+                  disabled: busy !== '' || bindPicks.size === 0,
+                  onClick: () => void confirmBind(),
+                }, busy === 'bind' ? tr('auto.binding') : tr('auto.bindConfirm')))))
+          : null)));
+    }
+
+    /**
+     * Sidebar glyph for the enhancement panel.
+     * @param props - requested size and selection state from the panel list.
+     * @returns the SVG icon.
+     */
+    function AutomationIcon({ size, active }) {
+      const edge = typeof size === 'number' && size > 0 ? size : 18;
+      return h('svg', {
+        viewBox: '0 0 16 16',
+        width: edge,
+        height: edge,
+        fill: 'none',
+        stroke: 'currentColor',
+        strokeWidth: 1.3,
+        strokeLinecap: 'round',
+        strokeLinejoin: 'round',
+        'aria-hidden': 'true',
+        style: { opacity: active ? 1 : 0.85 },
+      },
+      h('path', { d: 'M2.3 8.6a1.5 1.5 0 0 1 1.5-1.5h8.4a1.5 1.5 0 0 1 1.5 1.5v3.6a1.5 1.5 0 0 1-1.5 1.5H3.8a1.5 1.5 0 0 1-1.5-1.5z' }),
+      h('path', { d: 'M8 7.1V4.4M8 4.4 6.3 2.7M8 4.4l1.7-1.7' }),
+      h('path', { d: 'M5.2 11.4h1.6M8.6 11.4h2.2' }));
+    }
+
+    /* ------------------------------------------------------------------ */
     /* Plugin wiring                                                       */
     /* ------------------------------------------------------------------ */
 
@@ -1056,6 +1576,43 @@ window.__ModuleLoader__.load({
             disposers = [];
           };
         }, 'original-version-enhancements: chat manager surfaces');
+
+        // The automation panel sits beside the shipped Automation tasks page:
+        // it registers its own main key and sidebar cell, so the stock page
+        // keeps working and toggling only adds or removes this panel.
+        ctx.effect(() => {
+          let disposers = [];
+          const sync = () => {
+            const enabled = getFlags().automation;
+            if (enabled && disposers.length === 0) {
+              disposers = [
+                ctx.slots.inject('main', () => ctx.slots.register({
+                  name: 'main',
+                  key: AUTOMATION_PANEL,
+                  locale: NS,
+                  inject: () => ({ t: translator }),
+                }, AutomationPage)),
+                ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
+                  name: 'sidebar.panellist',
+                  id: AUTOMATION_PANEL,
+                  order: 11,
+                  locale: NS,
+                  label: () => text('auto.panel'),
+                }, AutomationIcon)),
+              ];
+            } else if (!enabled && disposers.length > 0) {
+              for (const dispose of disposers) dispose();
+              disposers = [];
+            }
+          };
+          const unsubscribe = subscribeFlags(sync);
+          sync();
+          return () => {
+            unsubscribe();
+            for (const dispose of disposers) dispose();
+            disposers = [];
+          };
+        }, 'original-version-enhancements: automation panel');
 
         ctx.effect(() => ctx.configForms.whileServed(['ui-chat'], () => {
           const form = ctx.configForms.get('ui-chat');

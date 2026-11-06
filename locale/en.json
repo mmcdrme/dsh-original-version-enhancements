@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Original Version Enhancements",
-    "description": "A plugin page with feature switches for the work-details quick switcher and an archived-session manager with content search, unarchive, and confirmed permanent deletion."
+    "description": "A plugin page with feature switches: the work-details quick switcher, an archived-session manager with content search, unarchive and confirmed permanent deletion, and an automation panel with bulk deletion, multi-conversation binding and auto-clean after delivery."
   }
 }

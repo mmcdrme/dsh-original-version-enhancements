@@ -12,6 +12,13 @@ import {
   createArchiveSearchHandler,
   searchArchivedSessions,
 } from './host/archive-manager.mjs'
+import {
+  createAutomationSurface,
+  profileDirectory,
+  readAutomationState,
+  writeAutomationState,
+} from './host/automation.mjs'
+import path from 'node:path'
 
 const ROUTE_ROOT = '/plugins/original-version-enhancements'
 
@@ -61,6 +68,37 @@ export function apply(ctx) {
     }),
     'original-version-enhancements: archived content search route',
   )
+
+  // Automation task enhancements. The shipped Automation tasks page owns
+  // creation, editing, filters and records; these routes add bulk deletion,
+  // multi-conversation binding, and the post-delivery auto-clean flag. The
+  // Schedule service stays optional so a composition without it still gets
+  // every other feature of this plugin.
+  const warn = message => ctx.logger?.warn(`original-version-enhancements: ${message}`)
+  if (typeof ctx.inject === 'function') {
+    const stateFile = path.join(profileDirectory(), 'original-version-enhancements.automation.json')
+    const state = readAutomationState(stateFile, warn)
+    const save = () => writeAutomationState(stateFile, state, warn)
+
+    ctx.inject(['schedule'], (scope) => {
+      const service = scope.schedule
+      if (service === undefined) return
+      const surface = createAutomationSurface({ service, state, save, isTrustedRequest, warn })
+      for (const [name, handler] of Object.entries(surface.handlers)) {
+        const segment = name === 'autoClean' ? 'auto-clean' : name === 'remove' ? 'delete' : name
+        scope.effect(() => scope.webServer.register({
+          kind: 'exact',
+          path: `${ROUTE_ROOT}/automation/${segment}`,
+          handler,
+        }), `original-version-enhancements: automation ${segment} route`)
+      }
+      scope.effect(() => {
+        const off = scope.on('schedule/changed', () => { void surface.reconcile() })
+        void surface.reconcile()
+        return () => off()
+      }, 'original-version-enhancements: automation auto-clean reconciler')
+    })
+  }
 
   const persistence = ctx.sessionPersistence
   const sessionRoot = persistence?.config?.root ?? persistence?.root

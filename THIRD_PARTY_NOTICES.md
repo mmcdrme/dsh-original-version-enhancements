@@ -32,3 +32,13 @@ retained handle; for those the Client offers an explicit "force delete" that
 removes the on-disk record without the persistence write lease and warns that
 the in-memory session becomes invalid. The restore path uses the official
 Client `workspaces.unarchiveSession` call rather than a Host route.
+
+## automation-console
+
+The automation enhancement panel (`host/automation.mjs` and the matching Client
+panel) supersedes the local-only `@local/dsh-automation-console` plugin written by
+the same author for this profile, which is not published anywhere and carries no
+third-party code. Its features were re-implemented against the current DSH 0.2.x
+Schedule service (`schedule.create` / `schedule.edit` task-identity API) because
+the original patched a prototype-level Remote descriptor that no longer exists;
+no code is copied verbatim from a third party.
