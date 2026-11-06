@@ -168,7 +168,6 @@ export function apply(ctx) {
       workspaceRegistry: ctx.workspaceRegistry,
       sessionPersistence: persistence,
       sessionProjectionCache: optional(ctx, 'sessionProjectionCache'),
-      agentDefaultModel: optional(ctx, 'agentDefaultModel'),
       sessions: ctx.sessions,
       agents: ctx.agents,
       agentHandles,

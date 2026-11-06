@@ -92,10 +92,24 @@ window.__ModuleLoader__.load({
 
     /**
      * `target` is the session being moved or copied, `targets` the workspaces it
-     * may land in (captured where the workspace snapshot is available), and
-     * `mode` decides whether the original is removed afterwards.
+     * may land in (captured where the workspace snapshot is available), `picks`
+     * the subset chosen for a multi-workspace copy, `mode` decides whether the
+     * original is removed afterwards, and `notice` is the transient receipt that
+     * carries its own undo.
      */
-    let transferState = { target: null, mode: 'copy', origin: '', targets: [], busy: false, error: '', done: '' };
+    let transferState = {
+      target: null,
+      mode: 'copy',
+      origin: '',
+      sourceWorkspaceId: '',
+      targets: [],
+      picks: [],
+      busy: false,
+      error: '',
+      done: '',
+      notice: null,
+    };
+    let transferNoticeSeq = 0;
     const transferListeners = new Set();
 
     const publishTransfer = (patch) => {
@@ -130,7 +144,9 @@ window.__ModuleLoader__.load({
         target,
         mode,
         origin: owner === undefined ? tr('ungrouped') : String(owner.title || owner.path || ''),
+        sourceWorkspaceId: ownerId,
         targets,
+        picks: [],
         busy: false,
         error: '',
         done: '',
@@ -245,6 +261,39 @@ window.__ModuleLoader__.load({
       } catch (error) {
         return { ok: false, error: String(error?.message ?? error), code: '' };
       }
+    };
+
+    /**
+     * Undo one transfer: drop the copies a copy created, or put a moved session
+     * back where it came from (a reverse move recreates it and removes the copy).
+     * @param ctx - the client plugin context.
+     * @param undo - the receipt's undo payload.
+     * @returns whether the workspace grouping is back to its previous shape.
+     */
+    const undoTransfer = async (ctx, undo) => {
+      if (undo?.kind === 'move') {
+        const created = Array.isArray(undo.created) ? undo.created : [];
+        const first = created[0];
+        if (first === undefined || undo.sourceWorkspaceId.length === 0) return false;
+        const result = await requestTransfer(ctx, {
+          sessionId: first.sessionId,
+          workspaceId: undo.sourceWorkspaceId,
+          mode: 'move',
+        });
+        return result.ok
+      }
+      const created = Array.isArray(undo?.created) ? undo.created : [];
+      let ok = true
+      for (const item of created) {
+        const plain = await requestDelete(ctx, { id: item.sessionId, title: item.title }, false)
+        if (plain.ok) continue
+        // A still-loaded session refuses the ordinary path; the receipt already
+        // promised the undo, so fall back to the forced removal.
+        const forced = await requestDelete(ctx, { id: item.sessionId, title: item.title }, true)
+        if (!forced.ok) ok = false
+      }
+      await refreshStores(ctx)
+      return ok
     };
 
     /* ------------------------------------------------------------------ */
@@ -458,6 +507,14 @@ window.__ModuleLoader__.load({
       transferDoneCopy: '已复制到',
       transferFailed: '操作失败：',
       transferClose: '关闭',
+      transferPickMany: '选择目标工作区（可多选）',
+      transferCopyCount: '复制到 {n} 个工作区',
+      transferCopiedMany: '已复制到 {n} 个工作区',
+      transferPartial: '{n} 个工作区失败',
+      transferUndo: '撤销',
+      transferUndone: '已撤销',
+      transferUndoFailed: '撤销失败：',
+      transferNoPick: '请至少选择一个工作区',
     };
 
     const en = {
@@ -667,6 +724,14 @@ window.__ModuleLoader__.load({
       transferDoneCopy: 'Copied to',
       transferFailed: 'Failed: ',
       transferClose: 'Close',
+      transferPickMany: 'Choose the target workspaces (multiple)',
+      transferCopyCount: 'Copy to {n} workspaces',
+      transferCopiedMany: 'Copied to {n} workspaces',
+      transferPartial: '{n} workspaces failed',
+      transferUndo: 'Undo',
+      transferUndone: 'Undone',
+      transferUndoFailed: 'Undo failed: ',
+      transferNoPick: 'Choose at least one workspace',
     };
 
     /* ------------------------------------------------------------------ */
@@ -944,15 +1009,77 @@ window.__ModuleLoader__.load({
         padding: 9px 10px; border: 0; border-radius: 8px;
         background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary);
         font: inherit; font-size: 13px; line-height: 20px; text-align: left; cursor: pointer;
+        transition: background .12s ease, box-shadow .12s ease;
       }
-      .ove-transfer-row:hover { background: var(--dsw-alias-bg-layer-1); }
+      /* The hover tint follows the pending action: blue for a move, green for a copy. */
+      .ove-transfer-list.move .ove-transfer-row:hover {
+        background: color-mix(in srgb, #2563eb 12%, var(--dsw-alias-bg-base));
+        box-shadow: inset 0 0 0 1px color-mix(in srgb, #2563eb 40%, transparent);
+      }
+      .ove-transfer-list.copy .ove-transfer-row:hover {
+        background: color-mix(in srgb, #16a34a 12%, var(--dsw-alias-bg-base));
+        box-shadow: inset 0 0 0 1px color-mix(in srgb, #16a34a 40%, transparent);
+      }
+      .ove-transfer-row:focus-visible {
+        outline: none;
+        box-shadow: inset 0 0 0 1px var(--dsw-alias-border-l2);
+      }
+      .ove-transfer-row.picked {
+        background: color-mix(in srgb, #16a34a 14%, var(--dsw-alias-bg-base));
+        box-shadow: inset 0 0 0 1px color-mix(in srgb, #16a34a 50%, transparent);
+      }
       .ove-transfer-row:disabled { opacity: .5; cursor: default; }
+      .ove-transfer-check {
+        flex: none; width: 16px; height: 16px; box-sizing: border-box; border-radius: 5px;
+        border: 1.4px solid var(--dsw-alias-border-l2); background: transparent;
+        display: inline-flex; align-items: center; justify-content: center;
+        font-size: 11px; line-height: 1; color: transparent;
+        transition: background .12s ease, border-color .12s ease;
+      }
+      .ove-transfer-check[data-picked="true"] {
+        background: #16a34a; border-color: #16a34a; color: #fff;
+      }
+      .ove-transfer-list.move .ove-transfer-check { display: none; }
       .ove-transfer-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .ove-transfer-path {
         flex: 0 0 auto; min-width: 0; max-width: 48%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
         font-size: 12px; color: var(--dsw-alias-label-tertiary);
       }
       .ove-transfer-empty { margin: 0; font-size: 13px; line-height: 20px; color: var(--dsw-alias-label-tertiary); }
+      .ove-btn.ove-btn-copy { color: #16a34a; border-color: color-mix(in srgb, #16a34a 45%, transparent); }
+      .ove-btn.ove-btn-copy:hover:not(:disabled) { background: color-mix(in srgb, #16a34a 10%, transparent); }
+
+      /* Transient receipt: a dark floating pill with its own undo, matching the
+         shipped notice that appears after archiving. */
+      .ove-toast {
+        position: fixed; left: 50%; top: 24px; transform: translateX(-50%);
+        z-index: 2147483001; display: inline-flex; align-items: center; gap: 12px;
+        max-width: min(560px, calc(100vw - 48px)); box-sizing: border-box;
+        padding: 10px 12px 10px 14px; border-radius: 10px;
+        background: #1f2124; color: #fff;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, .35);
+        font-size: 13px; line-height: 20px;
+        animation: ove-toast-in .16s ease-out;
+      }
+      @keyframes ove-toast-in {
+        from { opacity: 0; transform: translate(-50%, -6px); }
+        to { opacity: 1; transform: translate(-50%, 0); }
+      }
+      .ove-toast-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .ove-toast-action {
+        flex: none; border: 0; border-radius: 7px; padding: 2px 8px;
+        background: transparent; color: #6ee7a0;
+        font: inherit; font-weight: 600; cursor: pointer;
+      }
+      .ove-toast-action:hover:not(:disabled) { background: rgba(255, 255, 255, .14); }
+      .ove-toast-action:disabled { opacity: .55; cursor: default; }
+      .ove-toast-warning .ove-toast-action { color: #fcd34d; }
+      .ove-toast-close {
+        flex: none; width: 22px; height: 22px; border: 0; border-radius: 50%;
+        background: transparent; color: rgba(255, 255, 255, .66);
+        font-size: 15px; line-height: 1; cursor: pointer;
+      }
+      .ove-toast-close:hover { background: rgba(255, 255, 255, .14); color: #fff; }
 
       .ove-auto { display: flex; height: 100%; max-height: 100%; min-height: 0; overflow: hidden; background: var(--dsw-alias-bg-base); position: relative; }
       .ove-auto-main { flex: 1 1 auto; min-width: 0; max-height: 100%; display: flex; flex-direction: column; min-height: 0; }
@@ -1694,7 +1821,9 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * Target-workspace chooser for a pending move or copy.
+     * Target-workspace chooser for a pending move or copy. A move applies to the
+     * clicked workspace at once; a copy collects several workspaces and applies
+     * them together.
      * @param props - injected translator and the plugin context.
      * @returns the overlay, or nothing while no session is pending.
      */
@@ -1707,7 +1836,7 @@ window.__ModuleLoader__.load({
         if (state.target === null) return undefined;
         const onKey = (event) => {
           if (event.key === 'Escape' && !transferState.busy) {
-            publishTransfer({ target: null, targets: [], busy: false, error: '', done: '' });
+            publishTransfer({ target: null, targets: [], picks: [], busy: false, error: '', done: '' });
           }
         };
         window.addEventListener('keydown', onKey);
@@ -1717,42 +1846,118 @@ window.__ModuleLoader__.load({
       if (state.target === null) return null;
 
       const move = state.mode === 'move';
+      const picked = move ? [] : state.picks;
       const close = () => {
         if (transferState.busy) return;
-        publishTransfer({ target: null, targets: [], busy: false, error: '', done: '' });
+        publishTransfer({ target: null, targets: [], picks: [], busy: false, error: '', done: '' });
       };
 
-      const run = async (workspace) => {
-        if (transferState.busy) return;
+      /** Close the chooser and publish the receipt that carries the undo. */
+      const finish = (notice) => {
+        transferNoticeSeq += 1;
+        publishTransfer({
+          target: null,
+          targets: [],
+          picks: [],
+          busy: false,
+          error: '',
+          done: '',
+          notice: { ...notice, seq: transferNoticeSeq },
+        });
+      };
+
+      const runOne = async (workspace) => {
+        if (transferState.busy) return
         publishTransfer({ busy: true, error: '', done: '' });
         setBusy(true);
+        const sourceId = transferState.sourceWorkspaceId;
         const result = await requestTransfer(ctx, {
           sessionId: transferState.target.id,
           workspaceId: workspace.id,
           mode: transferState.mode,
         });
         setBusy(false);
-        if (result.ok) {
-          publishTransfer({
-            busy: false,
-            done: `${tr(state.mode === 'move' ? 'transferDoneMove' : 'transferDoneCopy')} ${workspace.title}`,
-          });
-        } else {
+        if (!result.ok) {
           publishTransfer({ busy: false, error: `${tr('transferFailed')}${result.error}` });
+          return;
         }
+        finish({
+          text: `${tr('transferDoneMove')} ${workspace.title}`,
+          tone: 'success',
+          undo: {
+            kind: 'move',
+            created: [{ sessionId: String(result.value?.sessionId ?? ''), workspaceId: workspace.id, title: workspace.title }],
+            sourceWorkspaceId: sourceId,
+          },
+        });
+      };
+
+      const runMany = async () => {
+        if (transferState.busy) return
+        const chosen = state.targets.filter((workspace) => state.picks.includes(workspace.id));
+        if (chosen.length === 0) {
+          publishTransfer({ error: tr('transferNoPick') });
+          return;
+        }
+        publishTransfer({ busy: true, error: '', done: '' });
+        setBusy(true);
+        const created = [];
+        const failures = [];
+        for (const workspace of chosen) {
+          const result = await requestTransfer(ctx, {
+            sessionId: transferState.target.id,
+            workspaceId: workspace.id,
+            mode: 'copy',
+          });
+          if (result.ok) {
+            created.push({ sessionId: String(result.value?.sessionId ?? ''), workspaceId: workspace.id, title: workspace.title });
+          } else {
+            failures.push(`${workspace.title}: ${result.error}`);
+          }
+        }
+        setBusy(false);
+        if (created.length === 0) {
+          publishTransfer({ busy: false, error: `${tr('transferFailed')}${failures.join('; ')}` });
+          return;
+        }
+        const text = created.length === 1
+          ? `${tr('transferDoneCopy')} ${created[0].title}`
+          : tr('transferCopiedMany').replace('{n}', String(created.length));
+        finish({
+          text: failures.length === 0 ? text : `${text} · ${tr('transferPartial').replace('{n}', String(failures.length))}`,
+          tone: failures.length === 0 ? 'success' : 'warning',
+          undo: { kind: 'copy', created },
+        });
+      };
+
+      const toggle = (workspaceId) => {
+        if (busy) return
+        const next = state.picks.includes(workspaceId)
+          ? state.picks.filter((id) => id !== workspaceId)
+          : [...state.picks, workspaceId];
+        publishTransfer({ picks: next, error: '' });
       };
 
       const rows = state.targets.length === 0
         ? h('p', { className: 'ove-transfer-empty' }, tr('transferNoTargets'))
-        : h('div', { className: 'ove-transfer-list' }, state.targets.map((workspace) => h('button', {
-          key: workspace.id,
-          type: 'button',
-          className: 'ove-transfer-row',
-          disabled: busy,
-          onClick: () => { void run(workspace); },
-        },
-          h('span', { className: 'ove-transfer-name' }, workspace.title),
-          workspace.path.length > 0 && h('span', { className: 'ove-transfer-path' }, workspace.path))));
+        : h('div', { className: `ove-transfer-list ${move ? 'move' : 'copy'}` }, state.targets.map((workspace) => {
+          const active = picked.includes(workspace.id);
+          return h('button', {
+            key: workspace.id,
+            type: 'button',
+            className: `ove-transfer-row${active ? ' picked' : ''}`,
+            disabled: busy,
+            'aria-pressed': active,
+            onClick: () => { void (move ? runOne(workspace) : toggle(workspace.id)); },
+          },
+            h('span', {
+              className: 'ove-transfer-check',
+              'data-picked': active ? 'true' : 'false',
+              'aria-hidden': 'true',
+            }, active ? '✓' : ''),
+            h('span', { className: 'ove-transfer-name' }, workspace.title),
+            workspace.path.length > 0 && h('span', { className: 'ove-transfer-path' }, workspace.path));
+        }));
 
       const dialog = h('div', {
         className: 'ove-dialog ove-transfer-dialog',
@@ -1763,17 +1968,22 @@ window.__ModuleLoader__.load({
         h('h2', { className: `ove-dialog-title ove-transfer-tone-${move ? 'move' : 'copy'}` }, tr(move ? 'transferMoveTitle' : 'transferCopyTitle')),
         h('p', { className: 'ove-dialog-desc' }, tr(move ? 'transferMoveDesc' : 'transferCopyDesc')),
         h('p', { className: 'ove-dialog-target' }, `${tr('transferOrigin')}${state.origin}`),
-        h('p', { className: 'ove-transfer-note' }, tr('transferPick')),
+        h('p', { className: 'ove-transfer-note' }, tr(move ? 'transferPick' : 'transferPickMany')),
         rows,
         state.error.length > 0 && h('p', { className: 'ove-error', role: 'alert' }, state.error),
-        state.done.length > 0 && h('p', { className: 'ove-notice ove-notice-success' }, state.done),
         h('div', { className: 'ove-dialog-actions' },
           h('button', {
             type: 'button',
             className: 'ove-btn',
             disabled: busy,
             onClick: close,
-          }, busy ? tr('transferBusy') : tr('transferClose'))),
+          }, busy ? tr('transferBusy') : tr('transferClose')),
+          !move && h('button', {
+            type: 'button',
+            className: 'ove-btn ove-btn-copy',
+            disabled: busy || state.picks.length === 0,
+            onClick: () => { void runMany(); },
+          }, tr('transferCopyCount').replace('{n}', String(state.picks.length)))),
         h('p', { className: 'ove-transfer-note' }, tr('transferEmpty')));
 
       return overlayPortal(h(React.Fragment, null,
@@ -1784,6 +1994,77 @@ window.__ModuleLoader__.load({
           className: 'ove-overlay ove-overlay-top',
           onMouseDown: (event) => { if (event.target === event.currentTarget) close(); },
         }, dialog)));
+    }
+
+    /**
+     * Transient receipt for a finished transfer: a floating notice with an undo
+     * action, mirroring the shipped archive notice instead of an inline box.
+     * @param props - injected translator and the plugin context.
+     * @returns the toast, or nothing while no receipt is pending.
+     */
+    function SessionTransferToast({ t, ctx }) {
+      const tr = typeof t === 'function' ? t : (key) => key;
+      const state = React.useSyncExternalStore(subscribeTransfer, getTransfer, getTransfer);
+      const notice = state.notice;
+      const [busy, setBusy] = React.useState(false);
+
+      React.useEffect(() => {
+        if (notice === null) return undefined;
+        const timer = setTimeout(() => { publishTransfer({ notice: null }); }, 6000);
+        return () => clearTimeout(timer);
+      }, [notice]);
+
+      if (notice === null) return null;
+
+      const dismiss = () => { publishTransfer({ notice: null }); };
+      const undo = async () => {
+        if (busy) return
+        setBusy(true);
+        const ok = await undoTransfer(ctx, notice.undo);
+        setBusy(false);
+        if (ok) {
+          transferNoticeSeq += 1;
+          publishTransfer({
+            notice: {
+              seq: transferNoticeSeq,
+              text: tr('transferUndone'),
+              tone: 'success',
+              undo: null,
+            },
+          });
+        } else {
+          transferNoticeSeq += 1;
+          publishTransfer({
+            notice: {
+              seq: transferNoticeSeq,
+              text: `${tr('transferUndoFailed')}${tr('transferFailed')}`,
+              tone: 'warning',
+              undo: null,
+            },
+          });
+        }
+      };
+
+      return overlayPortal(h(React.Fragment, null,
+        h('style', { key: 'styles', 'data-plugin-css': `${NS}-toast` }, CSS),
+        h('div', {
+          key: notice.seq,
+          className: `ove-toast ove-toast-${notice.tone === 'warning' ? 'warning' : 'success'}`,
+          role: 'status',
+        },
+          h('span', { className: 'ove-toast-text' }, notice.text),
+          notice.undo !== null && notice.undo !== undefined && h('button', {
+            type: 'button',
+            className: 'ove-toast-action',
+            disabled: busy,
+            onClick: () => { void undo(); },
+          }, busy ? tr('transferBusy') : tr('transferUndo')),
+          h('button', {
+            type: 'button',
+            className: 'ove-toast-close',
+            'aria-label': tr('transferClose'),
+            onClick: dismiss,
+          }, '×'))));
     }
 
     /* ------------------------------------------------------------------ */
@@ -3345,6 +3626,11 @@ window.__ModuleLoader__.load({
                 }, SessionTransferDialog)),
                 ctx.slots.inject('shell.overlay', () => ctx.slots.register({
                   name: 'shell.overlay',
+                  id: 'original-version-enhancements.transfer-toast',
+                  inject: () => ({ t: translator, ctx }),
+                }, SessionTransferToast)),
+                ctx.slots.inject('shell.overlay', () => ctx.slots.register({
+                  name: 'shell.overlay',
                   id: 'original-version-enhancements.delete-dialog',
                   inject: () => ({ t: translator, ctx }),
                 }, DeleteDialog)),
@@ -3355,7 +3641,7 @@ window.__ModuleLoader__.load({
               // Do not resurrect a half-open dialog when the switch is flipped
               // back on: its target may already be gone.
               publishDelete({ target: null, busy: false, error: '', code: '' });
-              publishTransfer({ target: null, targets: [], busy: false, error: '', done: '' });
+              publishTransfer({ target: null, targets: [], picks: [], busy: false, error: '', done: '', notice: null });
             }
           };
           const unsubscribe = subscribeFlags(sync);

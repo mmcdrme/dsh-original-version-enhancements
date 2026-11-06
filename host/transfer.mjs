@@ -76,58 +76,19 @@ const copyHeader = (header, id, cwd) => {
 }
 
 /**
- * Seed events for the copy: the whole source log plus the inherited-cut marker
- * the Session store expects of a branch, matching a fork's shape.
- * @param events - the source events in sequence order.
- * @returns the seed events.
- */
-const forkSeed = (events) => {
-  const last = events[events.length - 1]
-  return [
-    ...events,
-    { type: 'session/end-seed', seq: events.length, time: last.time, data: { inherited: true } },
-  ]
-}
-
-/**
- * Write the copy's log. The Agent lifecycle is preferred: it persists the seed,
- * announces the Session so every client learns about it, and checkpoints
- * projections. Without an Agent factory the log is written through persistence
- * and its projection checkpoint warmed directly.
- * @param deps - agent, model, persistence, and projection services.
+ * Write the copy's log through session persistence. The log is a complete,
+ * self-contained session, and its projection checkpoint is warmed directly so
+ * the listing can show a title without opening the conversation first. An Agent
+ * is deliberately NOT created: the lifecycle handle would be torn down with
+ * this plugin, and the catalog drops a disposed session until the Host
+ * re-indexes, so the copy would vanish from the sidebar after a reload.
+ * @param deps - persistence and projection services.
  * @param meta - the copy's header.
  * @param events - the source events.
  * @returns whether the copy now exists.
  */
 const materializeCopy = async (deps, meta, events) => {
-  const { agents, sessionPersistence, sessionProjectionCache } = deps
-  if (typeof agents?.create === 'function') {
-    let selection
-    try {
-      selection = deps.agentDefaultModel?.currentSelection?.()
-    } catch { /* an unconfigured default model leaves the route to the factory */ }
-    const create = (preset) => agents.create({
-      sessionId: meta.id,
-      seed: forkSeed(events),
-      inheritedEventCount: events.length,
-      meta: {
-        cwd: meta.cwd,
-        isSeeded: true,
-        ...(preset === undefined ? {} : { agentPreset: preset }),
-      },
-      ...(selection === undefined ? {} : { agentOptions: { provider: selection.provider, model: selection.model } }),
-    })
-    try {
-      await create(meta.agentPreset)
-      return true
-    } catch (error) {
-      // A preset that no longer mounts must not cost the user the copy.
-      if (meta.agentPreset === undefined) throw error
-      await create(undefined)
-      return true
-    }
-  }
-
+  const { sessionPersistence, sessionProjectionCache } = deps
   const handle = await sessionPersistence.create(meta)
   try {
     await handle.append(events)
@@ -135,8 +96,6 @@ const materializeCopy = async (deps, meta, events) => {
   } finally {
     try { await handle.close() } catch { /* flush already settled the log */ }
   }
-  // The sidebar lists a session from its projection cache; a freshly written
-  // log has none, so warm it here or the copy stays invisible until opened.
   try {
     sessionProjectionCache?.coldSnapshot?.(meta, 0, events)
   } catch { /* the copy is filed either way; the next cold read fills it */ }
