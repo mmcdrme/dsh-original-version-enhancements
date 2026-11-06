@@ -194,9 +194,10 @@ const rowOf = record => ({
  * Read one task's run records.
  * @param service - the Host Schedule service.
  * @param id - task identity.
+ * @param prompt - the task instruction to attach to every receipt.
  * @returns the receipts, newest first, and whether the task exists.
  */
-async function recordsOf(service, id) {
+async function recordsOf(service, id, prompt = '') {
   const page = await service.history({ id, limit: 100 })
   if (page === undefined || page.code === 'schedule_not_found' || page.code === 'delivery_cursor_not_found') {
     return { records: [], found: page?.code !== 'schedule_not_found' }
@@ -208,9 +209,35 @@ async function recordsOf(service, id) {
       deliveredAt: receipt.deliveredAt,
       scheduledAt: receipt.scheduledAt,
       targetSessionId: receipt.targetSessionId,
+      prompt: typeof prompt === 'string' ? prompt : '',
     })),
     found: true,
   }
+}
+
+/**
+ * Poll the catalog until the task records a fresh delivery.
+ * @param service - the Host Schedule service.
+ * @param id - task identity.
+ * @param previous - the delivery instant observed before the run.
+ * @param timeoutMs - how long to keep polling.
+ * @returns whether a new delivery showed up.
+ */
+async function waitForDelivery(service, id, previous, timeoutMs = 20_000) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    let task
+    try {
+      task = (await service.catalog()).find(candidate => candidate.id === id)
+    } catch {
+      return false
+    }
+    if (task === undefined) return false
+    const deliveredAt = task.lastDelivery?.deliveredAt
+    if (typeof deliveredAt === 'string' && deliveredAt !== previous) return true
+    await new Promise(resolve => setTimeout(resolve, 500))
+  }
+  return false
 }
 
 /**
@@ -502,7 +529,7 @@ export function createAutomationSurface(options) {
       // without a second round trip.
       const records = {}
       for (const task of tasks) {
-        const page = await recordsOf(service, task.id)
+        const page = await recordsOf(service, task.id, task.prompt)
         records[task.id] = page.records.length
       }
       sendJson(res, 200, {
@@ -527,7 +554,8 @@ export function createAutomationSurface(options) {
       return
     }
     try {
-      const page = await recordsOf(service, body.id)
+      const task = (await service.catalog()).find(candidate => candidate.id === body.id)
+      const page = await recordsOf(service, body.id, task?.prompt ?? '')
       sendJson(res, 200, {
         ok: true,
         value: { records: page.records },
@@ -650,6 +678,11 @@ export function createAutomationSurface(options) {
     }
   }
 
+  /**
+   * Deliver one task by rescheduling it two seconds out and restoring its rule
+   * afterwards: the delivery then runs through the scheduler like any other
+   * occurrence, so its receipt carries the task and its records stay complete.
+   */
   const run = async (req, res) => {
     const body = await accept(req, res)
     if (body === undefined) return
@@ -659,16 +692,44 @@ export function createAutomationSurface(options) {
       return
     }
     try {
-      const result = await service.run({ id })
-      if (result?.code === 'schedule_not_found') {
+      const tasks = await service.catalog()
+      const task = tasks.find(candidate => candidate.id === id)
+      if (task === undefined) {
         sendJson(res, 404, failure('schedule_not_found', '任务不存在或已删除。'))
         return
       }
-      if (result?.code === 'schedule_execution_pending') {
-        sendJson(res, 409, failure('schedule_execution_pending', '该任务正在投递中，请稍后再试。'))
+      const original = timingOf(task)
+      if (original === undefined) {
+        sendJson(res, 409, failure('schedule-run-failed', '该任务的重复规则无法用于立即投递。'))
         return
       }
-      sendJson(res, 200, { ok: true, value: rowOf(result) })
+      const wasPaused = task.status === 'paused'
+      const previous = task.lastDelivery?.deliveredAt
+      if (wasPaused) await service.edit({ id, action: 'update', patch: { active: true } })
+      await service.edit({
+        id,
+        action: 'update',
+        patch: { timing: { kind: 'at', at: new Date(Date.now() + 2000).toISOString() } },
+      })
+      const delivered = await waitForDelivery(service, id, previous)
+      try {
+        await service.edit({ id, action: 'update', patch: { timing: original } })
+      } catch (error) {
+        warn(`automation: restoring the rule of ${id} failed: ${String(error)}`)
+      }
+      if (wasPaused) {
+        try {
+          await service.edit({ id, action: 'update', patch: { active: false } })
+        } catch (error) {
+          warn(`automation: restoring the paused state of ${id} failed: ${String(error)}`)
+        }
+      }
+      if (!delivered) {
+        sendJson(res, 409, failure('schedule-run-failed', '任务未能在两秒后完成投递，请稍后重试。'))
+        return
+      }
+      const refreshed = (await service.catalog()).find(candidate => candidate.id === id)
+      sendJson(res, 200, { ok: true, value: rowOf(refreshed ?? task) })
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       warn(`automation: run failed: ${message}`)
