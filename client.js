@@ -212,9 +212,11 @@ window.__ModuleLoader__.load({
       'auto.deleteFailed': '有 {count} 个任务删除失败',
 
       'auto.new': '新建',
-      'auto.newMenu': '新建菜单',
-      'auto.newManual': '手动创建',
       'auto.newMulti': '绑定到多个会话',
+      'auto.createMethod': '创建方式',
+      'auto.createInSession': '在会话中创建',
+      'auto.createManually': '手动创建',
+      'auto.createPrompt': '请根据需求创建一个自动化任务。',
       'auto.tab.active': '已开启',
       'auto.tab.paused': '已暂停',
       'auto.tab.ended': '已结束',
@@ -226,7 +228,8 @@ window.__ModuleLoader__.load({
       'auto.emptyAction': '新建自动化任务',
       'auto.noMatches': '没有匹配的自动化任务',
       'auto.nextAt': '下次计划时间',
-      'auto.cleanShort': '清理',
+      'auto.cleanShort': '运行后清理',
+      'auto.inSeconds': '{n} 秒后',
       'auto.inMinutes': '{n} 分钟后',
       'auto.inHours': '{n} 小时后',
       'auto.inDays': '{n} 天后',
@@ -272,7 +275,7 @@ window.__ModuleLoader__.load({
       'auto.monthDay': '每月几号',
       'auto.weekday': '星期',
       'auto.rule': 'RRULE',
-      'auto.clean': '投递后清理（仅一次）',
+      'auto.clean': '投递后清理（仅一次性任务）',
       'auto.save': '保存',
       'auto.saving': '正在保存…',
       'auto.saved': '已保存',
@@ -288,6 +291,10 @@ window.__ModuleLoader__.load({
       'auto.pauseSelected': '暂停所选',
       'auto.pausedMany': '已暂停 {count} 个任务',
       'auto.pauseNone': '所选任务都已暂停',
+      'auto.pauseOne': '已暂停：{name}',
+      'auto.resumeOne': '已恢复：{name}',
+      'auto.pauseTask': '暂停任务',
+      'auto.resumeTask': '恢复任务',
       'auto.resumeSelected': '恢复所选',
       'auto.resumedMany': '已恢复 {count} 个任务',
       'auto.resumeNone': '所选任务都在运行中',
@@ -394,9 +401,11 @@ window.__ModuleLoader__.load({
       'auto.deleteFailed': '{count} tasks could not be deleted',
 
       'auto.new': 'New',
-      'auto.newMenu': 'New task menu',
-      'auto.newManual': 'Create manually',
       'auto.newMulti': 'Bind to conversations',
+      'auto.createMethod': 'Create method',
+      'auto.createInSession': 'Create in a session',
+      'auto.createManually': 'Create manually',
+      'auto.createPrompt': 'Please create an automation task based on the requirements.',
       'auto.tab.active': 'Enabled',
       'auto.tab.paused': 'Paused',
       'auto.tab.ended': 'Ended',
@@ -408,7 +417,8 @@ window.__ModuleLoader__.load({
       'auto.emptyAction': 'Create an automation task',
       'auto.noMatches': 'No matching automation tasks',
       'auto.nextAt': 'Next run',
-      'auto.cleanShort': 'Clean',
+      'auto.cleanShort': 'Clean after run',
+      'auto.inSeconds': 'in {n} s',
       'auto.inMinutes': 'in {n} min',
       'auto.inHours': 'in {n} h',
       'auto.inDays': 'in {n} d',
@@ -454,7 +464,7 @@ window.__ModuleLoader__.load({
       'auto.monthDay': 'Day of month',
       'auto.weekday': 'Weekday',
       'auto.rule': 'RRULE',
-      'auto.clean': 'Clean up after delivery (one-shot)',
+      'auto.clean': 'Clean up after delivery (one-shot tasks)',
       'auto.save': 'Save',
       'auto.saving': 'Saving…',
       'auto.saved': 'Saved',
@@ -470,6 +480,10 @@ window.__ModuleLoader__.load({
       'auto.pauseSelected': 'Pause selected',
       'auto.pausedMany': 'Paused {count} tasks',
       'auto.pauseNone': 'Every selected task is already paused',
+      'auto.pauseOne': 'Paused: {name}',
+      'auto.resumeOne': 'Resumed: {name}',
+      'auto.pauseTask': 'Pause task',
+      'auto.resumeTask': 'Resume task',
       'auto.resumeSelected': 'Resume selected',
       'auto.resumedMany': 'Resumed {count} tasks',
       'auto.resumeNone': 'Every selected task is already running',
@@ -763,7 +777,7 @@ window.__ModuleLoader__.load({
       .ove-auto-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; scrollbar-gutter: stable; }
       .ove-auto-inner { max-width: 900px; margin: 0 auto; padding: 28px clamp(20px, 4vw, 40px) 44px; }
       .ove-auto-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 18px; }
-      .ove-head-actions { display: flex; align-items: center; gap: 8px; }
+      .ove-head-actions { position: relative; display: flex; align-items: center; gap: 8px; }
       .ove-auto-title-text { margin: 0; font-size: 24px; line-height: 32px; font-weight: 600; letter-spacing: -.01em; }
 
       .ove-split { position: relative; display: inline-flex; align-items: stretch; height: 34px; border-radius: 10px; overflow: visible; background: var(--dsw-alias-label-primary); color: var(--dsw-alias-bg-base); }
@@ -785,8 +799,9 @@ window.__ModuleLoader__.load({
       .ove-menu-row:disabled { opacity: .5; cursor: default; }
 
       .ove-tabs { display: flex; gap: 2px; margin-bottom: 12px; flex-wrap: wrap; }
-      .ove-select-bar { display: flex; align-items: center; padding: 0 12px 6px; }
-      .ove-select-all { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; line-height: 20px; color: var(--dsw-alias-label-tertiary); cursor: pointer; white-space: nowrap; }
+      .ove-select-bar { display: flex; align-items: flex-start; padding: 10px 12px 6px; }
+      .ove-select-all { display: inline-flex; align-items: flex-start; gap: 12px; font-size: 12px; line-height: 20px; color: var(--dsw-alias-label-tertiary); cursor: pointer; white-space: nowrap; }
+      .ove-select-all > span { line-height: 24px; }
       .ove-tab-count { margin-left: 6px; font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
       .ove-tone-active { color: #16a34a; }
       .ove-tone-paused { color: #ca8a04; }
@@ -833,6 +848,12 @@ window.__ModuleLoader__.load({
       }
       .ove-hover-btn:hover { background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-label-primary); }
       .ove-hover-btn:disabled { opacity: .45; cursor: default; }
+      .ove-hover-warn { color: #a16207; }
+      .ove-hover-warn:hover { background: color-mix(in srgb, #eab308 18%, transparent); color: #854d0e; }
+      .ove-hover-ok { color: #15803d; }
+      .ove-hover-ok:hover { background: color-mix(in srgb, #22c55e 18%, transparent); color: #166534; }
+      .ove-hover-danger { color: var(--dsw-alias-state-error-primary); }
+      .ove-hover-danger:hover { background: color-mix(in srgb, #ef4444 16%, transparent); }
       .ove-auto-check { width: 14px; height: 14px; accent-color: var(--dsw-alias-brand-primary, #4f7cff); cursor: pointer; }
 
       .ove-empty { display: grid; justify-items: center; gap: 14px; padding: 64px 0 48px; text-align: center; }
@@ -863,9 +884,10 @@ window.__ModuleLoader__.load({
       .ove-primary-sm { height: 28px; padding: 0 12px; font-size: 12px; }
       .ove-detail-body { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 8px 16px 20px; display: grid; gap: 14px; align-content: start; }
       .ove-detail-foot {
-        display: flex; justify-content: flex-end; gap: 8px; padding: 10px 16px;
-        border-top: .5px solid var(--dsw-alias-border-l1); background: var(--dsw-alias-bg-base);
+        display: flex; justify-content: stretch; gap: 8px; padding: 10px 0 2px;
+        border-top: .5px solid var(--dsw-alias-border-l1); margin-top: 4px;
       }
+      .ove-detail-save { width: 100%; }
       .ove-field { display: grid; gap: 6px; }
       .ove-label { font-size: 13px; line-height: 20px; color: var(--dsw-alias-label-secondary); }
       .ove-input, .ove-select, .ove-textarea {
@@ -893,7 +915,15 @@ window.__ModuleLoader__.load({
       .ove-session-option { display: flex; align-items: center; gap: 10px; padding: 7px 8px; border-radius: 8px; font-size: 13px; line-height: 20px; cursor: pointer; }
       .ove-session-option:hover { background: var(--dsw-alias-bg-layer-1); }
       .ove-session-option span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      .ove-notice { margin: 0 0 8px; font-size: 12px; line-height: 18px; color: var(--dsw-alias-state-success-primary, #15803d); }
+      .ove-notice {
+        margin: 0 0 8px; padding: 6px 10px; border-radius: 8px;
+        font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-secondary);
+        background: var(--dsw-alias-bg-layer-1);
+      }
+      .ove-notice-success { color: #15803d; background: color-mix(in srgb, #22c55e 12%, transparent); }
+      .ove-notice-warn { color: #a16207; background: color-mix(in srgb, #eab308 16%, transparent); }
+      .ove-notice-danger { color: var(--dsw-alias-state-error-primary); background: color-mix(in srgb, #ef4444 12%, transparent); }
+      .ove-notice-info { color: var(--dsw-alias-label-secondary); background: var(--dsw-alias-bg-layer-1); }
       .ove-overlay-portal { z-index: 2147483000; }
       @media (max-width: 640px) {
         .ove-detail { position: absolute; inset: 0; width: 100%; z-index: 5; }
@@ -1517,13 +1547,16 @@ window.__ModuleLoader__.load({
      * Relative distance label the page appends to the next occurrence.
      * @param value - ISO timestamp.
      * @param tr - translator.
+     * @param now - epoch milliseconds of the current tick.
      * @returns a relative label, or an empty string when it is in the past.
      */
-    const relativeTo = (value, tr) => {
+    const relativeTo = (value, tr, now) => {
       const time = Date.parse(value ?? '');
       if (Number.isNaN(time)) return '';
-      const minutes = Math.round((time - Date.now()) / 60000);
-      if (minutes < 1) return '';
+      const seconds = Math.round((time - (now ?? Date.now())) / 1000);
+      if (seconds < 1) return '';
+      if (seconds < 60) return tr('auto.inSeconds').replace('{n}', String(seconds));
+      const minutes = Math.round(seconds / 60);
       if (minutes < 60) return tr('auto.inMinutes').replace('{n}', String(minutes));
       const hours = Math.round(minutes / 60);
       if (hours < 24) return tr('auto.inHours').replace('{n}', String(hours));
@@ -1755,7 +1788,7 @@ window.__ModuleLoader__.load({
      * @param props - standard panel props and the translator.
      * @returns the automation enhancement page.
      */
-    function AutomationPage({ useSessions, useWorkspaces, t }) {
+    function AutomationPage({ useSessions, useWorkspaces, t, uiWorkspace }) {
       const tr = typeof t === 'function' ? t : (key) => key;
       const sessions = useSessions((snapshot) => snapshot);
       const workspaces = useWorkspaces((snapshot) => snapshot);
@@ -1769,7 +1802,7 @@ window.__ModuleLoader__.load({
       const [query, setQuery] = React.useState('');
       const [selected, setSelected] = React.useState(() => new Set());
       const [busy, setBusy] = React.useState('');
-      const [notice, setNotice] = React.useState('');
+      const [notice, setNotice] = React.useState(null);
       const [actionError, setActionError] = React.useState('');
       const [draft, setDraft] = React.useState(null);
       const [draftError, setDraftError] = React.useState('');
@@ -1779,6 +1812,10 @@ window.__ModuleLoader__.load({
       const [cleanPending, setCleanPending] = React.useState(false);
       const [detailTab, setDetailTab] = React.useState('edit');
       const [records, setRecords] = React.useState([]);
+      const [createMenu, setCreateMenu] = React.useState(false);
+      const [now, setNow] = React.useState(() => Date.now());
+
+      const announce = (text, tone = 'success') => setNotice(text.length > 0 ? { text, tone } : null);
 
       const load = React.useCallback(async (signal) => {
         const result = await automationCall('catalog');
@@ -1804,12 +1841,30 @@ window.__ModuleLoader__.load({
         return () => { controller.abort(); clearInterval(timer); };
       }, [load]);
 
+      // One clock tick per second keeps "in 42 s" counting down.
+      React.useEffect(() => {
+        const timer = setInterval(() => setNow(Date.now()), 1000);
+        return () => clearInterval(timer);
+      }, []);
+
+      // The create dropdown closes on any click outside its group.
+      React.useEffect(() => {
+        if (!createMenu) return undefined;
+        const onDown = (event) => {
+          const target = event.target;
+          if (target instanceof Element && target.closest('.ove-head-actions') !== null) return;
+          setCreateMenu(false);
+        };
+        document.addEventListener('mousedown', onDown);
+        return () => document.removeEventListener('mousedown', onDown);
+      }, [createMenu]);
+
       // A saved/deleted/delivered toast is a receipt, not a banner: clear it
       // by itself so it never piles up on top of the next action.
       React.useEffect(() => {
-        if (notice.length === 0 && actionError.length === 0) return undefined;
+        if (notice === null && actionError.length === 0) return undefined;
         const timer = setTimeout(() => {
-          setNotice('');
+          setNotice(null);
           setActionError('');
         }, 4000);
         return () => clearTimeout(timer);
@@ -1849,8 +1904,20 @@ window.__ModuleLoader__.load({
         setDetailTab('edit');
         setRecords([]);
         setDraftError('');
-        setNotice('');
+        setNotice(null);
         setActionError('');
+      };
+
+      /** The stock page's "create in a session": a new chat seeded with a create request. */
+      const startInSession = () => {
+        try {
+          uiWorkspace?.startSession?.(undefined, {
+            prompt: tr('auto.createPrompt'),
+            whenDraftExists: 'append',
+          });
+        } catch (error) {
+          setActionError(error instanceof Error ? error.message : String(error));
+        }
       };
 
       const openEdit = (task) => {
@@ -1927,7 +1994,7 @@ window.__ModuleLoader__.load({
             return next;
           });
         }
-        setNotice(tr('auto.saved'));
+        announce(tr('auto.saved'), 'success');
         setDraft(null);
         setRecords([]);
         await load();
@@ -1942,6 +2009,7 @@ window.__ModuleLoader__.load({
           setActionError(result.error);
           return;
         }
+        announce(tr(next ? 'auto.resumeOne' : 'auto.pauseOne').replace('{name}', task.title), next ? 'success' : 'warn');
         await load();
         if (draft !== null && draft.id === task.id) updateDraft({ active: next });
       };
@@ -1956,7 +2024,7 @@ window.__ModuleLoader__.load({
           setActionError(result.error);
           return;
         }
-        setNotice(tr('auto.ran'));
+        announce(tr('auto.ran'), 'info');
         await load();
         if (draft !== null && draft.id === task.id) void loadRecords(task.id);
       };
@@ -1974,9 +2042,9 @@ window.__ModuleLoader__.load({
         }
         const deleted = result.value?.deleted?.length ?? 0;
         const failed = result.value?.failed?.length ?? 0;
-        setNotice(failed === 0
+        announce(failed === 0
           ? tr('auto.deleted').replace('{count}', String(deleted))
-          : tr('auto.deleteFailed').replace('{count}', String(failed)));
+          : tr('auto.deleteFailed').replace('{count}', String(failed)), 'danger');
         setSelected(new Set());
         if (draft !== null && ids.includes(draft.id)) setDraft(null);
         await load();
@@ -2018,7 +2086,10 @@ window.__ModuleLoader__.load({
         }
         setBusy('');
         if (failed === 0) {
-          setNotice(tr(resume ? 'auto.resumedMany' : 'auto.pausedMany').replace('{count}', String(targets.length)));
+          announce(
+            tr(resume ? 'auto.resumedMany' : 'auto.pausedMany').replace('{count}', String(targets.length)),
+            resume ? 'success' : 'warn',
+          );
           setSelected(new Set());
         }
         await load();
@@ -2039,7 +2110,7 @@ window.__ModuleLoader__.load({
         setBindTasks(list);
         setBindPicks(new Set());
         setActionError('');
-        setNotice('');
+        setNotice(null);
       };
 
       const closeBind = () => {
@@ -2067,7 +2138,7 @@ window.__ModuleLoader__.load({
         const done = tr('auto.bindDone').replace('{count}', String(created));
         const skippedText = skipped > 0 ? `，${tr('auto.bindSkipped').replace('{count}', String(skipped))}` : '';
         if (failed.length === 0) {
-          setNotice(`${done}${skippedText}`);
+          announce(`${done}${skippedText}`, 'success');
         } else {
           setActionError(tr('auto.bindFailed').replace('{names}', failed
             .map((entry) => (entry.message ? `${sessionTitle(entry.sessionId)}（${entry.message}）` : sessionTitle(entry.sessionId)))
@@ -2193,12 +2264,6 @@ window.__ModuleLoader__.load({
         h('div', { className: 'ove-detail-head' },
           h('span', { className: 'ove-label' }, draft.id === '' ? tr('auto.createTitle') : tr('auto.editTitle')),
           h('div', { className: 'ove-detail-actions' },
-            h('button', {
-              type: 'button',
-              className: 'ove-primary ove-primary-sm',
-              disabled: busy !== '',
-              onClick: () => void saveDraft(),
-            }, busy === 'save' ? tr('auto.saving') : tr('auto.save')),
             h('button', {
               type: 'button',
               className: 'ove-icon-btn',
@@ -2417,7 +2482,14 @@ window.__ModuleLoader__.load({
                 onClick: () => setConfirm({ ids: [panelTask.id], title: panelTask.title }),
               }, tr('auto.deleteTask')))
             : null,
-          draftError.length > 0 ? h('p', { className: 'ove-error' }, draftError) : null));
+          draftError.length > 0 ? h('p', { className: 'ove-error' }, draftError) : null,
+          h('div', { className: 'ove-detail-foot' },
+            h('button', {
+              type: 'button',
+              className: 'ove-primary ove-detail-save',
+              disabled: busy !== '',
+              onClick: () => void saveDraft(),
+            }, busy === 'save' ? tr('auto.saving') : tr('auto.save')))));
 
       return h('div', { className: 'ove-auto' },
         h('style', { key: 'styles', 'data-plugin-css': `${NS}-automation` }, CSS),
@@ -2427,11 +2499,51 @@ window.__ModuleLoader__.load({
               h('div', { className: 'ove-auto-heading' },
                 h('h1', { className: 'ove-auto-title-text' }, tr('auto.panel')),
                 h('div', { className: 'ove-head-actions' },
-                  h('button', {
-                    type: 'button',
-                    className: 'ove-primary',
-                    onClick: openNew,
-                  }, `+ ${tr('auto.new')}`))),
+                  h('span', { className: 'ove-split', role: 'group', 'aria-label': tr('auto.new') },
+                    h('button', {
+                      type: 'button',
+                      className: 'ove-split-main',
+                      onClick: openNew,
+                    }, `+ ${tr('auto.new')}`),
+                    h('button', {
+                      type: 'button',
+                      className: 'ove-split-more',
+                      'aria-label': tr('auto.createMethod'),
+                      'aria-haspopup': 'menu',
+                      'aria-expanded': createMenu,
+                      onClick: () => setCreateMenu((value) => !value),
+                    }, h('svg', {
+                      viewBox: '0 0 16 16',
+                      width: 12,
+                      height: 12,
+                      fill: 'none',
+                      stroke: 'currentColor',
+                      strokeWidth: 1.6,
+                      strokeLinecap: 'round',
+                      strokeLinejoin: 'round',
+                      'aria-hidden': 'true',
+                    }, h('path', { d: 'm3.5 6 4.5 4.5L12.5 6' })))),
+                  createMenu
+                    ? h('div', { className: 'ove-split-menu', role: 'menu' },
+                      h('button', {
+                        type: 'button',
+                        role: 'menuitem',
+                        className: 'ove-menu-row',
+                        onClick: () => {
+                          setCreateMenu(false);
+                          startInSession();
+                        },
+                      }, tr('auto.createInSession')),
+                      h('button', {
+                        type: 'button',
+                        role: 'menuitem',
+                        className: 'ove-menu-row',
+                        onClick: () => {
+                          setCreateMenu(false);
+                          openNew();
+                        },
+                      }, tr('auto.createManually')))
+                    : null)),
 
               h('div', { className: 'ove-tabs', role: 'tablist' },
                 tabs.map(([value, label, tone]) => h('button', {
@@ -2493,7 +2605,9 @@ window.__ModuleLoader__.load({
                   }, tr('auto.clearSelection')))
                 : null,
 
-              notice.length > 0 ? h('p', { className: 'ove-notice' }, notice) : null,
+              notice !== null
+                ? h('p', { className: `ove-notice ove-notice-${notice.tone}`, role: 'status' }, notice.text)
+                : null,
               actionError.length > 0 ? h('p', { className: 'ove-error' }, actionError) : null,
 
               loading && rows.length === 0 ? h('p', { className: 'ove-muted' }, tr('auto.loading')) : null,
@@ -2515,7 +2629,7 @@ window.__ModuleLoader__.load({
                   h('label', { className: 'ove-select-all' },
                     h('input', {
                       type: 'checkbox',
-                      className: 'ove-auto-check',
+                      className: 'ove-task-check',
                       checked: filtered.every((task) => selected.has(task.id)),
                       onChange: () => {
                         const all = filtered.every((task) => selected.has(task.id));
@@ -2529,9 +2643,8 @@ window.__ModuleLoader__.load({
                         });
                       },
                     }),
-                    tr('auto.selectAll')))
+                    h('span', null, tr('auto.selectAll'))))
                 : null,
-
               h('div', { className: 'ove-task-list' }, filtered.map((task) => h('div', {
                 key: task.id,
                 className: 'ove-task',
@@ -2560,7 +2673,7 @@ window.__ModuleLoader__.load({
                 h('div', { className: 'ove-task-meta' },
                   (() => {
                     const head = task.status === 'active' ? recurrenceOf(task, tr) : statusText(task.status);
-                    const relative = task.status === 'active' ? relativeTo(task.scheduledAt, tr) : '';
+                    const relative = task.status === 'active' ? relativeTo(task.scheduledAt, tr, now) : '';
                     const when = task.scheduledAt
                       ? `${tr('auto.nextAt')}：${formatInstant(task.scheduledAt)}${relative.length > 0 ? `（${relative}）` : ''}`
                       : '';
@@ -2583,6 +2696,18 @@ window.__ModuleLoader__.load({
                     void runNow(task);
                   },
                 }, busy === 'run' ? tr('auto.running') : tr('auto.run')),
+                task.status === 'active' || task.status === 'paused'
+                  ? h('button', {
+                    type: 'button',
+                    className: `ove-hover-btn ${task.status === 'active' ? 'ove-hover-warn' : 'ove-hover-ok'}`,
+                    title: tr(task.status === 'active' ? 'auto.pauseTask' : 'auto.resumeTask'),
+                    disabled: busy !== '',
+                    onClick: (event) => {
+                      event.stopPropagation();
+                      void toggleActive(task);
+                    },
+                  }, tr(task.status === 'active' ? 'auto.pauseTask' : 'auto.resumeTask'))
+                  : null,
                 task.kind === 'after' || task.kind === 'at'
                   ? h('label', {
                     className: 'ove-clean-toggle',
@@ -2596,7 +2721,17 @@ window.__ModuleLoader__.load({
                     onChange: () => void toggleClean(task),
                   }),
                   tr('auto.cleanShort'))
-                  : null)))),
+                  : null,
+                h('button', {
+                  type: 'button',
+                  className: 'ove-hover-btn ove-hover-danger',
+                  title: tr('auto.deleteTask'),
+                  disabled: busy !== '',
+                  onClick: (event) => {
+                    event.stopPropagation();
+                    setConfirm({ ids: [task.id], title: task.title });
+                  },
+                }, tr('auto.deleteTask')))))),
               ' '))),
           editor,
 
@@ -2694,7 +2829,7 @@ window.__ModuleLoader__.load({
     /* ------------------------------------------------------------------ */
 
     return {
-      inject: ['slots', 'locale', 'configForms', 'workspaces', 'sessions'],
+      inject: ['slots', 'locale', 'configForms', 'workspaces', 'sessions', 'uiWorkspace'],
       apply(ctx) {
         const text = (key) => ctx.locale.getSnapshot().active === 'zh' ? (zh[key] ?? key) : (en[key] ?? key);
         const translator = (key) => text(key);
@@ -2763,7 +2898,7 @@ window.__ModuleLoader__.load({
                   name: 'main',
                   key: AUTOMATION_PANEL,
                   locale: NS,
-                  inject: () => ({ t: translator }),
+                  inject: () => ({ t: translator, uiWorkspace: ctx.uiWorkspace }),
                 }, AutomationPage)),
                 ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
                   name: 'sidebar.panellist',
