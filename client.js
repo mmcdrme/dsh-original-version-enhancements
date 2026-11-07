@@ -1783,12 +1783,15 @@ window.__ModuleLoader__.load({
     /* Session context menu: move or copy into another workspace           */
     /* ------------------------------------------------------------------ */
 
+    /** Action tone: blue for move, green for copy (matches the row colours). */
+    const transferTone = (mode) => (mode === 'move' ? '#2563eb' : '#16a34a');
+
     /**
      * Folder-and-arrow glyph for "move", two stacked cards for "copy".
-     * @param props - which of the two actions the row performs.
+     * @param props - which of the two actions the row performs, and its colour.
      * @returns the inline icon.
      */
-    function TransferIcon({ mode }) {
+    function TransferIcon({ mode, tone }) {
       const common = {
         viewBox: '0 0 16 16',
         width: 14,
@@ -1801,7 +1804,7 @@ window.__ModuleLoader__.load({
         'aria-hidden': 'true',
         focusable: 'false',
         className: 'ove-menu-icon',
-        style: { display: 'block', pointerEvents: 'none' },
+        style: { display: 'block', pointerEvents: 'none', ...(tone === undefined ? {} : { color: tone }) },
       };
       if (mode === 'move') {
         return h('svg', common,
@@ -1814,14 +1817,26 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * The row-level styles ship with the row itself: the session menu can open
-     * on a page where no other surface of this plugin is mounted.
+     * Self-contained styles for the fallback rows. The session menu can open on a
+     * page where no other surface of this plugin is mounted, so the page CSS that
+     * normally styles `.ove-menu-item` may be absent; a bare `<button>` would then
+     * render as a bordered, centred browser button instead of a menu row.
      * @returns the style element.
      */
     const transferMenuStyles = () => h('style', {
       key: 'styles',
       'data-plugin-css': `${NS}-menu-transfer`,
     }, `
+      .ove-menu-item {
+        display: flex; align-items: center; gap: 7px; width: 100%; box-sizing: border-box;
+        padding: 6px 8px; border: 0; border-radius: 6px; background: transparent;
+        font-size: 13px; line-height: 20px; text-align: left; cursor: pointer;
+        -webkit-tap-highlight-color: transparent;
+      }
+      .ove-menu-item:hover, .ove-menu-item:focus-visible {
+        background: var(--dsw-alias-bg-layer-2); outline: none;
+      }
+      .ove-menu-icon { flex: none; display: block; }
       .ove-menu-item.ove-menu-move { color: #2563eb; }
       .ove-menu-item.ove-menu-copy { color: #16a34a; }
       .ove-menu-item.ove-menu-move:hover, .ove-menu-item.ove-menu-move:focus-visible {
@@ -1927,12 +1942,26 @@ window.__ModuleLoader__.load({
         openTransfer({ id: sessionId, title: displayTitle || sessionId }, mode);
       };
 
+      const tone = transferTone(mode);
+
+      // Render the shipped menu row whenever the primitives are available: it
+      // carries its own layout, hover and keyboard behaviour, so the row looks
+      // native on every page (a bare <button> only looked right while some other
+      // surface of this plugin happened to have its stylesheet mounted).
+      if (uiPrimitives?.MenuItemButton) {
+        return h(uiPrimitives.MenuItemButton, {
+          icon: h(TransferIcon, { mode, tone }),
+          onSelect: select,
+        }, h('span', { style: { color: tone } }, label));
+      }
+
       return h(React.Fragment, null,
         transferMenuStyles(),
         h('button', {
           type: 'button',
           role: 'menuitem',
           className: `ove-menu-item ove-menu-${mode === 'move' ? 'move' : 'copy'}`,
+          style: { color: tone },
           onClick: select,
         }, h(TransferIcon, { mode }), h('span', null, label)));
     }
