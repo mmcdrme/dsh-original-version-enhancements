@@ -91,18 +91,17 @@ window.__ModuleLoader__.load({
     /* ------------------------------------------------------------------ */
 
     /**
-     * `target` is the session being moved or copied, `targets` the workspaces it
-     * may land in (captured where the workspace snapshot is available), `picks`
-     * the subset chosen for a multi-workspace copy, `mode` decides whether the
-     * original is removed afterwards, and `notice` is the transient receipt that
-     * carries its own undo.
+     * `target` is the session being moved or copied, `mode` decides whether the
+     * original is removed afterwards, `picks` the subset chosen for a
+     * multi-workspace copy, and `notice` is the transient receipt that carries
+     * its own undo. The candidate workspaces are NOT copied in here: they are
+     * derived live from the Client Workspace state when the panel renders, so a
+     * menu opened before that state finished loading still ends up with the
+     * real list instead of an empty one.
      */
     let transferState = {
       target: null,
       mode: 'copy',
-      origin: '',
-      sourceWorkspaceId: '',
-      targets: [],
       picks: [],
       busy: false,
       error: '',
@@ -124,13 +123,23 @@ window.__ModuleLoader__.load({
 
     const getTransfer = () => transferState;
 
-    /** Open the workspace chooser for one session, capturing its candidates. */
-    const openTransfer = (target, mode, snapshot, tr) => {
+    /**
+     * Split one Workspace snapshot into "where the session is" and "where it may
+     * go". Derived on every relevant render rather than captured when the menu
+     * opens: both the archive membership (menu rows) and the target list (panel)
+     * must follow the stream, including its first baseline.
+     * @param snapshot - the Client Workspace snapshot, when available.
+     * @param target - the pending session (`null` while no panel is open).
+     * @param tr - translator for the ungrouped label.
+     * @returns the origin label, source workspace id, target list, and readiness.
+     */
+    const transferChoices = (snapshot, target, tr) => {
       const items = Array.isArray(snapshot?.items) ? snapshot.items : [];
       // The snapshot spells the identity differently across versions; the path is
       // always present and the Host resolves either spelling.
       const idOf = (item) => String(item?.workspaceId ?? item?.id ?? item?.path ?? '');
-      const owner = items.find((item) => Array.isArray(item.sessionIds) && item.sessionIds.includes(target.id));
+      const sessionId = target?.id;
+      const owner = items.find((item) => Array.isArray(item.sessionIds) && item.sessionIds.includes(sessionId));
       const ownerId = idOf(owner);
       const targets = items
         .filter((item) => idOf(item) !== ownerId)
@@ -140,17 +149,17 @@ window.__ModuleLoader__.load({
           path: typeof item.path === 'string' ? item.path : '',
         }))
         .filter((item) => item.id.length > 0);
-      publishTransfer({
-        target,
-        mode,
+      return {
+        ready: snapshot?.phase === 'ready',
         origin: owner === undefined ? tr('ungrouped') : String(owner.title || owner.path || ''),
         sourceWorkspaceId: ownerId,
         targets,
-        picks: [],
-        busy: false,
-        error: '',
-        done: '',
-      });
+      };
+    };
+
+    /** Open the workspace chooser for one session. */
+    const openTransfer = (target, mode) => {
+      publishTransfer({ target, mode, picks: [], busy: false, error: '', done: '' });
     };
 
     /**
@@ -528,6 +537,7 @@ window.__ModuleLoader__.load({
       transferOrigin: '当前工作区：',
       transferPick: '选择目标工作区',
       transferNoTargets: '没有其他工作区可放入该会话。',
+      transferLoading: '正在读取工作区列表…',
       transferEmpty: '仅显示目录仍然存在的工作区。',
       transferBusy: '正在处理…',
       transferDoneMove: '已移动到',
@@ -745,6 +755,7 @@ window.__ModuleLoader__.load({
       transferOrigin: 'Current workspace: ',
       transferPick: 'Choose the target workspace',
       transferNoTargets: 'No other workspace can take this session.',
+      transferLoading: 'Reading the workspace list…',
       transferEmpty: 'Only workspaces whose directory still exists are listed.',
       transferBusy: 'Working…',
       transferDoneMove: 'Moved to',
@@ -1834,20 +1845,43 @@ window.__ModuleLoader__.load({
       return typeof model?.getSnapshot === 'function' ? model : undefined;
     };
 
-    /**
-     * Read the Workspace snapshot once. The session menu does not hand entries a
-     * `useWorkspaces` hook, so the chooser opens from this direct read instead
-     * of an empty target list; a slot that does provide the hook keeps it.
-     * @param ctx - the Client plugin context.
-     * @returns the Workspace snapshot, or undefined when unavailable.
-     */
-    const readWorkspaceSnapshot = (ctx) => {
-      try {
-        return workspaceModelOf(ctx)?.getSnapshot?.();
-      } catch {
-        return undefined;
-      }
+    /** Stable fallback snapshot: `useSyncExternalStore` requires one identity. */
+    const EMPTY_WORKSPACE_SNAPSHOT = {
+      items: [],
+      archivedSessionIds: [],
+      pinnedSessionIds: [],
+      state: 'loading',
+      phase: 'pending',
+      error: null,
     };
+
+    /**
+     * Subscribe to the Client Workspace state and read its cached snapshot. The
+     * session menu does not hand entries a `useWorkspaces` hook, so the menu
+     * rows and the chooser share this live read instead: the archive set and the
+     * target list stay correct even when the menu opens before the stream's
+     * first baseline, and follow every later push.
+     * @param ctx - the Client plugin context.
+     * @returns the current Workspace snapshot (never undefined).
+     */
+    function useWorkspaceSnapshot(ctx) {
+      const model = workspaceModelOf(ctx);
+      const subscribe = React.useCallback((notify) => {
+        if (typeof model?.subscribe !== 'function') return () => {};
+        const off = model.subscribe(notify);
+        return () => {
+          try { off(); } catch { /* the model was already disposed */ }
+        };
+      }, [model]);
+      const read = React.useCallback(() => {
+        try {
+          return model?.getSnapshot?.() ?? EMPTY_WORKSPACE_SNAPSHOT;
+        } catch {
+          return EMPTY_WORKSPACE_SNAPSHOT;
+        }
+      }, [model]);
+      return React.useSyncExternalStore(subscribe, read, read);
+    }
 
     /**
      * Whether one Session is archived. The Session menu target only carries the
@@ -1855,43 +1889,31 @@ window.__ModuleLoader__.load({
      * answer live; archived rows are not offered move/copy because the stock
      * menu only gives them Unarchive (and an archived conversation should be
      * restored, not silently re-filed into another workspace).
+     * Until the archive set has arrived, the answer is "archived" for safety:
+     * offering the rows and then having them vanish is exactly the flicker this
+     * guard exists to prevent, and a menu opened during that window is normally
+     * closed again long before the baseline lands.
      * @param ctx - the Client plugin context.
      * @param sessionId - the Session whose archive membership is wanted.
-     * @returns true while that id is in the durable archive set.
+     * @returns true while that id is in the archive set, or before it is known.
      */
     function useArchivedSession(ctx, sessionId) {
       const model = workspaceModelOf(ctx);
-      const read = () => {
-        try {
-          const ids = model?.getSnapshot?.()?.archivedSessionIds;
-          return Array.isArray(ids) && ids.includes(sessionId);
-        } catch {
-          return false;
-        }
-      };
-      const [archived, setArchived] = React.useState(read);
-      React.useEffect(() => {
-        setArchived(read());
-        if (typeof model?.subscribe !== 'function') return undefined;
-        const off = model.subscribe(() => setArchived(read()));
-        setArchived(read());
-        return () => {
-          try { off(); } catch { /* the model was already disposed */ }
-        };
-      }, [model, sessionId]);
-      return archived;
+      const snapshot = useWorkspaceSnapshot(ctx);
+      if (model === undefined) return false;
+      if (snapshot?.phase !== 'ready') return true;
+      const ids = snapshot?.archivedSessionIds;
+      return Array.isArray(ids) && ids.includes(sessionId);
     }
 
     /**
      * Right-click row action: move or copy one session into another workspace.
-     * @param props - owner props, menu hook, workspace snapshot, translator, mode.
+     * @param props - owner props, menu hook, translator, plugin context, mode.
      * @returns the menu row.
      */
-    function SessionTransferMenuItem({ sessionId, displayTitle, useMenuOpenState, useWorkspaces, t, ctx, mode }) {
+    function SessionTransferMenuItem({ sessionId, displayTitle, useMenuOpenState, t, ctx, mode }) {
       const tr = typeof t === 'function' ? t : (key) => key;
       const [, closeMenu] = useMenuOpenState();
-      const hooked = typeof useWorkspaces === 'function' ? useWorkspaces((snapshot) => snapshot) : undefined;
-      const workspaces = hooked ?? readWorkspaceSnapshot(ctx);
       const archived = useArchivedSession(ctx, sessionId);
       const label = tr(mode === 'move' ? 'menuMove' : 'menuCopy');
 
@@ -1902,7 +1924,7 @@ window.__ModuleLoader__.load({
 
       const select = () => {
         closeMenu(false);
-        openTransfer({ id: sessionId, title: displayTitle || sessionId }, mode, workspaces, tr);
+        openTransfer({ id: sessionId, title: displayTitle || sessionId }, mode);
       };
 
       return h(React.Fragment, null,
@@ -1925,13 +1947,14 @@ window.__ModuleLoader__.load({
     function SessionTransferDialog({ t, ctx }) {
       const tr = typeof t === 'function' ? t : (key) => key;
       const state = React.useSyncExternalStore(subscribeTransfer, getTransfer, getTransfer);
+      const workspaceSnapshot = useWorkspaceSnapshot(ctx);
       const [busy, setBusy] = React.useState(false);
 
       React.useEffect(() => {
         if (state.target === null) return undefined;
         const onKey = (event) => {
           if (event.key === 'Escape' && !transferState.busy) {
-            publishTransfer({ target: null, targets: [], picks: [], busy: false, error: '', done: '' });
+            publishTransfer({ target: null, picks: [], busy: false, error: '', done: '' });
           }
         };
         window.addEventListener('keydown', onKey);
@@ -1940,11 +1963,15 @@ window.__ModuleLoader__.load({
 
       if (state.target === null) return null;
 
+      // Derived from the live Workspace snapshot, not captured when the menu
+      // opened: a menu opened before the stream's first baseline now fills in
+      // its target list as soon as that baseline lands.
+      const choices = transferChoices(workspaceSnapshot, state.target, tr);
       const move = state.mode === 'move';
       const picked = move ? [] : state.picks;
       const close = () => {
         if (transferState.busy) return;
-        publishTransfer({ target: null, targets: [], picks: [], busy: false, error: '', done: '' });
+        publishTransfer({ target: null, picks: [], busy: false, error: '', done: '' });
       };
 
       /** Close the chooser and publish the receipt that carries the undo. */
@@ -1952,7 +1979,6 @@ window.__ModuleLoader__.load({
         transferNoticeSeq += 1;
         publishTransfer({
           target: null,
-          targets: [],
           picks: [],
           busy: false,
           error: '',
@@ -1965,7 +1991,7 @@ window.__ModuleLoader__.load({
         if (transferState.busy) return
         publishTransfer({ busy: true, error: '', done: '' });
         setBusy(true);
-        const sourceId = transferState.sourceWorkspaceId;
+        const sourceId = choices.sourceWorkspaceId;
         const result = await requestTransfer(ctx, {
           sessionId: transferState.target.id,
           workspaceId: workspace.id,
@@ -1989,7 +2015,7 @@ window.__ModuleLoader__.load({
 
       const runMany = async () => {
         if (transferState.busy) return
-        const chosen = state.targets.filter((workspace) => state.picks.includes(workspace.id));
+        const chosen = choices.targets.filter((workspace) => state.picks.includes(workspace.id));
         if (chosen.length === 0) {
           publishTransfer({ error: tr('transferNoPick') });
           return;
@@ -2033,9 +2059,11 @@ window.__ModuleLoader__.load({
         publishTransfer({ picks: next, error: '' });
       };
 
-      const rows = state.targets.length === 0
-        ? h('p', { className: 'ove-transfer-empty' }, tr('transferNoTargets'))
-        : h('div', { className: `ove-transfer-list ${move ? 'move' : 'copy'}` }, state.targets.map((workspace) => {
+      const rows = !choices.ready
+        ? h('p', { className: 'ove-transfer-empty', role: 'status' }, tr('transferLoading'))
+        : choices.targets.length === 0
+          ? h('p', { className: 'ove-transfer-empty' }, tr('transferNoTargets'))
+          : h('div', { className: `ove-transfer-list ${move ? 'move' : 'copy'}` }, choices.targets.map((workspace) => {
           const active = picked.includes(workspace.id);
           return h('button', {
             key: workspace.id,
@@ -2062,7 +2090,7 @@ window.__ModuleLoader__.load({
       },
         h('h2', { className: `ove-dialog-title ove-transfer-tone-${move ? 'move' : 'copy'}` }, tr(move ? 'transferMoveTitle' : 'transferCopyTitle')),
         h('p', { className: 'ove-dialog-desc' }, tr(move ? 'transferMoveDesc' : 'transferCopyDesc')),
-        h('p', { className: 'ove-dialog-target' }, `${tr('transferOrigin')}${state.origin}`),
+        h('p', { className: 'ove-dialog-target' }, `${tr('transferOrigin')}${choices.origin}`),
         h('p', { className: 'ove-transfer-note' }, tr(move ? 'transferPick' : 'transferPickMany')),
         rows,
         state.error.length > 0 && h('p', { className: 'ove-error', role: 'alert' }, state.error),
@@ -3736,7 +3764,7 @@ window.__ModuleLoader__.load({
               // Do not resurrect a half-open dialog when the switch is flipped
               // back on: its target may already be gone.
               publishDelete({ target: null, busy: false, error: '', code: '' });
-              publishTransfer({ target: null, targets: [], picks: [], busy: false, error: '', done: '', notice: null });
+              publishTransfer({ target: null, picks: [], busy: false, error: '', done: '', notice: null });
             }
           };
           const unsubscribe = subscribeFlags(sync);

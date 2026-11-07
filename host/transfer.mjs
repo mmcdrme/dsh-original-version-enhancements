@@ -195,6 +195,15 @@ export async function transferSession(deps, request) {
     return failure('unsupported', '当前宿主不支持在插件内转移会话。')
   }
 
+  // An archived session is hidden from the workspace list on purpose, so the
+  // menu never offers these actions for one. Enforce the same rule here: a
+  // client whose archive set has not caught up (or an archive that landed
+  // between opening the menu and clicking) must not silently re-file it.
+  const archivedIds = Array.isArray(workspaceRegistry.archivedSessionIds) ? workspaceRegistry.archivedSessionIds : []
+  if (archivedIds.includes(sessionId)) {
+    return failure('session-archived', '该会话已归档，请先取消归档后再移动或复制。')
+  }
+
   const target = await resolveWorkspace(workspaceRegistry, workspaceId)
   if (target === undefined) return failure('workspace-not-found', '目标工作区不存在。')
 

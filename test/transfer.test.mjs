@@ -103,10 +103,11 @@ const makeWorkspace = (id, path) => {
 }
 
 /** Fake Workspace registry exposing the header reindex hook. */
-const makeRegistry = (source, target) => {
+const makeRegistry = (source, target, archivedSessionIds = []) => {
   const calls = { indexed: [], unarchived: [], unpinned: [] }
   return {
     calls,
+    archivedSessionIds,
     get(id) {
       return [source, target].find(workspace => workspace.id === id)
     },
@@ -233,6 +234,29 @@ test('a move that finds an open turn restores the source instead of splitting it
   assert.equal(result.error.code, 'session-running')
   assert.deepEqual(target.calls, [])
   assert.match(await readFile(transcript, 'utf8'), /session-1234/)
+  await rm(root, { recursive: true, force: true })
+})
+
+test('an archived session is refused before any storage work', async () => {
+  const { root, transcript } = await makeSession()
+  const source = makeWorkspace('ws-source', SOURCE_PATH)
+  const target = makeWorkspace('ws-target', TARGET_PATH)
+  const registry = makeRegistry(source, target, [SESSION_ID])
+  const deps = depsFor({ root, transcript, events: EVENTS, registry })
+
+  const result = await transferSession(deps, {
+    sessionId: SESSION_ID,
+    workspaceId: target.id,
+    mode: 'move',
+  })
+
+  assert.equal(result.ok, false)
+  assert.equal(result.error.code, 'session-archived')
+  // Refused before the write lease: another client's archive set cannot race a
+  // silent re-file.
+  assert.equal(deps.sessionPersistence.state.openedWrite, false)
+  assert.deepEqual(source.calls, [])
+  assert.deepEqual(target.calls, [])
   await rm(root, { recursive: true, force: true })
 })
 
