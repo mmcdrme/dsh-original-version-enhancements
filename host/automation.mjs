@@ -1,17 +1,27 @@
 // 原版功能增强 — Automation task enhancements.
 // The shipped Automation tasks page (ui-schedule 0.2.x) already owns creation,
-// filters, search, editing and records. This module adds the three capabilities
-// that page does not have, on top of the current Host Schedule service:
+// filters, search, editing and records. This module adds the capabilities that
+// page does not have, on top of the current Host Schedule service:
 //   1. bulk deletion of selected tasks,
 //   2. binding one task's rule to several conversations (one task per Session),
-//   3. an auto-clean flag that removes a finished one-shot task after delivery.
+//   3. an auto-clean flag that removes a finished one-shot task after delivery,
+//   4. a "deliver now" that clones the task two seconds out, hides the clone from
+//      this panel, and deletes the clone after it has delivered.
 
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
 const MAX_REQUEST_BYTES = 32 * 1024
-const STATE_VERSION = 1
+const STATE_VERSION = 2
+// How long after creation the scheduler gets to run a "deliver now" clone.
+const RUN_DELAY_MS = 2000
+// A clone younger than this is never reclaimed by the background reconciler:
+// the run request still owns it and will delete it once its delivery settles.
+const EPHEMERAL_GRACE_MS = 30_000
+// A clone that outlives this has missed its moment (plugin reload, crash) and
+// is removed instead of lingering as an invisible task forever.
+const EPHEMERAL_MAX_AGE_MS = 10 * 60_000
 
 const failure = (code, message) => ({ ok: false, error: { code, message } })
 
@@ -65,8 +75,10 @@ const stringKeyed = (value) => {
 /**
  * Read the automation sidecar, tolerating a missing or malformed file.
  *
- * It stores only the auto-clean flags this panel adds on top of the Host
- * records; run records themselves are read straight from the Host.
+ * It stores only the bookkeeping this panel adds on top of the Host records:
+ * auto-clean flags, plus the ids of the temporary "deliver now" clones that must
+ * stay hidden from the panel. Run records themselves are read straight from the
+ * Host.
  * @param file - absolute sidecar path.
  * @param warn - diagnostic sink.
  * @returns the mutable state object.
@@ -79,12 +91,20 @@ export function readAutomationState(file, warn) {
       for (const [id, value] of Object.entries(stringKeyed(parsed.autoClean))) {
         autoClean[id] = value === true
       }
-      return { version: STATE_VERSION, autoClean }
+      const ephemeral = {}
+      for (const [id, value] of Object.entries(stringKeyed(parsed.ephemeral))) {
+        if (value === null || typeof value !== 'object') continue
+        ephemeral[id] = {
+          sourceId: typeof value.sourceId === 'string' ? value.sourceId : '',
+          createdAt: typeof value.createdAt === 'string' ? value.createdAt : '',
+        }
+      }
+      return { version: STATE_VERSION, autoClean, ephemeral }
     }
   } catch (error) {
     if (error?.code !== 'ENOENT') warn(`automation: could not read ${file}: ${String(error)}`)
   }
-  return { version: STATE_VERSION, autoClean: {} }
+  return { version: STATE_VERSION, autoClean: {}, ephemeral: {} }
 }
 
 /**
@@ -160,6 +180,38 @@ export function targetOf(record) {
     sessionId: typeof target?.sessionId === 'string' ? target.sessionId : undefined,
     cwd: typeof create.cwd === 'string' ? create.cwd : undefined,
   }
+}
+
+/**
+ * The Host creation request that reproduces a task's destination.
+ *
+ * The catalog exposes a reduced target; this rebuilds the `create` request the
+ * Schedule service accepts so a "deliver now" clone goes exactly where the
+ * original task would have gone.
+ * @param record - one ScheduleCatalogEntry.
+ * @returns a ScheduleTarget request, or undefined when the record has no usable target.
+ */
+export function targetRequestOf(record) {
+  const target = record?.target
+  if (target?.kind === 'session') {
+    return typeof target.sessionId === 'string' && target.sessionId.length > 0
+      ? { kind: 'session', sessionId: target.sessionId }
+      : undefined
+  }
+  if (target?.kind !== 'new' && target?.kind !== 'new_once') return undefined
+  const request = { kind: target.kind }
+  // A `new_once` task reserves a Session id before its first delivery; reuse it
+  // so the immediate delivery lands where the task itself would have landed.
+  if (target.kind === 'new_once' && typeof target.sessionId === 'string' && target.sessionId.length > 0) {
+    request.sessionId = target.sessionId
+  }
+  const create = {}
+  if (typeof target.create?.cwd === 'string' && target.create.cwd.length > 0) create.cwd = target.create.cwd
+  if (typeof target.create?.agentPreset === 'string' && target.create.agentPreset.length > 0) {
+    create.agentPreset = target.create.agentPreset
+  }
+  if (Object.keys(create).length > 0) request.create = create
+  return request
 }
 
 /**
@@ -346,20 +398,24 @@ async function deleteTask(service, id) {
  * Keep the sidecar in step with the Host task list.
  *
  * Auto-clean removes a finished one-shot task after its delivery; flags of
- * deleted tasks are dropped on the way.
+ * deleted tasks are dropped on the way. The same pass reclaims "deliver now"
+ * clones whose run request never got to delete them (plugin reload, crash):
+ * they are hidden, so an orphan would otherwise stay invisible forever.
  * @param deps - service access and sidecar state, plus a log sink.
  * @returns the number of removed tasks.
  */
-export async function reconcileAutoClean({ service, state, save, warn = () => {} }) {
+export async function reconcileAutomation({ service, state, save, warn = () => {} }) {
   const cleanIds = Object.keys(state.autoClean)
-  if (cleanIds.length === 0) return 0
+  const ephemeral = state.ephemeral ?? (state.ephemeral = {})
+  const ephemeralIds = Object.keys(ephemeral)
+  if (cleanIds.length === 0 && ephemeralIds.length === 0) return 0
   let removed = 0
   let changed = false
   let tasks
   try {
     tasks = await service.catalog()
   } catch (error) {
-    warn(`automation: auto-clean catalog failed: ${String(error)}`)
+    warn(`automation: reconcile catalog failed: ${String(error)}`)
     return 0
   }
   const byId = new Map(tasks.map(task => [task.id, task]))
@@ -381,9 +437,41 @@ export async function reconcileAutoClean({ service, state, save, warn = () => {}
       warn(`automation: auto-clean delete failed for ${id}: ${String(error)}`)
     }
   }
+
+  const now = Date.now()
+  for (const id of ephemeralIds) {
+    const task = byId.get(id)
+    if (task === undefined) {
+      // Already gone (delivered-and-deleted, or removed by hand): just forget it.
+      delete ephemeral[id]
+      changed = true
+      continue
+    }
+    const mark = ephemeral[id]
+    const createdAt = Date.parse(mark?.createdAt ?? '')
+    // The request that created this clone still owns it for a short while and
+    // deletes it itself once the delivery settles; never race it.
+    if (Number.isFinite(createdAt) && now - createdAt < EPHEMERAL_GRACE_MS) continue
+    const scheduledAt = Date.parse(task.scheduledAt ?? '')
+    const stale = Number.isFinite(createdAt) ? now - createdAt >= EPHEMERAL_MAX_AGE_MS : false
+    const missed = Number.isFinite(scheduledAt) ? now - scheduledAt >= EPHEMERAL_GRACE_MS : false
+    if (task.status !== 'ended' && !stale && !missed) continue
+    try {
+      const result = await deleteTask(service, id)
+      if (result.deleted) removed += 1
+      delete ephemeral[id]
+      changed = true
+    } catch (error) {
+      warn(`automation: ephemeral delete failed for ${id}: ${String(error)}`)
+    }
+  }
+
   if (changed) save()
   return removed
 }
+
+/** Backwards-compatible name for the reconciler. */
+export const reconcileAutoClean = reconcileAutomation
 
 /**
  * Create one copy of each requested task for every requested conversation.
@@ -474,15 +562,16 @@ export function createAutomationSurface(options) {
     warn = () => {},
   } = options
   const deps = { service, state, save, warn }
-  // A sidecar written by an older build may miss the auto-clean map.
+  // A sidecar written by an older build may miss either map.
   if (state.autoClean === undefined) state.autoClean = {}
+  if (state.ephemeral === undefined) state.ephemeral = {}
   let running = false
 
   const reconcile = async () => {
     if (running) return 0
     running = true
     try {
-      return await reconcileAutoClean(deps)
+      return await reconcileAutomation(deps)
     } finally {
       running = false
     }
@@ -524,7 +613,11 @@ export function createAutomationSurface(options) {
     const body = await accept(req, res)
     if (body === undefined) return
     try {
-      const tasks = await service.catalog()
+      // "Deliver now" clones are mirror images of a task the panel already
+      // lists; they live only until their delivery settles, so keep them out of
+      // every count, selection and search result here.
+      const tasks = (await service.catalog())
+        .filter(task => state.ephemeral?.[task.id] === undefined)
       // One record count per task drives the panel's "run records" line
       // without a second round trip.
       const records = {}
@@ -679,9 +772,12 @@ export function createAutomationSurface(options) {
   }
 
   /**
-   * Deliver one task by rescheduling it two seconds out and restoring its rule
-   * afterwards: the delivery then runs through the scheduler like any other
-   * occurrence, so its receipt carries the task and its records stay complete.
+   * Deliver a task now by cloning it two seconds out.
+   *
+   * The original keeps its rule and status untouched. The clone mirrors the
+   * title, instruction and destination, is hidden from this panel while it
+   * lives, and is deleted by this request as soon as its delivery settles (the
+   * reconciler reclaims it if the process stops in between).
    */
   const run = async (req, res) => {
     const body = await accept(req, res)
@@ -691,49 +787,71 @@ export function createAutomationSurface(options) {
       sendJson(res, 400, failure('invalid-id', '任务 ID 无效。'))
       return
     }
+    let clone
+    let task
     try {
       const tasks = await service.catalog()
-      const task = tasks.find(candidate => candidate.id === id)
+      task = tasks.find(candidate => candidate.id === id)
       if (task === undefined) {
         sendJson(res, 404, failure('schedule_not_found', '任务不存在或已删除。'))
         return
       }
-      const original = timingOf(task)
-      if (original === undefined) {
-        sendJson(res, 409, failure('schedule-run-failed', '该任务的重复规则无法用于立即投递。'))
+      if (typeof task.title !== 'string' || typeof task.prompt !== 'string') {
+        sendJson(res, 409, failure('schedule-run-failed', '该任务的名称或内容无效，无法立即投递。'))
         return
       }
-      const wasPaused = task.status === 'paused'
-      const previous = task.lastDelivery?.deliveredAt
-      if (wasPaused) await service.edit({ id, action: 'update', patch: { active: true } })
-      await service.edit({
-        id,
-        action: 'update',
-        patch: { timing: { kind: 'at', at: new Date(Date.now() + 2000).toISOString() } },
+      const target = targetRequestOf(task)
+      if (target === undefined) {
+        sendJson(res, 409, failure('schedule-run-failed', '该任务的执行位置无效，无法立即投递。'))
+        return
+      }
+      clone = await service.create({
+        title: task.title,
+        prompt: task.prompt,
+        timing: { kind: 'at', at: new Date(Date.now() + RUN_DELAY_MS).toISOString() },
+        target,
       })
-      const delivered = await waitForDelivery(service, id, previous)
-      try {
-        await service.edit({ id, action: 'update', patch: { timing: original } })
-      } catch (error) {
-        warn(`automation: restoring the rule of ${id} failed: ${String(error)}`)
-      }
-      if (wasPaused) {
-        try {
-          await service.edit({ id, action: 'update', patch: { active: false } })
-        } catch (error) {
-          warn(`automation: restoring the paused state of ${id} failed: ${String(error)}`)
-        }
-      }
-      if (!delivered) {
-        sendJson(res, 409, failure('schedule-run-failed', '任务未能在两秒后完成投递，请稍后重试。'))
-        return
-      }
+      state.ephemeral[clone.id] = { sourceId: task.id, createdAt: new Date().toISOString() }
+      save()
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      warn(`automation: run clone failed: ${message}`)
+      sendJson(res, 409, failure('schedule-run-failed', `创建临时投递任务失败：${message}`))
+      return
+    }
+
+    let delivered = false
+    try {
+      delivered = await waitForDelivery(service, clone.id, undefined)
+    } catch (error) {
+      warn(`automation: waiting for the clone of ${id} failed: ${String(error)}`)
+    }
+    // The clone exists only for this one delivery: remove it before answering,
+    // whether or not the delivery was confirmed.
+    let removed = false
+    try {
+      const result = await deleteTask(service, clone.id)
+      removed = result.deleted || result.code === 'schedule_not_found'
+    } catch (error) {
+      warn(`automation: deleting the clone of ${id} failed: ${String(error)}`)
+    }
+    if (removed) {
+      delete state.ephemeral[clone.id]
+      save()
+    }
+    // Otherwise the mark stays so the reconciler can retry the removal; the
+    // clone stays hidden from the panel in the meantime.
+
+    if (!delivered) {
+      sendJson(res, 409, failure('schedule-run-failed', '任务未能在两秒后完成投递，请稍后重试。'))
+      return
+    }
+    try {
       const refreshed = (await service.catalog()).find(candidate => candidate.id === id)
       sendJson(res, 200, { ok: true, value: rowOf(refreshed ?? task) })
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      warn(`automation: run failed: ${message}`)
-      sendJson(res, 409, failure('schedule-run-failed', message))
+      warn(`automation: refreshing ${id} after delivery failed: ${String(error)}`)
+      sendJson(res, 200, { ok: true, value: rowOf(task) })
     }
   }
 

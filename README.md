@@ -130,9 +130,12 @@ v1.5.21（MIT License，Copyright (c) 2026 WSL043）。
   **只读展示**，不提供删除或隐藏。
 - **自定义规则示例**：选择「自定义规则」时，RRULE 输入框下方给出三条可直接点选填入的示例
   （每周一三五、每两天、每月 1 号），避免手写 RRULE。
-- **立即投递**：行内与编辑抽屉都提供「立即投递」。实现方式是把任务临时改到「当前时间 + 2 秒」
-  执行，由宿主调度器真正触发一次投递，投递完成后立刻把原重复规则写回（暂停中的任务临时开启，
-  投递后恢复暂停）——因此这一次投递会像正常触发一样留下完整记录。
+- **立即投递**：行内与编辑抽屉都提供「立即投递」。点击后会创建一个与原任务完全相同（名称、内容、
+  执行位置一致）、只把时间设为「2 秒后」的临时任务，由宿主调度器真正触发一次投递；该临时任务在
+  本插件面板中隐藏，投递结束（无论成功与否）后立即删除自身。原任务的重复规则、启停状态与运行
+  记录完全不受影响。若进程在投递间隙退出，宿主任务变更或插件启动时的对账会清理遗留的临时任务。
+  宿主没有「隐藏任务」标记，因此官方「自动化任务」页在这不到两秒的存活期内仍可能闪过这一行；
+  本插件面板不会显示它，它也不会进入任何搜索结果或计数。
 - **行内悬浮操作**：浮到任务行上按状态出现绿色「立即投递」、黄色「暂停任务 / 恢复任务」与红色
   「删除任务」（悬停时仍保持红字）；删除任务带二次确认，消息与会话保留。
   动作浮在行的右上角，不占正文宽度；只有真正的鼠标悬停会显示，勾选复选框后不会残留。
@@ -166,7 +169,8 @@ v1.5.21（MIT License，Copyright (c) 2026 WSL043）。
   （循环任务不显示该开关，避免误删）。一次性任务投递完成（状态 `ended` 且有投递回执）后由 Host 侧删除；
   宿主 `schedule/changed` 事件与插件启动时都会执行对账。编辑抽屉里的勾选会随保存一起写入。
 
-投递后清理的标记保存在 profile 目录的 `original-version-enhancements.automation.json`。
+投递后清理的标记与「立即投递」临时任务的隐藏标记都保存在 profile 目录的
+`original-version-enhancements.automation.json`。
 ## 开关与持久化
 
 - 三个开关（工作步骤展示快捷切换、聊天记录管理、自动化任务增强）位于插件页顶部，实时生效，无需刷新。
@@ -188,7 +192,7 @@ v1.5.21（MIT License，Copyright (c) 2026 WSL043）。
 - `POST /plugins/original-version-enhancements/automation/history` — 单个任务的运行记录
 - `POST /plugins/original-version-enhancements/automation/create` — 新建任务
 - `POST /plugins/original-version-enhancements/automation/update` — 修改任务（标题 / 内容 / 规则 / 目标 / 启停）
-- `POST /plugins/original-version-enhancements/automation/run` — 立即投递
+- `POST /plugins/original-version-enhancements/automation/run` — 立即投递（创建 2 秒后的临时任务，投递后自删）
 - `POST /plugins/original-version-enhancements/automation/auto-clean` — 设置/清除任务的投递后清理
 - `POST /plugins/original-version-enhancements/automation/delete` — 批量删除
 - `POST /plugins/original-version-enhancements/automation/bind` — 把任务复制到多个会话
@@ -217,16 +221,17 @@ client.js                 Web 客户端：插件页、三个开关、四个 SVG 
 host/archive-manager.mjs  归档内容搜索（改编自 dsh-chat-manager）
 host/delete-session.mjs   已归档会话的安全删除、删除后的归属/缓存清理、移动前的目录隔离（改编自 dsh-chat-manager）
 host/transfer.mjs         会话移动（保持会话 id）与复制（新建 id）
-host/automation.mjs       自动化任务增强（批量删除、多会话绑定、投递后清理）
+host/automation.mjs       自动化任务增强（批量删除、多会话绑定、投递后清理、立即投递临时任务）
 test/delete-session.test.mjs 永久删除与删除清理的回归测试
 test/transfer.test.mjs    移动保持会话 id / 失败回滚 / 复制新建 id 的回归测试
+test/automation.test.mjs  立即投递临时任务（克隆、隐藏、自删）的回归测试
 cordis.patch.yml          插入本插件条目
 locale/{zh,en}.json       插件管理页标题与描述
 icon.svg                  插件管理页图标
 LICENSE                   MIT 许可（含改编自 dsh-chat-manager 的版权声明）
 ```
 
-测试用 Node 内置 runner：`node --test test/delete-session.test.mjs test/transfer.test.mjs`。
+测试用 Node 内置 runner：`node --test test/*.test.mjs`（或 `npm test`）。
 
 ## 许可 / License
 
