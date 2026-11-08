@@ -861,10 +861,18 @@ window.__ModuleLoader__.load({
         border-radius: 999px;
         background: var(--dsw-alias-border-l2);
         cursor: pointer;
-        transition: background .15s ease;
+        transition: background .15s ease, box-shadow .15s ease;
         position: relative;
       }
+      /* The track is the only part of the row that reacts to the pointer, so it
+         gets its own ring: without it a hovered switch looked completely inert. */
+      .ove-switch:hover {
+        box-shadow: 0 0 0 3px color-mix(in srgb, var(--dsw-alias-brand-primary) 20%, transparent);
+      }
       .ove-switch[aria-checked="true"] { background: var(--dsw-alias-brand-primary); }
+      .ove-switch[aria-checked="true"]:hover {
+        background: color-mix(in srgb, var(--dsw-alias-brand-primary) 82%, var(--dsw-alias-bg-base));
+      }
       .ove-switch:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 2px; }
       .ove-switch-thumb {
         display: block;
@@ -910,8 +918,10 @@ window.__ModuleLoader__.load({
         color: var(--dsw-alias-label-primary);
         font-size: 13px;
         cursor: pointer;
+        transition: background .12s ease, border-color .12s ease, color .12s ease;
       }
       .ove-btn:hover:not(:disabled) { background: var(--dsw-alias-bg-layer-2); }
+      .ove-btn:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 2px; }
       .ove-btn:disabled { opacity: .5; cursor: default; }
       .ove-btn-danger { color: var(--dsw-alias-state-error-primary); }
       .ove-btn-warn {
@@ -947,12 +957,14 @@ window.__ModuleLoader__.load({
         border: .5px solid var(--dsw-alias-border-l2); background: transparent; border-radius: 7px;
         font: inherit; font-size: 12px; line-height: 24px; padding: 0 8px; cursor: pointer;
         color: var(--dsw-alias-label-secondary);
+        transition: background .12s ease, border-color .12s ease, color .12s ease;
       }
       .ove-example-chip:hover { background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-label-primary); }
       .ove-records-head { display: flex; align-items: center; gap: 8px; }
       .ove-link-btn {
         margin-left: auto; border: 0; background: transparent; font: inherit; font-size: 12px; line-height: 18px;
         color: var(--dsw-alias-brand-primary, #4f7cff); cursor: pointer; padding: 2px 6px; border-radius: 6px;
+        transition: background .12s ease;
       }
       .ove-link-btn:hover:not(:disabled) { background: var(--dsw-alias-bg-layer-2); }
       .ove-link-btn:disabled { opacity: .5; cursor: default; }
@@ -991,6 +1003,7 @@ window.__ModuleLoader__.load({
         text-align: left;
         cursor: pointer;
         -webkit-tap-highlight-color: transparent;
+        transition: background .12s ease;
       }
       .ove-menu-item:hover, .ove-menu-item:focus-visible {
         background: var(--dsw-alias-bg-layer-2);
@@ -1128,7 +1141,7 @@ window.__ModuleLoader__.load({
       .ove-auto-title-text { margin: 0; font-size: 24px; line-height: 32px; font-weight: 600; letter-spacing: -.01em; }
 
       .ove-split { position: relative; display: inline-flex; align-items: stretch; height: 34px; border-radius: 10px; overflow: visible; background: var(--dsw-alias-label-primary); color: var(--dsw-alias-bg-base); }
-      .ove-split-main, .ove-split-more { border: 0; background: transparent; color: inherit; font: inherit; font-size: 13px; cursor: pointer; display: inline-flex; align-items: center; }
+      .ove-split-main, .ove-split-more { border: 0; background: transparent; color: inherit; font: inherit; font-size: 13px; cursor: pointer; display: inline-flex; align-items: center; transition: background .12s ease; }
       .ove-split-main { padding: 0 14px; gap: 4px; }
       .ove-split-more { padding: 0 8px; border-left: .5px solid rgba(255, 255, 255, .22); }
       .ove-split-main:hover, .ove-split-more:hover { background: rgba(255, 255, 255, .12); }
@@ -1141,15 +1154,17 @@ window.__ModuleLoader__.load({
       .ove-menu-row {
         border: 0; background: transparent; color: var(--dsw-alias-label-primary); font: inherit; font-size: 13px;
         text-align: left; padding: 8px 10px; border-radius: 8px; cursor: pointer;
+        transition: background .12s ease;
       }
-      .ove-menu-row:hover { background: var(--dsw-alias-bg-layer-1); }
+      .ove-menu-row:hover, .ove-menu-row:focus-visible { background: var(--dsw-alias-bg-layer-1); outline: none; }
       .ove-menu-row:disabled { opacity: .5; cursor: default; }
 
       .ove-tabs { display: flex; gap: 2px; margin-bottom: 12px; flex-wrap: wrap; }
       /* The select-all row shares the search field's left edge so the whole
          list column lines up with the search box above it. */
       .ove-select-bar { display: flex; align-items: flex-start; padding: 4px 0 6px; }
-      .ove-select-all { display: inline-flex; align-items: flex-start; gap: 12px; font-size: 12px; line-height: 20px; color: var(--dsw-alias-label-tertiary); cursor: pointer; white-space: nowrap; }
+      .ove-select-all { display: inline-flex; align-items: flex-start; gap: 12px; font-size: 12px; line-height: 20px; color: var(--dsw-alias-label-tertiary); cursor: pointer; white-space: nowrap; transition: color .12s ease; }
+      .ove-select-all:hover { color: var(--dsw-alias-label-primary); }
       .ove-select-all > span { line-height: 24px; }
       .ove-tab-count { margin-left: 6px; font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
       .ove-tone-active { color: #16a34a; }
@@ -1159,8 +1174,9 @@ window.__ModuleLoader__.load({
       .ove-tab {
         border: 0; background: transparent; font: inherit; font-size: 13px; line-height: 20px;
         color: var(--dsw-alias-label-tertiary); padding: 6px 12px; border-radius: 8px; cursor: pointer;
+        transition: background .12s ease, color .12s ease;
       }
-      .ove-tab:hover { color: var(--dsw-alias-label-secondary); }
+      .ove-tab:hover { color: var(--dsw-alias-label-primary); background: var(--dsw-alias-bg-layer-1); }
       .ove-tab[aria-selected="true"] { background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-label-primary); }
 
       .ove-search-row { position: relative; margin-bottom: 8px; }
@@ -1217,6 +1233,7 @@ window.__ModuleLoader__.load({
       .ove-hover-btn {
         border: 0; background: transparent; font: inherit; font-size: 12px; line-height: 18px;
         color: var(--dsw-alias-label-secondary); padding: 3px 8px; border-radius: 7px; cursor: pointer; white-space: nowrap;
+        transition: background .12s ease, color .12s ease;
       }
       .ove-hover-btn:hover { background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-label-primary); }
       .ove-hover-btn:disabled { opacity: .45; cursor: default; }
@@ -1247,6 +1264,7 @@ window.__ModuleLoader__.load({
         border: 0; background: transparent; font: inherit; font-size: 12px; line-height: 26px;
         padding: 0 10px; border-radius: 8px 8px 0 0; cursor: pointer;
         color: var(--dsw-alias-label-tertiary); border-bottom: 2px solid transparent;
+        transition: background .12s ease, color .12s ease;
       }
       .ove-detail-tab:hover { color: var(--dsw-alias-label-primary); background: var(--dsw-alias-bg-layer-1); }
       .ove-detail-tab[aria-selected="true"] {
@@ -1271,20 +1289,33 @@ window.__ModuleLoader__.load({
       .ove-rule { min-height: 96px; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 12px; }
       .ove-inline { display: flex; gap: 8px; }
       .ove-inline > .ove-field { flex: 1 1 0; min-width: 0; }
-      .ove-check-row { display: flex; align-items: center; gap: 8px; }
+      .ove-check-row { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+      .ove-check-row .ove-label { transition: color .12s ease; }
+      .ove-check-row:hover .ove-label { color: var(--dsw-alias-label-primary); }
       .ove-icon-btn {
         border: 0; background: transparent; color: var(--dsw-alias-label-tertiary); font-size: 18px; line-height: 1;
         width: 28px; height: 28px; border-radius: 8px; cursor: pointer;
+        transition: background .12s ease, color .12s ease;
       }
       .ove-icon-btn:hover { background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-primary); }
       .ove-primary {
         border: 0; border-radius: 10px; height: 34px; padding: 0 16px; cursor: pointer;
         background: var(--dsw-alias-label-primary); color: var(--dsw-alias-bg-base);
         font: inherit; font-size: 13px; display: inline-flex; align-items: center; justify-content: center;
+        transition: background .12s ease, box-shadow .12s ease, transform .06s ease;
       }
+      /* The primary button is the only solid-filled control in the plugin, so a
+         plain background swap is invisible on it: tint the fill with the brand
+         colour and add a soft glow instead. */
+      .ove-primary:hover:not(:disabled) {
+        background: color-mix(in srgb, var(--dsw-alias-brand-primary) 24%, var(--dsw-alias-label-primary));
+        box-shadow: 0 2px 10px color-mix(in srgb, var(--dsw-alias-brand-primary) 30%, transparent);
+      }
+      .ove-primary:active:not(:disabled) { transform: translateY(1px); box-shadow: none; }
+      .ove-primary:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 2px; }
       .ove-primary:disabled { opacity: .5; cursor: default; }
       .ove-session-pick { max-height: 260px; overflow: auto; display: grid; gap: 2px; padding: 4px; border-radius: 10px; background: var(--dsw-alias-bg-base); }
-      .ove-session-option { display: flex; align-items: center; gap: 10px; padding: 7px 8px; border-radius: 8px; font-size: 13px; line-height: 20px; cursor: pointer; }
+      .ove-session-option { display: flex; align-items: center; gap: 10px; padding: 7px 8px; border-radius: 8px; font-size: 13px; line-height: 20px; cursor: pointer; transition: background .12s ease; }
       .ove-session-option:hover { background: var(--dsw-alias-bg-layer-1); }
       .ove-session-option span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .ove-notice {
@@ -1831,7 +1862,7 @@ window.__ModuleLoader__.load({
         display: flex; align-items: center; gap: 7px; width: 100%; box-sizing: border-box;
         padding: 6px 8px; border: 0; border-radius: 6px; background: transparent;
         font-size: 13px; line-height: 20px; text-align: left; cursor: pointer;
-        -webkit-tap-highlight-color: transparent;
+        -webkit-tap-highlight-color: transparent; transition: background .12s ease;
       }
       .ove-menu-item:hover, .ove-menu-item:focus-visible {
         background: var(--dsw-alias-bg-layer-2); outline: none;
