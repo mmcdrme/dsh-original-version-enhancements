@@ -920,10 +920,18 @@ window.__ModuleLoader__.load({
         cursor: pointer;
         transition: background .12s ease, border-color .12s ease, color .12s ease;
       }
-      .ove-btn:hover:not(:disabled) { background: var(--dsw-alias-bg-layer-2); }
+      /* A foreground tint stays visible on every surface: the old layer-2 fill
+         vanished on dialogs, whose own face is already layer-2. Coloured
+         variants below keep their own hover background. */
+      .ove-btn:hover:not(:disabled) {
+        background: color-mix(in srgb, var(--dsw-alias-label-primary) 11%, transparent);
+      }
       .ove-btn:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 2px; }
       .ove-btn:disabled { opacity: .5; cursor: default; }
       .ove-btn-danger { color: var(--dsw-alias-state-error-primary); }
+      .ove-btn-danger:hover:not(:disabled) {
+        background: color-mix(in srgb, #ef4444 14%, transparent);
+      }
       .ove-btn-warn {
         color: #a16207;
         border-color: #eab308;
@@ -1209,10 +1217,25 @@ window.__ModuleLoader__.load({
 
       .ove-task-list { display: grid; gap: 2px; }
       .ove-task { position: relative; display: flex; align-items: flex-start; gap: 12px; padding: 10px 12px 10px 0; border-radius: 10px; cursor: pointer; }
-      .ove-task:hover { background: var(--dsw-alias-bg-layer-1); }
+      /* The light theme maps bg-base and bg-layer-1 to the same white, so the
+         old token swap showed no hover at all; tint with the foreground. The
+         mix stays opaque because the floating row actions inherit the row
+         background and would otherwise double-tint their own patch. */
+      .ove-task:hover { background: color-mix(in srgb, var(--dsw-alias-label-primary) 6%, var(--dsw-alias-bg-base)); }
       .ove-task[data-active="true"] { background: var(--dsw-alias-bg-layer-2); }
+      .ove-task[data-active="true"]:hover { background: color-mix(in srgb, var(--dsw-alias-label-primary) 10%, var(--dsw-alias-bg-base)); }
       /* No UA left margin: the row checkbox must line up with the search box. */
-      .ove-task-check { margin-top: 5px; margin-left: 0; width: 15px; height: 15px; accent-color: var(--dsw-alias-brand-primary, #4f7cff); cursor: pointer; flex: none; }
+      .ove-task-check {
+        margin-top: 5px; margin-left: 0; width: 15px; height: 15px; flex: none;
+        accent-color: var(--dsw-alias-brand-primary, #4f7cff); cursor: pointer;
+        border-radius: 4px;
+        transition: box-shadow .12s ease;
+      }
+      .ove-task-check:hover,
+      .ove-task-check:focus-visible {
+        outline: none;
+        box-shadow: 0 0 0 3px color-mix(in srgb, var(--dsw-alias-brand-primary, #4f7cff) 26%, transparent);
+      }
       .ove-task-icon { color: var(--dsw-alias-label-tertiary); margin-top: 2px; display: flex; flex: none; }
       .ove-task-body { flex: 1 1 auto; min-width: 0; display: grid; gap: 2px; }
       .ove-task-title { font-size: 15px; line-height: 24px; overflow-wrap: anywhere; }
