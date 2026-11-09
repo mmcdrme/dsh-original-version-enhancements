@@ -1183,13 +1183,37 @@ window.__ModuleLoader__.load({
       .ove-tone-paused { color: #ca8a04; }
       .ove-tone-ended { color: #dc2626; }
       .ove-tone-all { color: var(--dsw-alias-label-primary, #111827); }
+      /* The status filters (已开启 / 已暂停 / 已结束 / 全部) hovered with a barely
+         visible token swap, so the row looked dead. Each tab now carries its own
+         status hue and hover paints that hue: tinted fill, a ring in the same
+         colour, and the label itself picks the hue up — legible in both themes
+         because every layer is mixed from the tab's own colour. */
       .ove-tab {
+        --ove-tab-tone: var(--dsw-alias-label-primary);
         border: 0; background: transparent; font: inherit; font-size: 13px; line-height: 20px;
         color: var(--dsw-alias-label-tertiary); padding: 6px 12px; border-radius: 8px; cursor: pointer;
-        transition: background .12s ease, color .12s ease;
+        box-shadow: inset 0 0 0 1px transparent;
+        transition: background .12s ease, color .12s ease, box-shadow .12s ease;
       }
-      .ove-tab:hover { color: var(--dsw-alias-label-primary); background: var(--dsw-alias-bg-layer-1); }
-      .ove-tab[aria-selected="true"] { background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-label-primary); }
+      .ove-tab[data-tone="active"] { --ove-tab-tone: #16a34a; }
+      .ove-tab[data-tone="paused"] { --ove-tab-tone: #ca8a04; }
+      .ove-tab[data-tone="ended"] { --ove-tab-tone: #dc2626; }
+      .ove-tab:hover, .ove-tab:focus-visible {
+        color: var(--ove-tab-tone);
+        background: color-mix(in srgb, var(--ove-tab-tone) 14%, var(--dsw-alias-bg-base));
+        box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ove-tab-tone) 42%, transparent);
+        outline: none;
+      }
+      .ove-tab[aria-selected="true"] {
+        background: color-mix(in srgb, var(--ove-tab-tone) 12%, var(--dsw-alias-bg-base));
+        color: var(--dsw-alias-label-primary);
+        box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ove-tab-tone) 28%, transparent);
+      }
+      .ove-tab[aria-selected="true"]:hover {
+        background: color-mix(in srgb, var(--ove-tab-tone) 20%, var(--dsw-alias-bg-base));
+        color: var(--ove-tab-tone);
+        box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ove-tab-tone) 52%, transparent);
+      }
 
       .ove-search-row { position: relative; margin-bottom: 8px; }
       .ove-search-input {
@@ -3499,6 +3523,7 @@ window.__ModuleLoader__.load({
                   type: 'button',
                   role: 'tab',
                   className: 'ove-tab',
+                  'data-tone': value,
                   'aria-selected': tab === value,
                   onClick: () => {
                     setTab(value);
