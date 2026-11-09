@@ -24,6 +24,8 @@ import {
   readAutomationState,
   writeAutomationState,
 } from './host/automation.mjs'
+import { createLangHandler } from './host/lang.mjs'
+import { createStyleHandler } from './host/css.mjs'
 import path from 'node:path'
 
 const ROUTE_ROOT = '/plugins/original-version-enhancements'
@@ -73,6 +75,41 @@ export function apply(ctx) {
       handler: searchHandler,
     }),
     'original-version-enhancements: archived content search route',
+  )
+
+  // The UI wording is data, not code: `locale/lang.json` is served from disk on
+  // every request (no cache) so editing that one file and refreshing the page is
+  // the whole workflow.
+  const langHandler = createLangHandler({
+    file: new URL('./locale/lang.json', import.meta.url),
+    warn: message => ctx.logger?.warn(message),
+  })
+
+  ctx.effect(
+    () => ctx.webServer.register({
+      kind: 'exact',
+      path: `${ROUTE_ROOT}/lang`,
+      handler: langHandler,
+    }),
+    'original-version-enhancements: language catalogue route',
+  )
+
+  // Same deal for the stylesheet: `css/style.css` is the source of truth and is
+  // answered fresh on every request. The route carries no `.css` suffix on
+  // purpose — a download manager that captures page sub-resources by file type
+  // (IDM and similar) would otherwise pop its download dialog on every reload.
+  const styleHandler = createStyleHandler({
+    file: new URL('./css/style.css', import.meta.url),
+    warn: message => ctx.logger?.warn(message),
+  })
+
+  ctx.effect(
+    () => ctx.webServer.register({
+      kind: 'exact',
+      path: `${ROUTE_ROOT}/style`,
+      handler: styleHandler,
+    }),
+    'original-version-enhancements: stylesheet route',
   )
 
   // Automation task enhancements. The shipped Automation tasks page owns

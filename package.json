@@ -18,6 +18,7 @@
     "client.js",
     "cordis.patch.yml",
     "host/*.mjs",
+    "css/*.css",
     "locale/*.json",
     "icon.svg",
     "README.md",

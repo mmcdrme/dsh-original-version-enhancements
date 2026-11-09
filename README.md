@@ -216,20 +216,52 @@ git clone https://github.com/mmcdrme/dsh-original-version-enhancements.git
 ## 结构 / Layout
 
 ```text
-index.js                  Host 半侧：归档搜索、永久删除、会话移动/复制、自动化任务增强路由
+index.js                  Host 半侧：归档搜索、永久删除、会话移动/复制、语言文件路由、自动化任务增强路由
 client.js                 Web 客户端：插件页、三个开关、四个 SVG 图标、聊天记录管理 UI、自动化增强面板
 host/archive-manager.mjs  归档内容搜索（改编自 dsh-chat-manager）
 host/delete-session.mjs   已归档会话的安全删除、删除后的归属/缓存清理、移动前的目录隔离（改编自 dsh-chat-manager）
 host/transfer.mjs         会话移动（保持会话 id）与复制（新建 id）
 host/automation.mjs       自动化任务增强（批量删除、多会话绑定、投递后清理、立即投递临时任务）
+host/lang.mjs             语言文件路由：每次请求现读磁盘、no-store 应答
+host/css.mjs              样式文件路由：每次请求现读磁盘、no-store 应答
 test/delete-session.test.mjs 永久删除与删除清理的回归测试
 test/transfer.test.mjs    移动保持会话 id / 失败回滚 / 复制新建 id 的回归测试
 test/automation.test.mjs  立即投递临时任务（克隆、隐藏、自删）的回归测试
+test/lang.test.mjs        语言文件路由（正常读取、缺文件、坏 JSON）的回归测试
+test/css.test.mjs         样式文件路由（正常读取、热更新、缺文件）的回归测试
 cordis.patch.yml          插入本插件条目
+css/style.css             插件全部样式（改样式只需改这个文件）
+locale/lang.json          界面全部中英文案（改文案只需改这个文件）
 locale/{zh,en}.json       插件管理页标题与描述
 icon.svg                  插件管理页图标
 LICENSE                   MIT 许可（含改编自 dsh-chat-manager 的版权声明）
 ```
+
+## 文案 / Language
+
+界面上的所有文字都在 `locale/lang.json` 里，按 `{ "zh": {…}, "en": {…} }` 组织，键由 `client.js` 引用。
+改文案的流程只有两步：
+
+1. 编辑 `locale/lang.json`；
+2. 刷新页面。
+
+Host 半侧由 `host/lang.mjs` 通过 `/plugins/original-version-enhancements/lang` 每次请求现读这个文件并带
+`cache-control: no-store`，所以不需要重新构建、也不需要重启 DeepSeek Harness。两种语言的键集合必须一致；
+删掉一个键会让界面直接显示键名，而 JSON 语法错误会让 Host 返回 500、客户端在控制台说明原因。
+
+## 样式 / Stylesheet
+
+所有样式都在 `css/style.css`（`.tqs-*` 工作步骤切换、`.ove-*` 插件页/归档页/会话卡片/自动化增强面板）。
+改样式同样是两步：
+
+1. 编辑 `css/style.css`；
+2. 刷新页面。
+
+Host 半侧由 `host/css.mjs` 通过 `/plugins/original-version-enhancements/style` 现读文件、带
+`cache-control: no-store` 与 `content-disposition: inline` 应答（路由故意不带 `.css` 后缀：IDM 这类
+下载器会按后缀嗅探页面子资源，带后缀时每次刷新都会弹出下载框）；客户端在注册任何插槽之前先取回样式，
+所以首屏不会出现无样式闪烁。每个面板各自渲染一个 `<style>`（`data-plugin-css` 标记），这样在只有某一块
+界面的页面上也一定带着样式。
 
 测试用 Node 内置 runner：`node --test test/*.test.mjs`（或 `npm test`）。
 
