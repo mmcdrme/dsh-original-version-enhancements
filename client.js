@@ -910,6 +910,10 @@ window.__ModuleLoader__.load({
       .ove-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-left: auto; }
       .ove-btn {
         box-sizing: border-box;
+        /* A label is one line: a squeezed flex row used to fold 「绑定到多个
+           会话」 inside a 28px button, leaving the text clipped. */
+        flex: 0 0 auto;
+        white-space: nowrap;
         height: 28px;
         padding: 0 12px;
         border-radius: 7px;
@@ -1196,24 +1200,30 @@ window.__ModuleLoader__.load({
       .ove-search-input:focus { outline: 2px solid var(--dsw-alias-brand-primary, #4f7cff); outline-offset: -1px; }
       .ove-search-icon { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: var(--dsw-alias-label-tertiary); display: flex; pointer-events: none; }
 
-      /* The selection bar and receipts float over the select-all row: their
-         left edge sits 100px right of the select-all label, the right edge uses
-         the full row. They take no vertical space, so the list stays put. */
-      .ove-list-top { position: relative; height: 0; overflow: visible; }
+      /* Operation receipts float over the select-all row and take no vertical
+         space. The action bar below is the exception: it keeps its own row, so
+         a wrapped cluster can never sit on top of a task title. */
+      .ove-list-top { position: relative; height: auto; overflow: visible; }
       .ove-list-top > * { position: absolute; top: 1px; left: 172px; right: 0; max-width: calc(100% - 172px); }
-      /* Operation receipts keep their coloured chip; only the action bar is
-         bare. */
+      .ove-list-top > .ove-bulk {
+        position: static; left: auto; right: auto; top: auto; max-width: none;
+        margin: 0 0 0 172px;
+      }
+      /* Operation receipts keep their coloured chip */
       .ove-list-top .ove-notice, .ove-list-top .ove-error {
         margin: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
       }
-      /* The action bar is a floating control cluster, not a white card: the
-         count sits right next to the bind button on the right edge. */
+      /* The action bar is a bare control cluster, not a white card: the count
+         sits right next to the bind button on the right edge, and every label
+         stays on one line. A panel too narrow for the whole cluster wraps it
+         onto another row instead of folding the text inside the buttons. */
       .ove-bulk {
-        display: flex; flex-wrap: nowrap; align-items: center; gap: 8px;
-        padding: 0; height: 26px; box-sizing: border-box;
+        display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px 8px;
+        padding: 0; min-height: 26px; box-sizing: border-box;
         background: transparent; border: 0; box-shadow: none;
       }
       .ove-bulk-count { font-size: 12px; color: var(--dsw-alias-label-secondary); margin-left: auto; margin-right: 4px; }
+      @media (max-width: 720px) { .ove-list-top > .ove-bulk { margin-left: 0; } }
 
       .ove-task-list { display: grid; gap: 2px; }
       .ove-task { position: relative; display: flex; align-items: flex-start; gap: 12px; padding: 10px 12px 10px 0; border-radius: 10px; cursor: pointer; }
