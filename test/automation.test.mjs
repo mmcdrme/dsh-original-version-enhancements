@@ -1,9 +1,14 @@
 // Regression tests for the "deliver now" mechanism.
 //
-// Delivery must not disturb the task it starts from: the Host creates a short
-// lived clone two seconds out, the enhancement panel never lists that clone, and
-// the clone deletes itself once its delivery settles. A clone orphaned by a
+// The first attempt is always the Host's own delivery: it reaches the exact
+// destination and records the run. Only a task the Host holds inside its
+// delivery interval falls back to the enhancer's route, and only after the human
+// accepts that the fallback delivery may leave no run record: the Host then
+// creates a short lived clone two seconds out, the panel never lists that clone,
+// and the clone deletes itself once its delivery settles. A clone orphaned by a
 // reload or crash is reclaimed by the reconciler instead of lingering hidden.
+// A `new_once` task is always delivered by the Host: its destination does not
+// exist yet, so delivery creates it and the task adopts that conversation.
 
 import assert from 'node:assert/strict'
 import test from 'node:test'
@@ -115,14 +120,59 @@ const makeSurface = (service, state) => createAutomationSurface({
   warn: () => {},
 })
 
-test('deliver now clones the task two seconds out and deletes the clone after delivery', async () => {
+test('the first delivery goes through the Host and records the run', async () => {
   const original = baseTask()
   const service = makeService([original])
   const state = { version: 2, autoClean: {}, ephemeral: {} }
+  const runs = []
+  service.run = async (request) => {
+    runs.push(request)
+    const task = service.tasks[0]
+    task.lastDelivery = {
+      messageId: 'message-host',
+      deliveredAt: new Date().toISOString(),
+      scheduledAt: new Date().toISOString(),
+      targetSessionId: 'session-1',
+    }
+    return { ...task, lastDelivery: { ...task.lastDelivery } }
+  }
+  const surface = makeSurface(service, state)
+
+  const result = await call(surface.handlers.run, { id: 'task-1' })
+
+  assert.equal(result.status, 200)
+  // No clone, no hidden bookkeeping: the Host delivered and recorded it.
+  assert.deepEqual(runs, [{ id: 'task-1' }])
+  assert.deepEqual(service.created, [])
+  assert.deepEqual(service.edits, [])
+  assert.deepEqual(state.ephemeral, {})
+  assert.equal(result.body.value.lastDelivery.messageId, 'message-host')
+  assert.equal(result.body.value.deliveryFloorEndsAt, null)
+})
+
+test('a task inside the delivery interval asks before the fallback', async () => {
+  const service = makeService([baseTask()])
+  service.run = async () => ({ id: 'task-1', code: 'schedule_execution_pending' })
+  const state = { version: 2, autoClean: {}, ephemeral: {} }
+  const surface = makeSurface(service, state)
+
+  const result = await call(surface.handlers.run, { id: 'task-1' })
+
+  assert.equal(result.status, 409)
+  assert.equal(result.body.error.code, 'schedule-delivery-interval')
+  assert.deepEqual(service.created, [])
+  assert.deepEqual(state.ephemeral, {})
+})
+
+test('a confirmed retry inside the interval clones the task two seconds out', async () => {
+  const original = baseTask()
+  const service = makeService([original])
+  const state = { version: 2, autoClean: {}, ephemeral: {} }
+  service.run = async () => ({ id: 'task-1', code: 'schedule_execution_pending' })
   const surface = makeSurface(service, state)
 
   const before = Date.now()
-  const result = await call(surface.handlers.run, { id: 'task-1' })
+  const result = await call(surface.handlers.run, { id: 'task-1', withinInterval: true })
   const after = Date.now()
 
   assert.equal(result.status, 200)
@@ -142,10 +192,11 @@ test('deliver now clones the task two seconds out and deletes the clone after de
   assert.deepEqual(service.edits.map(edit => edit.action), ['delete'])
   assert.equal(service.edits[0].id, clone.id)
 
-  // The source task kept its own rule and status.
+  // The source task kept its own rule and status, and got no run record.
   assert.equal(service.tasks[0].status, 'active')
   assert.equal(service.tasks[0].scheduledAt, original.scheduledAt)
   assert.equal(service.tasks[0].everySeconds, 3600)
+  assert.equal(service.tasks[0].lastDelivery, undefined)
 })
 
 test('the panel catalog hides an ephemeral clone', async () => {
@@ -199,16 +250,87 @@ test('reconcile reclaims a stale ephemeral clone but leaves a fresh one alone', 
   assert.notEqual(state.ephemeral['clone-fresh'], undefined)
 })
 
-test('targetRequestOf reuses a reserved new_once Session and its create spec', () => {
-  assert.deepEqual(targetRequestOf({
+test('deliver now of a new_once task adopts the conversation the Host creates', async () => {
+  const original = baseTask()
+  original.target = { kind: 'new_once', sessionId: 'session-reserved', create: { cwd: 'C:/work/project' } }
+  original.involvedSessionIds = ['session-reserved']
+  const service = makeService([original])
+  const state = { version: 2, autoClean: {}, ephemeral: {} }
+  const runs = []
+  // Mirror the Host: the first delivery creates the reserved Session and rewrites
+  // the task's destination to the conversation that delivery actually reached.
+  service.run = async (request) => {
+    runs.push(request)
+    const task = service.tasks[0]
+    task.target = { kind: 'session', sessionId: 'session-created' }
+    task.involvedSessionIds = [...new Set([...task.involvedSessionIds, 'session-created'])]
+    task.lastDelivery = {
+      messageId: 'message-run',
+      deliveredAt: new Date().toISOString(),
+      scheduledAt: new Date().toISOString(),
+      targetSessionId: 'session-created',
+    }
+    return { ...task, target: { ...task.target }, lastDelivery: { ...task.lastDelivery } }
+  }
+  const surface = makeSurface(service, state)
+
+  const result = await call(surface.handlers.run, { id: 'task-1' })
+
+  assert.equal(result.status, 200)
+  // The Host delivered it, so no clone was created, hidden or deleted.
+  assert.deepEqual(runs, [{ id: 'task-1' }])
+  assert.deepEqual(service.created, [])
+  assert.deepEqual(service.edits, [])
+  assert.deepEqual(state.ephemeral, {})
+  // The panel row now names the conversation the delivery created, and the rule
+  // itself was not moved.
+  assert.deepEqual(result.body.value.target, { kind: 'session', sessionId: 'session-created' })
+  assert.equal(result.body.value.lastDelivery.targetSessionId, 'session-created')
+  assert.equal(service.tasks[0].scheduledAt, original.scheduledAt)
+})
+
+test('deliver now reports a new_once task that is still executing', async () => {
+  const original = baseTask()
+  original.target = { kind: 'new_once', sessionId: 'session-reserved' }
+  const service = makeService([original])
+  service.run = async () => ({ id: 'task-1', code: 'schedule_execution_pending' })
+  const surface = makeSurface(service, { version: 2, autoClean: {}, ephemeral: {} })
+
+  const result = await call(surface.handlers.run, { id: 'task-1' })
+
+  assert.equal(result.status, 409)
+  assert.equal(result.body.error.code, 'schedule_execution_pending')
+  assert.deepEqual(service.created, [])
+})
+
+test('deliver now refuses a new_once task when the Host cannot run one', async () => {
+  const original = baseTask()
+  original.target = { kind: 'new_once', sessionId: 'session-reserved' }
+  const service = makeService([original])
+  const surface = makeSurface(service, { version: 2, autoClean: {}, ephemeral: {} })
+
+  const result = await call(surface.handlers.run, { id: 'task-1' })
+
+  assert.equal(result.status, 409)
+  assert.equal(result.body.error.code, 'schedule-run-failed')
+  assert.deepEqual(service.created, [])
+})
+
+test('targetRequestOf never clones a new_once destination', () => {
+  // The Host reserves a fresh Session id for every `new_once` request, so a clone
+  // would open a second conversation instead of the task's reserved one.
+  assert.equal(targetRequestOf({
     target: {
       kind: 'new_once',
       sessionId: 'session-reserved',
       create: { cwd: 'C:/work/project', agentPreset: 'standard' },
     },
+  }), undefined)
+
+  assert.deepEqual(targetRequestOf({
+    target: { kind: 'new', create: { cwd: 'C:/work/project', agentPreset: 'standard' } },
   }), {
-    kind: 'new_once',
-    sessionId: 'session-reserved',
+    kind: 'new',
     create: { cwd: 'C:/work/project', agentPreset: 'standard' },
   })
 

@@ -1491,6 +1491,91 @@ window.__ModuleLoader__.load({
 
     const WEEKDAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
 
+    /** RFC 5545 weekday codes, in the panel's Sunday-first numbering. */
+    const BYDAY_KEYS = { MO: 'mon', TU: 'tue', WE: 'wed', TH: 'thu', FR: 'fri', SA: 'sat', SU: 'sun' };
+
+    /** The `RRULE` fields of one stored rule, or an empty map. */
+    const ruleFieldsOf = (text) => {
+      const line = /^RRULE:(.+)$/m.exec(typeof text === 'string' ? text : '')?.[1] ?? '';
+      return new Map(line.split(';').filter((field) => field.includes('=')).map((field) => {
+        const at = field.indexOf('=');
+        return [field.slice(0, at).trim().toUpperCase(), field.slice(at + 1).trim().toUpperCase()];
+      }));
+    };
+
+    /**
+     * Which guided repeat choice one stored RRULE encodes.
+     *
+     * The stock Automation page stores every guided choice as an `rrule` record,
+     * so this mirrors its classifier (`hostFrequencyKind`): a rule earns a name
+     * only when it round-trips through the guided form, and anything else stays
+     * "custom".
+     * @param rule - stored DTSTART/RRULE content lines.
+     * @returns once | minutely | hourly | daily | weekly | monthly | custom.
+     */
+    const rruleKindOf = (rule) => {
+      const text = typeof rule === 'string' ? rule : '';
+      const anchor = /^DTSTART(?:;TZID=[^:]+)?:\d{8}T\d{4}(\d{2})Z?$/m.exec(text);
+      if (anchor === null) return 'custom';
+      const fields = ruleFieldsOf(text);
+      const frequency = fields.get('FREQ');
+      if (fields.get('COUNT') === '1' && fields.size === 2 && frequency === 'DAILY') return 'once';
+      if (fields.has('COUNT') || fields.has('UNTIL') || fields.has('BYSECOND')) return 'custom';
+      const keys = [...fields.keys()];
+      const allowed = (names) => keys.every((key) => names.includes(key));
+      if (frequency === 'MINUTELY' && allowed(['FREQ', 'INTERVAL'])) return 'minutely';
+      if (frequency === 'HOURLY' && allowed(['FREQ', 'INTERVAL'])) return 'hourly';
+      if (frequency === 'DAILY' && anchor[1] === '00'
+        && allowed(['FREQ', 'INTERVAL', 'BYHOUR', 'BYMINUTE', 'BYSETPOS'])
+        && ((!fields.has('BYHOUR') && !fields.has('BYMINUTE') && !fields.has('BYSETPOS'))
+          || (/^\d{1,2}$/.test(fields.get('BYHOUR') ?? '')
+            && /^\d{1,2}$/.test(fields.get('BYMINUTE') ?? '')
+            && (!fields.has('BYSETPOS') || fields.get('BYSETPOS') === '1')))) return 'daily';
+      if (frequency === 'WEEKLY' && allowed(['FREQ', 'INTERVAL', 'BYDAY'])
+        && (fields.get('BYDAY') ?? '').split(',').every((day) => /^(MO|TU|WE|TH|FR|SA|SU)$/.test(day))) return 'weekly';
+      if (frequency === 'MONTHLY' && allowed(['FREQ', 'INTERVAL', 'BYMONTHDAY', 'BYSETPOS'])
+        && fields.get('BYSETPOS') === '1'
+        && /^\d{1,2},-1$/.test(fields.get('BYMONTHDAY') ?? '')) return 'monthly';
+      return 'custom';
+    };
+
+    /**
+     * Row summary of a task stored as an `rrule`.
+     * @param task - one automation row.
+     * @param tr - translator.
+     * @returns the localized rule summary.
+     */
+    const rruleSummaryOf = (task, tr) => {
+      const kind = rruleKindOf(task.rrule);
+      if (kind === 'custom') return tr('auto.custom');
+      if (kind === 'once') return tr('auto.once');
+      const fields = ruleFieldsOf(task.rrule);
+      const interval = Math.max(1, Number(fields.get('INTERVAL') ?? 1) || 1);
+      const clock = /T(\d{6})/.exec(task.rrule)?.[1] ?? '000000';
+      const time = `${String(Number(fields.get('BYHOUR') ?? clock.slice(0, 2))).padStart(2, '0')}:${String(Number(fields.get('BYMINUTE') ?? clock.slice(2, 4))).padStart(2, '0')}`;
+      if (kind === 'minutely') {
+        return interval >= 60 && interval % 60 === 0
+          ? tr('auto.everyHour').replace('{n}', String(interval / 60))
+          : tr('auto.every').replace('{n}', String(interval));
+      }
+      if (kind === 'hourly') return tr('auto.everyHour').replace('{n}', String(interval));
+      if (kind === 'daily') {
+        return `${interval === 1 ? tr('auto.daily') : tr('auto.everyDay').replace('{n}', String(interval))} ${time}`.trim();
+      }
+      if (kind === 'weekly') {
+        const names = (fields.get('BYDAY') ?? '').split(',')
+          .map((day) => tr(`auto.weekday.${BYDAY_KEYS[day] ?? 'mon'}`))
+          .join('、');
+        return `${interval === 1 ? tr('auto.weekly') : tr('auto.everyWeek').replace('{n}', String(interval))} ${names} ${time}`.trim();
+      }
+      const monthDay = Number((fields.get('BYMONTHDAY') ?? '1').split(',')[0]) || 1;
+      const key = interval === 1 ? 'auto.monthly' : 'auto.everyMonth';
+      return tr(key)
+        .replace('{n}', String(interval))
+        .replace('{day}', String(monthDay))
+        .replace('{time}', time);
+    };
+
     /** Ready-made RRULE bodies offered under the custom-rule editor. */
     const RRULE_EXAMPLES = [
       { body: 'FREQ=WEEKLY;BYDAY=MO,WE,FR', label: 'auto.ruleEx1' },
@@ -1523,7 +1608,7 @@ window.__ModuleLoader__.load({
         case 'cron':
           return tr('auto.custom');
         case 'rrule':
-          return tr('auto.custom');
+          return rruleSummaryOf(task, tr);
         default:
           return tr('auto.custom');
       }
@@ -1745,6 +1830,7 @@ window.__ModuleLoader__.load({
       const [draft, setDraft] = React.useState(null);
       const [draftError, setDraftError] = React.useState('');
       const [confirm, setConfirm] = React.useState(null);
+      const [intervalRun, setIntervalRun] = React.useState(null);
       const [bindTasks, setBindTasks] = React.useState([]);
       const [bindPicks, setBindPicks] = React.useState(() => new Set());
       const [cleanPending, setCleanPending] = React.useState(false);
@@ -1952,19 +2038,58 @@ window.__ModuleLoader__.load({
         if (draft !== null && draft.id === task.id) updateDraft({ active: next });
       };
 
-      const runNow = async (task) => {
+      /**
+       * Whether the Host still holds this task inside its delivery interval.
+       *
+       * The catalog only carries the instant the interval ends while it runs, and
+       * the panel's one-second clock re-evaluates it, so the "(interval)" state
+       * clears itself without another round trip.
+       * @param task - one automation row.
+       * @returns true while an immediate delivery would bypass the interval.
+       */
+      const withinInterval = (task) => {
+        const floor = task?.deliveryFloorEndsAt;
+        return typeof floor === 'string' && Date.parse(floor) > now;
+      };
+
+      const runNow = async (task, options) => {
         if (busy !== '') return;
+        const confirmed = options?.confirmed === true;
         setBusy('run');
         setActionError('');
-        const result = await automationCall('run', { id: task.id });
+        const result = await automationCall('run', confirmed ? { id: task.id, withinInterval: true } : { id: task.id });
         setBusy('');
         if (!result.ok) {
+          // The Host's own delivery is the one that records a run. A task still
+          // inside its interval is refused there; the fallback delivers anyway but
+          // cannot report a run record, so the human has to accept that.
+          if (!confirmed && result.code === 'schedule-delivery-interval') {
+            setIntervalRun(task);
+            return;
+          }
           setActionError(result.error);
           return;
         }
-        announce(tr('auto.ran'), 'info');
+        setIntervalRun(null);
+        // A `new_once` task comes back bound to the conversation this delivery
+        // created, so the receipt says so instead of a bare "delivered".
+        const adopted = task.target?.kind === 'new_once' && result.value?.target?.kind === 'session';
+        announce(tr(confirmed ? 'auto.ranInterval' : adopted ? 'auto.ranAdopted' : 'auto.ran'), 'info');
         await load();
         if (draft !== null && draft.id === task.id) void loadRecords(task.id);
+      };
+
+      /**
+       * Start a delivery, asking first when it has to bypass the Host's interval.
+       * @param task - one automation row.
+       */
+      const requestRun = (task) => {
+        if (busy !== '') return;
+        if (withinInterval(task)) {
+          setIntervalRun(task);
+          return;
+        }
+        void runNow(task);
       };
 
       const removeTasks = async (ids) => {
@@ -2443,10 +2568,12 @@ window.__ModuleLoader__.load({
             ? h('div', { className: 'ove-detail-actions-row' },
               h('button', {
                 type: 'button',
-                className: 'ove-btn ove-btn-ok',
+                className: `ove-btn ${withinInterval(panelTask) ? 'ove-btn-warn' : 'ove-btn-ok'}`,
                 disabled: busy !== '',
-                onClick: () => void runNow(panelTask),
-              }, busy === 'run' ? tr('auto.running') : tr('auto.run')),
+                onClick: () => requestRun(panelTask),
+              }, busy === 'run'
+                ? tr('auto.running')
+                : tr(withinInterval(panelTask) ? 'auto.runInterval' : 'auto.run')),
               h('button', {
                 type: 'button',
                 className: 'ove-btn ove-btn-warn',
@@ -2691,14 +2818,16 @@ window.__ModuleLoader__.load({
               h('div', { className: 'ove-task-hover' },
                 h('button', {
                   type: 'button',
-                  className: 'ove-hover-btn ove-hover-ok',
-                  title: tr('auto.run'),
+                  className: `ove-hover-btn ${withinInterval(task) ? 'ove-hover-warn' : 'ove-hover-ok'}`,
+                  title: tr(withinInterval(task) ? 'auto.runIntervalTitle' : 'auto.run'),
                   disabled: busy !== '',
                   onClick: (event) => {
                     event.stopPropagation();
-                    void runNow(task);
+                    requestRun(task);
                   },
-                }, busy === 'run' ? tr('auto.running') : tr('auto.run')),
+                }, busy === 'run'
+                  ? tr('auto.running')
+                  : tr(withinInterval(task) ? 'auto.runInterval' : 'auto.run')),
                 task.status === 'active' || task.status === 'paused'
                   ? h('button', {
                     type: 'button',
@@ -2723,6 +2852,31 @@ window.__ModuleLoader__.load({
                 }, tr('auto.deleteTask')))))),
               ' '))),
           editor,
+
+        portal(intervalRun !== null
+          ? h('div', { className: 'ove-overlay ove-overlay-portal' },
+            h('div', { className: 'ove-dialog', role: 'dialog', 'aria-modal': 'true' },
+              h('h2', { className: 'ove-dialog-title' }, tr('auto.intervalTitle')),
+              h('p', { className: 'ove-dialog-desc' }, tr('auto.intervalDesc')),
+              h('p', { className: 'ove-dialog-target' }, intervalRun.title),
+              h('div', { className: 'ove-dialog-actions' },
+                h('button', {
+                  type: 'button',
+                  className: 'ove-btn',
+                  disabled: busy !== '',
+                  onClick: () => setIntervalRun(null),
+                }, tr('cancel')),
+                h('button', {
+                  type: 'button',
+                  className: 'ove-btn ove-btn-warn',
+                  disabled: busy !== '',
+                  onClick: () => {
+                    const task = intervalRun;
+                    setIntervalRun(null);
+                    void runNow(task, { confirmed: true });
+                  },
+                }, busy === 'run' ? tr('auto.running') : tr('auto.intervalConfirm')))))
+          : null),
 
         portal(confirm !== null
           ? h('div', { className: 'ove-overlay ove-overlay-portal' },

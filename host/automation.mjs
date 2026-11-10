@@ -5,8 +5,9 @@
 //   1. bulk deletion of selected tasks,
 //   2. binding one task's rule to several conversations (one task per Session),
 //   3. an auto-clean flag that removes a finished one-shot task after delivery,
-//   4. a "deliver now" that clones the task two seconds out, hides the clone from
-//      this panel, and deletes the clone after it has delivered.
+//   4. a "deliver now" that first asks the Host to deliver (exact destination,
+//      real run record) and falls back, only on request, to a clone two seconds
+//      out when the Host's delivery interval blocks a second delivery.
 
 import fs from 'node:fs'
 import os from 'node:os'
@@ -183,13 +184,19 @@ export function targetOf(record) {
 }
 
 /**
- * The Host creation request that reproduces a task's destination.
+ * The Host creation request that reproduces an existing destination.
  *
  * The catalog exposes a reduced target; this rebuilds the `create` request the
  * Schedule service accepts so a "deliver now" clone goes exactly where the
  * original task would have gone.
+ *
+ * A `new_once` target is deliberately refused: the Host reserves a *fresh*
+ * Session identity for every `new_once` request, whatever id the caller sends,
+ * so a clone would open a second conversation and leave the task's own reserved
+ * one untouched. Such a task is delivered through the Host's own manual
+ * execution instead.
  * @param record - one ScheduleCatalogEntry.
- * @returns a ScheduleTarget request, or undefined when the record has no usable target.
+ * @returns a ScheduleTarget request, or undefined when a clone cannot reproduce the target.
  */
 export function targetRequestOf(record) {
   const target = record?.target
@@ -198,13 +205,8 @@ export function targetRequestOf(record) {
       ? { kind: 'session', sessionId: target.sessionId }
       : undefined
   }
-  if (target?.kind !== 'new' && target?.kind !== 'new_once') return undefined
-  const request = { kind: target.kind }
-  // A `new_once` task reserves a Session id before its first delivery; reuse it
-  // so the immediate delivery lands where the task itself would have landed.
-  if (target.kind === 'new_once' && typeof target.sessionId === 'string' && target.sessionId.length > 0) {
-    request.sessionId = target.sessionId
-  }
+  if (target?.kind !== 'new') return undefined
+  const request = { kind: 'new' }
   const create = {}
   if (typeof target.create?.cwd === 'string' && target.create.cwd.length > 0) create.cwd = target.create.cwd
   if (typeof target.create?.agentPreset === 'string' && target.create.agentPreset.length > 0) {
@@ -229,6 +231,9 @@ const rowOf = record => ({
   updatedAt: record.updatedAt ?? record.createdAt,
   lastDelivery: record.lastDelivery === undefined ? null : record.lastDelivery,
   executionActive: record.executionActive === true,
+  // Present only while the Host's minimum delivery interval still runs; the
+  // panel labels "deliver now" with "(interval)" until it passes.
+  deliveryFloorEndsAt: typeof record.deliveryFloorEndsAt === 'string' ? record.deliveryFloorEndsAt : null,
   target: targetOf(record),
   involvedSessionIds: Array.isArray(record.involvedSessionIds) ? [...record.involvedSessionIds] : [],
   // Rule fields, so the panel can describe and re-edit the recurrence without
@@ -772,12 +777,64 @@ export function createAutomationSurface(options) {
   }
 
   /**
-   * Deliver a task now by cloning it two seconds out.
+   * Deliver one task through the Host's own manual execution.
    *
-   * The original keeps its rule and status untouched. The clone mirrors the
-   * title, instruction and destination, is hidden from this panel while it
-   * lives, and is deleted by this request as soon as its delivery settles (the
-   * reconciler reclaims it if the process stops in between).
+   * This is the shipped mechanism: it records the delivery on the task, and for
+   * a `new_once` task it creates the reserved conversation and rewrites the
+   * task's destination to it. Exact destination and a real run record, so it is
+   * always tried first.
+   *
+   * The Host refuses a task that is still inside its minimum delivery interval
+   * or still executing. `intervalFallback` decides how that refusal is reported:
+   * as the signal the panel turns into "deliver anyway?", or as a plain error
+   * for a task that cannot be delivered twice (a `new_once` one).
+   * @param res - the HTTP response to answer.
+   * @param task - the automation row.
+   * @param intervalFallback - whether "inside the interval" is a fallback signal.
+   */
+  const runThroughHost = async (res, task, intervalFallback) => {
+    if (typeof service.run !== 'function') {
+      sendJson(res, 409, failure('schedule-run-failed', '当前宿主不支持立即投递，请升级宿主后重试。'))
+      return
+    }
+    let result
+    try {
+      result = await service.run({ id: task.id })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      warn(`automation: running ${task.id} failed: ${message}`)
+      sendJson(res, 409, failure('schedule-run-failed', `立即投递失败：${message}`))
+      return
+    }
+    if (result === undefined || result.code === 'schedule_not_found') {
+      sendJson(res, 404, failure('schedule_not_found', '任务不存在或已删除。'))
+      return
+    }
+    if (result.code === 'schedule_execution_pending') {
+      if (intervalFallback) {
+        sendJson(res, 409, failure('schedule-delivery-interval', '该任务仍在投递间隔内。'))
+        return
+      }
+      sendJson(res, 409, failure('schedule_execution_pending', '该任务正在投递，请稍后再试。'))
+      return
+    }
+    // The returned entry already carries the delivered destination, so the panel
+    // reloads straight into the conversation the message landed in.
+    sendJson(res, 200, { ok: true, value: rowOf(result) })
+  }
+
+  /**
+   * Deliver a task now: the Host first, the clone only on demand.
+   *
+   * The first click always asks the Host, which delivers to the exact
+   * destination and records the run. A task still inside its delivery interval
+   * is refused there; the panel then warns that the fallback delivery may not be
+   * recorded, and only a confirmed retry (`withinInterval: true`) takes the
+   * enhancer's route: clone the task two seconds out, hide the clone from this
+   * panel, and delete it once its delivery settles.
+   *
+   * A `new_once` task is always delivered by the Host, because its destination
+   * does not exist yet and a clone would open a second conversation.
    */
   const run = async (req, res) => {
     const body = await accept(req, res)
@@ -787,19 +844,30 @@ export function createAutomationSurface(options) {
       sendJson(res, 400, failure('invalid-id', '任务 ID 无效。'))
       return
     }
-    let clone
+    const withinInterval = body?.withinInterval === true
     let task
     try {
-      const tasks = await service.catalog()
-      task = tasks.find(candidate => candidate.id === id)
-      if (task === undefined) {
-        sendJson(res, 404, failure('schedule_not_found', '任务不存在或已删除。'))
-        return
-      }
-      if (typeof task.title !== 'string' || typeof task.prompt !== 'string') {
-        sendJson(res, 409, failure('schedule-run-failed', '该任务的名称或内容无效，无法立即投递。'))
-        return
-      }
+      task = (await service.catalog()).find(candidate => candidate.id === id)
+    } catch (error) {
+      warn(`automation: reading the task list for ${id} failed: ${String(error)}`)
+      sendJson(res, 503, failure('schedule-unavailable', '读取任务列表失败，请稍后重试。'))
+      return
+    }
+    if (task === undefined) {
+      sendJson(res, 404, failure('schedule_not_found', '任务不存在或已删除。'))
+      return
+    }
+    if (typeof task.title !== 'string' || typeof task.prompt !== 'string') {
+      sendJson(res, 409, failure('schedule-run-failed', '该任务的名称或内容无效，无法立即投递。'))
+      return
+    }
+    if (task.target?.kind === 'new_once' || !withinInterval) {
+      await runThroughHost(res, task, task.target?.kind !== 'new_once')
+      return
+    }
+
+    let clone
+    try {
       const target = targetRequestOf(task)
       if (target === undefined) {
         sendJson(res, 409, failure('schedule-run-failed', '该任务的执行位置无效，无法立即投递。'))

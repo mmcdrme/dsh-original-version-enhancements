@@ -389,7 +389,14 @@
   text-align: left; padding: 8px 10px; border-radius: 8px; cursor: pointer;
   transition: background .12s ease;
 }
-.ove-menu-row:hover, .ove-menu-row:focus-visible { background: var(--dsw-alias-bg-layer-1); outline: none; }
+.ove-menu-row:hover, .ove-menu-row:focus-visible {
+  /* The theme's layer tokens can land on the menu's own surface (white on white),
+     which made these rows look like they had no hover at all. A tint of the label
+     colour stays visible on both light and dark menus. */
+  background: color-mix(in srgb, var(--dsw-alias-label-primary) 10%, transparent);
+  outline: none;
+}
+.ove-menu-row:active { background: color-mix(in srgb, var(--dsw-alias-label-primary) 16%, transparent); }
 .ove-menu-row:disabled { opacity: .5; cursor: default; }
 
 .ove-tabs { display: flex; gap: 2px; margin-bottom: 12px; flex-wrap: wrap; }
