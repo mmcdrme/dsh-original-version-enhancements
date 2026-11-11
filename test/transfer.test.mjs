@@ -205,6 +205,9 @@ test('a failed move restores the original session directory', async () => {
   // Nothing was filed, nothing was detached, and the original log is back.
   assert.deepEqual(target.calls, [])
   assert.deepEqual(source.calls, [])
+  // The registry's cached header/cwd is put back too: leaving the target path
+  // there would filter the session out of the source workspace until a restart.
+  assert.deepEqual(registry.calls.indexed.map(header => header.cwd), [SOURCE_PATH])
   assert.match(await readFile(transcript, 'utf8'), /session-1234/)
   await rm(root, { recursive: true, force: true })
 })

@@ -337,12 +337,14 @@ const moveSession = async (deps, { sessionId, header, target }) => {
   }
   const movedMeta = moveHeader(liveHeader, target.path)
   let created = false
+  let attached = false
   try {
     created = await materializeCopy(deps, movedMeta, events)
     if (!await reindexMovedSession(workspaceRegistry, movedMeta)) {
       throw new Error('宿主没有接受更新后的会话归属信息')
     }
     await target.attachSession(sessionId)
+    attached = true
   } catch (error) {
     // Undo in the only order that never leaves two logs for one id: remove the
     // recreated log first, and only then put the quarantined original back.
@@ -361,6 +363,15 @@ const moveSession = async (deps, { sessionId, header, target }) => {
         `移动失败，且原会话目录未能自动还原（暂存于 ${quarantine.directory}）。`,
       )
     }
+    // `indexHeader` overwrites the registry's cached header and canonical cwd in
+    // place, so putting the log back is not enough: without this the registry
+    // still points the session at the target workspace and filters it out of the
+    // source one, making the conversation disappear from the sidebar until the
+    // next restart rescans the headers.
+    if (attached) {
+      try { await target.detachSession?.(sessionId) } catch { /* nothing to undo */ }
+    }
+    await reindexMovedSession(workspaceRegistry, header)
     return failure('move-failed', `移动会话失败：${String(error?.message ?? error)}`)
   }
 

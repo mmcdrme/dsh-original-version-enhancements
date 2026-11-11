@@ -14,7 +14,9 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 const moduleUrl = new URL('../host/automation.mjs', import.meta.url)
-const { createAutomationSurface, targetRequestOf } = await import(moduleUrl)
+const {
+  createAutomationSurface, sameTiming, targetOf, targetRequestOf, timingOf,
+} = await import(moduleUrl)
 
 const NOW = Date.now()
 
@@ -74,16 +76,37 @@ const makeService = (initial) => {
     async edit(request) {
       service.edits.push(request)
       const { id, action } = request
-      if (action !== 'delete') return { id, code: 'schedule_unsupported' }
       const index = tasks.findIndex(task => task.id === id)
-      if (index < 0) return { deleted: false, code: 'schedule_not_found' }
-      tasks.splice(index, 1)
-      return { deleted: true }
+      if (index < 0) return { id, code: 'schedule_not_found' }
+      if (action === 'delete') {
+        tasks.splice(index, 1)
+        return { deleted: true }
+      }
+      const current = tasks[index]
+      if (request.expectedUpdatedAt !== undefined
+        && request.expectedUpdatedAt !== (current.updatedAt ?? null)) {
+        return { id, code: 'schedule_conflict' }
+      }
+      const patch = request.patch ?? {}
+      for (const [key, value] of Object.entries(patch)) {
+        if (key === 'timing') continue
+        current[key] = value
+      }
+      if (patch.timing !== undefined) current.kind = patch.timing.kind
+      current.updatedAt = new Date(Date.now() + 1000).toISOString()
+      return { ...current }
     },
-    async history() {
-      return { records: [] }
+    async view(request) {
+      const task = tasks.find(candidate => candidate.id === request.id)
+      return task === undefined ? { id: request.id, code: 'schedule_not_found' } : { ...task }
+    },
+    async history(request) {
+      service.historyCalls.push(request.id)
+      const task = tasks.find(candidate => candidate.id === request.id)
+      return { records: Array.isArray(task?.receipts) ? task.receipts : [] }
     },
   }
+  service.historyCalls = []
   return service
 }
 
@@ -151,7 +174,9 @@ test('the first delivery goes through the Host and records the run', async () =>
 })
 
 test('a task inside the delivery interval asks before the fallback', async () => {
-  const service = makeService([baseTask()])
+  // The Host reports "pending" both while executing and inside the interval;
+  // only the row's delivery floor makes it an interval refusal.
+  const service = makeService([{ ...baseTask(), deliveryFloorEndsAt: new Date(Date.now() + 30_000).toISOString() }])
   service.run = async () => ({ id: 'task-1', code: 'schedule_execution_pending' })
   const state = { version: 2, autoClean: {}, ephemeral: {} }
   const surface = makeSurface(service, state)
@@ -164,8 +189,43 @@ test('a task inside the delivery interval asks before the fallback', async () =>
   assert.deepEqual(state.ephemeral, {})
 })
 
+test('a task that is executing is refused instead of offering a duplicate delivery', async () => {
+  // A queued/running delivery and the interval both report `pending`. Only the
+  // interval may fall back to a clone: cloning an executing task sends the same
+  // reminder twice.
+  const service = makeService([{ ...baseTask(), executionActive: true }])
+  service.run = async () => ({ id: 'task-1', code: 'schedule_execution_pending' })
+  const state = { version: 2, autoClean: {}, ephemeral: {} }
+  const surface = makeSurface(service, state)
+
+  const result = await call(surface.handlers.run, { id: 'task-1', withinInterval: true })
+
+  assert.equal(result.status, 409)
+  assert.equal(result.body.error.code, 'schedule-execution-active')
+  assert.deepEqual(service.created, [])
+  assert.deepEqual(service.edits, [])
+  assert.deepEqual(state.ephemeral, {})
+})
+
+test('a task that is executing is refused before the Host is even asked', async () => {
+  const service = makeService([{ ...baseTask(), executionActive: true }])
+  const runs = []
+  service.run = async (request) => {
+    runs.push(request)
+    return { id: 'task-1', code: 'schedule_execution_pending' }
+  }
+  const surface = makeSurface(service, { version: 2, autoClean: {}, ephemeral: {} })
+
+  const result = await call(surface.handlers.run, { id: 'task-1' })
+
+  assert.equal(result.status, 409)
+  assert.equal(result.body.error.code, 'schedule-execution-active')
+  assert.deepEqual(runs, [])
+})
+
 test('a confirmed retry inside the interval clones the task two seconds out', async () => {
   const original = baseTask()
+  original.deliveryFloorEndsAt = new Date(Date.now() + 30_000).toISOString()
   const service = makeService([original])
   const state = { version: 2, autoClean: {}, ephemeral: {} }
   service.run = async () => ({ id: 'task-1', code: 'schedule_execution_pending' })
@@ -353,4 +413,172 @@ test('readAutomationState tolerates a sidecar written by the previous build', as
   const state = readAutomationState(file, () => {})
   assert.deepEqual(state.autoClean, { 'task-1': true })
   assert.deepEqual(state.ephemeral, {})
+  assert.deepEqual(state.copies, {})
+})
+
+test('editing an ended one-shot by title sends no rule change and no resume', async () => {
+  // The Host treats `active: true` as a resume and a changed rule as a re-arm:
+  // both fail on an ended one-shot, and the second silently resurrects an ended
+  // recurring task. A title edit must therefore carry neither.
+  const ended = {
+    ...baseTask(),
+    kind: 'at',
+    status: 'ended',
+    scheduledAt: '2026-01-01T10:00:00.000Z',
+    everySeconds: undefined,
+  }
+  delete ended.everySeconds
+  const service = makeService([ended])
+  const surface = makeSurface(service, { version: 2, autoClean: {}, ephemeral: {} })
+
+  const result = await call(surface.handlers.update, {
+    id: 'task-1',
+    title: 'Renamed',
+    prompt: ended.prompt,
+    timing: { kind: 'at', at: ended.scheduledAt },
+    target: { kind: 'session', sessionId: 'session-1' },
+  })
+
+  assert.equal(result.status, 200)
+  const patch = service.edits[0].patch
+  assert.deepEqual(Object.keys(patch).sort(), ['prompt', 'target', 'title'])
+  assert.equal(patch.active, undefined)
+  assert.equal(patch.timing, undefined)
+  assert.equal(service.tasks[0].title, 'Renamed')
+})
+
+test('a real rule change is still sent, with the revision it was rendered from', async () => {
+  const original = baseTask()
+  const service = makeService([original])
+  const surface = makeSurface(service, { version: 2, autoClean: {}, ephemeral: {} })
+
+  const result = await call(surface.handlers.update, {
+    id: 'task-1',
+    title: original.title,
+    prompt: original.prompt,
+    timing: { kind: 'every', every_seconds: 7200 },
+    target: { kind: 'session', sessionId: 'session-1' },
+    expectedUpdatedAt: original.updatedAt,
+  })
+
+  assert.equal(result.status, 200)
+  const request = service.edits[0]
+  assert.deepEqual(request.patch.timing, { kind: 'every', every_seconds: 7200 })
+  assert.equal(request.expectedUpdatedAt, original.updatedAt)
+})
+
+test('a save rendered from a stale revision is reported as a conflict', async () => {
+  const service = makeService([baseTask()])
+  const surface = makeSurface(service, { version: 2, autoClean: {}, ephemeral: {} })
+
+  const result = await call(surface.handlers.update, {
+    id: 'task-1',
+    title: 'Renamed',
+    prompt: 'Check the deployment.',
+    timing: { kind: 'every', every_seconds: 3600 },
+    target: { kind: 'session', sessionId: 'session-1' },
+    expectedUpdatedAt: '2000-01-01T00:00:00.000Z',
+  })
+
+  assert.equal(result.status, 409)
+  assert.equal(result.body.error.code, 'schedule_conflict')
+  assert.equal(service.tasks[0].title, 'Deploy check')
+})
+
+test('targetOf keeps the agent preset an edit must not drop', () => {
+  assert.deepEqual(targetOf({
+    target: { kind: 'new', create: { cwd: 'C:/work/project', agentPreset: 'standard' } },
+  }), {
+    kind: 'new',
+    sessionId: undefined,
+    cwd: 'C:/work/project',
+    agentPreset: 'standard',
+  })
+  assert.equal(targetOf({ target: { kind: 'session', sessionId: 'session-1' } }).agentPreset, undefined)
+})
+
+test('binding recognises the copies it created by identity, not by title', async () => {
+  // Two tasks share a title and instruction but deliver into different
+  // conversations. The old title+prompt heuristic let one mark the other's
+  // conversation as "already bound", so binding was skipped without ever
+  // creating anything.
+  const source = baseTask()
+  const twin = { ...baseTask(), id: 'task-2', target: { kind: 'session', sessionId: 'session-2' } }
+  const service = makeService([source, twin])
+  const state = { version: 2, autoClean: {}, ephemeral: {}, copies: {} }
+  const surface = makeSurface(service, state)
+
+  const first = await call(surface.handlers.bind, { ids: ['task-1'], sessionIds: ['session-2'] })
+
+  assert.equal(first.status, 200)
+  assert.equal(first.body.value.created.length, 1)
+  assert.deepEqual(first.body.value.skipped, [])
+  const copyId = first.body.value.created[0].id
+  assert.deepEqual(state.copies['task-1'], [copyId])
+
+  // The catalog now tells the dialog that this conversation is covered.
+  const catalog = await call(surface.handlers.catalog, {})
+  const row = catalog.body.value.tasks.find(task => task.id === 'task-1')
+  assert.deepEqual(row.copySessionIds, ['session-2'])
+
+  const again = await call(surface.handlers.bind, { ids: ['task-1'], sessionIds: ['session-2'] })
+
+  assert.equal(again.status, 200)
+  assert.equal(again.body.value.created.length, 0)
+  assert.deepEqual(again.body.value.skipped, [{ id: 'task-1', sessionId: 'session-2', reason: 'already-bound' }])
+})
+
+test('a stored clock is normalised before it is sent back to the Host', () => {
+  // Schedule records keep `time` as `09:00:00.000`; a creation request accepts
+  // `HH:mm[:ss]` only, so a rebuilt rule must be truncated to seconds.
+  assert.deepEqual(timingOf({ kind: 'daily', time: '09:00:00.000', timeZone: 'Asia/Shanghai' }), {
+    kind: 'daily',
+    daily: { time: '09:00:00', time_zone: 'Asia/Shanghai' },
+  })
+  assert.deepEqual(timingOf({ kind: 'weekly', time: '7:05', timeZone: 'Asia/Shanghai', weekdays: [1, 3] }), {
+    kind: 'weekly',
+    weekly: { time: '07:05:00', time_zone: 'Asia/Shanghai', weekdays: [1, 3] },
+  })
+  // The same rule therefore compares equal whether it came from the record or
+  // from the editor, so an unchanged rule is dropped instead of re-armed.
+  assert.equal(
+    sameTiming(
+      { kind: 'daily', daily: { time: '09:00:00', time_zone: 'Asia/Shanghai' } },
+      timingOf({ kind: 'daily', time: '09:00:00.000', timeZone: 'Asia/Shanghai' }),
+    ),
+    true,
+  )
+  assert.equal(
+    sameTiming(
+      { kind: 'daily', daily: { time: '10:00:00', time_zone: 'Asia/Shanghai' } },
+      timingOf({ kind: 'daily', time: '09:00:00.000', timeZone: 'Asia/Shanghai' }),
+    ),
+    false,
+  )
+})
+
+test('the catalog counts runs once per delivery instead of once per poll', async () => {
+  const service = makeService([baseTask()])
+  const surface = makeSurface(service, { version: 2, autoClean: {}, ephemeral: {} })
+
+  const first = await call(surface.handlers.catalog, {})
+  assert.equal(first.status, 200)
+  assert.equal(service.historyCalls.length, 1)
+
+  const second = await call(surface.handlers.catalog, {})
+  assert.equal(second.status, 200)
+  // Nothing about the task changed, so the count is reused.
+  assert.equal(service.historyCalls.length, 1)
+
+  service.tasks[0].lastDelivery = {
+    messageId: 'message-new',
+    deliveredAt: new Date().toISOString(),
+    scheduledAt: service.tasks[0].scheduledAt,
+    targetSessionId: 'session-1',
+  }
+  service.tasks[0].receipts = [{ messageId: 'message-new', deliveredAt: '2026-11-11T06:00:00.000Z' }]
+  const third = await call(surface.handlers.catalog, {})
+  assert.equal(third.status, 200)
+  assert.equal(service.historyCalls.length, 2)
+  assert.equal(third.body.value.records['task-1'], 1)
 })

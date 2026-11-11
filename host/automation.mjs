@@ -77,9 +77,10 @@ const stringKeyed = (value) => {
  * Read the automation sidecar, tolerating a missing or malformed file.
  *
  * It stores only the bookkeeping this panel adds on top of the Host records:
- * auto-clean flags, plus the ids of the temporary "deliver now" clones that must
- * stay hidden from the panel. Run records themselves are read straight from the
- * Host.
+ * auto-clean flags, the ids of the temporary "deliver now" clones that must stay
+ * hidden from the panel, and the copies "bind to many Sessions" created so a
+ * second binding recognises its own work by identity. Run records themselves are
+ * read straight from the Host.
  * @param file - absolute sidecar path.
  * @param warn - diagnostic sink.
  * @returns the mutable state object.
@@ -100,12 +101,18 @@ export function readAutomationState(file, warn) {
           createdAt: typeof value.createdAt === 'string' ? value.createdAt : '',
         }
       }
-      return { version: STATE_VERSION, autoClean, ephemeral }
+      const copies = {}
+      for (const [id, value] of Object.entries(stringKeyed(parsed.copies))) {
+        if (!Array.isArray(value)) continue
+        const ids = value.filter(entry => typeof entry === 'string' && entry.length > 0)
+        if (ids.length > 0) copies[id] = ids
+      }
+      return { version: STATE_VERSION, autoClean, ephemeral, copies }
     }
   } catch (error) {
     if (error?.code !== 'ENOENT') warn(`automation: could not read ${file}: ${String(error)}`)
   }
-  return { version: STATE_VERSION, autoClean: {}, ephemeral: {} }
+  return { version: STATE_VERSION, autoClean: {}, ephemeral: {}, copies: {} }
 }
 
 /**
@@ -121,6 +128,20 @@ export function writeAutomationState(file, state, warn) {
   } catch (error) {
     warn(`automation: could not write ${file}: ${String(error)}`)
   }
+}
+
+/**
+ * One stored clock reduced to `HH:mm:ss`.
+ *
+ * A Schedule record keeps its `time` with millisecond precision
+ * (`09:00:00.000`), while a creation request accepts `HH:mm[:ss]` only.
+ * @param value - stored clock.
+ * @returns the normalised clock, or the value unchanged when it is not a clock.
+ */
+const clockOf = (value) => {
+  if (typeof value !== 'string') return value
+  const match = /^(\d{1,2}):(\d{2})(?::(\d{2}))?(?:\.\d+)?$/.exec(value.trim())
+  return match === null ? value : `${match[1].padStart(2, '0')}:${match[2]}:${match[3] ?? '00'}`
 }
 
 /**
@@ -146,13 +167,13 @@ export function timingOf(record) {
         : undefined
     case 'daily':
       return typeof record.time === 'string' && typeof record.timeZone === 'string'
-        ? { kind: 'daily', daily: { time: record.time, time_zone: record.timeZone } }
+        ? { kind: 'daily', daily: { time: clockOf(record.time), time_zone: record.timeZone } }
         : undefined
     case 'weekly':
       return typeof record.time === 'string'
         && typeof record.timeZone === 'string'
         && Array.isArray(record.weekdays)
-        ? { kind: 'weekly', weekly: { time: record.time, time_zone: record.timeZone, weekdays: [...record.weekdays] } }
+        ? { kind: 'weekly', weekly: { time: clockOf(record.time), time_zone: record.timeZone, weekdays: [...record.weekdays] } }
         : undefined
     case 'cron':
       return typeof record.expression === 'string' && typeof record.timeZone === 'string'
@@ -165,8 +186,65 @@ export function timingOf(record) {
   }
 }
 
+/** Seconds of one instant, so a re-sent time is not "changed" by milliseconds. */
+const instantOf = (value) => {
+  const time = Date.parse(typeof value === 'string' ? value : '')
+  return Number.isFinite(time) ? Math.round(time / 1000) : Number.NaN
+}
+
+/** Case- and whitespace-insensitive form of an RRULE body. */
+const ruleKey = value => (typeof value === 'string' ? value : '')
+  .split('\n')
+  .map(line => line.trim().replace(/\s+/g, ' ').toUpperCase())
+  .filter(line => line.length > 0)
+  .join('\n')
+
 /**
- * Where a task delivers, in a form the Client can link.
+ * One timing request reduced to a comparable key.
+ * @param timing - a ScheduleTiming request.
+ * @returns a stable string, or undefined for an unsupported shape.
+ */
+const timingKey = (timing) => {
+  if (timing === null || typeof timing !== 'object') return undefined
+  switch (timing.kind) {
+    case 'at':
+      return `at:${instantOf(timing.at)}`
+    case 'after':
+      return `after:${Math.round(Number(timing.after_seconds))}`
+    case 'every':
+      return `every:${Math.round(Number(timing.every_seconds))}`
+    case 'daily':
+      return `daily:${clockOf(timing.daily?.time)}:${timing.daily?.time_zone}`
+    case 'weekly': {
+      const days = Array.isArray(timing.weekly?.weekdays) ? [...timing.weekly.weekdays].sort((left, right) => left - right) : []
+      return `weekly:${clockOf(timing.weekly?.time)}:${timing.weekly?.time_zone}:${days.join(',')}`
+    }
+    case 'cron':
+      return `cron:${String(timing.cron?.expression ?? '').trim().replace(/\s+/g, ' ')}:${timing.cron?.time_zone}`
+    case 'rrule':
+      return `rrule:${ruleKey(timing.rrule)}`
+    default:
+      return undefined
+  }
+}
+
+/**
+ * Whether two timing requests describe the same rule.
+ *
+ * An edit that only changes the title must not be sent as a rule change: the
+ * Host treats a changed rule as a re-arm, which both rejects an ended one-shot
+ * (`not_future`) and silently resurrects an ended recurring task.
+ * @param left - a timing request.
+ * @param right - another timing request.
+ * @returns true when both produce the same schedule.
+ */
+export function sameTiming(left, right) {
+  const key = timingKey(left)
+  return key !== undefined && key === timingKey(right)
+}
+
+/**
+ * Where a task delivers, in a form the Client can link and re-save.
  * @param record - one ScheduleCatalogEntry.
  * @returns a compact target description.
  */
@@ -180,6 +258,11 @@ export function targetOf(record) {
     kind: target?.kind === 'new_once' ? 'new_once' : 'new',
     sessionId: typeof target?.sessionId === 'string' ? target.sessionId : undefined,
     cwd: typeof create.cwd === 'string' ? create.cwd : undefined,
+    // Carried so editing a task cannot silently drop the preset it was created
+    // with (the Host stores it in `target.create.agentPreset`).
+    agentPreset: typeof create.agentPreset === 'string' && create.agentPreset.length > 0
+      ? create.agentPreset
+      : undefined,
   }
 }
 
@@ -252,12 +335,12 @@ const rowOf = record => ({
  * @param service - the Host Schedule service.
  * @param id - task identity.
  * @param prompt - the task instruction to attach to every receipt.
- * @returns the receipts, newest first, and whether the task exists.
+ * @returns the receipts, newest first.
  */
 async function recordsOf(service, id, prompt = '') {
   const page = await service.history({ id, limit: 100 })
   if (page === undefined || page.code === 'schedule_not_found' || page.code === 'delivery_cursor_not_found') {
-    return { records: [], found: page?.code !== 'schedule_not_found' }
+    return { records: [] }
   }
   const all = Array.isArray(page.records) ? page.records : []
   return {
@@ -268,7 +351,6 @@ async function recordsOf(service, id, prompt = '') {
       targetSessionId: receipt.targetSessionId,
       prompt: typeof prompt === 'string' ? prompt : '',
     })),
-    found: true,
   }
 }
 
@@ -413,7 +495,9 @@ export async function reconcileAutomation({ service, state, save, warn = () => {
   const cleanIds = Object.keys(state.autoClean)
   const ephemeral = state.ephemeral ?? (state.ephemeral = {})
   const ephemeralIds = Object.keys(ephemeral)
-  if (cleanIds.length === 0 && ephemeralIds.length === 0) return 0
+  const copies = state.copies ?? (state.copies = {})
+  const copySources = Object.keys(copies)
+  if (cleanIds.length === 0 && ephemeralIds.length === 0 && copySources.length === 0) return 0
   let removed = 0
   let changed = false
   let tasks
@@ -471,12 +555,43 @@ export async function reconcileAutomation({ service, state, save, warn = () => {
     }
   }
 
+  // Copies removed by hand (or by the Host) must not keep a Conversation marked
+  // as already bound, so drop every id the catalog no longer lists.
+  for (const sourceId of copySources) {
+    const kept = copies[sourceId].filter(id => byId.has(id))
+    if (kept.length === copies[sourceId].length) continue
+    if (kept.length > 0) copies[sourceId] = kept
+    else delete copies[sourceId]
+    changed = true
+  }
+
   if (changed) save()
   return removed
 }
 
 /** Backwards-compatible name for the reconciler. */
 export const reconcileAutoClean = reconcileAutomation
+
+/**
+ * The copies "bind to many Sessions" created from one task.
+ * @param state - the sidecar state.
+ * @param sourceId - the task the copies were made from.
+ * @returns the copy ids, possibly empty.
+ */
+const copiesOf = (state, sourceId) => (Array.isArray(state.copies?.[sourceId]) ? state.copies[sourceId] : [])
+
+/**
+ * Remember one created copy so a later binding recognises its own work.
+ * @param state - the sidecar state.
+ * @param sourceId - the task the copy was made from.
+ * @param copyId - the created task identity.
+ */
+const rememberCopy = (state, sourceId, copyId) => {
+  if (state.copies === undefined) state.copies = {}
+  const ids = copiesOf(state, sourceId)
+  if (ids.includes(copyId)) return
+  state.copies[sourceId] = [...ids, copyId]
+}
 
 /**
  * Create one copy of each requested task for every requested conversation.
@@ -521,14 +636,13 @@ async function bindToSessions({ service, state, save }, request) {
     }
     const involved = new Set(Array.isArray(source.involvedSessionIds) ? source.involvedSessionIds : [])
     if (source.target?.kind === 'session') involved.add(source.target.sessionId)
-    // A copy this feature created earlier keeps its own identity, so the source
-    // never learns about it: match the stored copies by title and instruction
-    // instead, or binding twice would pile up identical reminders.
-    for (const task of tasks) {
-      if (task.id === source.id) continue
-      if (task.title !== source.title || task.prompt !== source.prompt) continue
-      if (task.target?.kind !== 'session') continue
-      involved.add(task.target.sessionId)
+    // Copies this feature created earlier keep their own identity, so the source
+    // never learns about them; the sidecar remembers which ids it created, and
+    // that identity — never a title or instruction match — decides what is
+    // already bound.
+    for (const copyId of copiesOf(state, source.id)) {
+      const copy = byId.get(copyId)
+      if (copy?.target?.kind === 'session') involved.add(copy.target.sessionId)
     }
     for (const sessionId of sessionIds) {
       if (involved.has(sessionId)) {
@@ -543,6 +657,7 @@ async function bindToSessions({ service, state, save }, request) {
           target: { kind: 'session', sessionId },
         })
         created.push({ id: record.id, sessionId, sourceId })
+        rememberCopy(state, source.id, record.id)
         if (state.autoClean[source.id] === true) state.autoClean[record.id] = true
       } catch (error) {
         failed.push({ id: sourceId, sessionId, message: error instanceof Error ? error.message : String(error) })
@@ -567,9 +682,14 @@ export function createAutomationSurface(options) {
     warn = () => {},
   } = options
   const deps = { service, state, save, warn }
-  // A sidecar written by an older build may miss either map.
+  // A sidecar written by an older build may miss any of these maps.
   if (state.autoClean === undefined) state.autoClean = {}
   if (state.ephemeral === undefined) state.ephemeral = {}
+  if (state.copies === undefined) state.copies = {}
+  // Run-record counts per task, keyed by the part of the row that can change
+  // them. The panel polls the catalog every 20 s; without this, every poll cost
+  // one `history()` call per task.
+  const recordCounts = new Map()
   let running = false
 
   const reconcile = async () => {
@@ -623,17 +743,42 @@ export function createAutomationSurface(options) {
       // every count, selection and search result here.
       const tasks = (await service.catalog())
         .filter(task => state.ephemeral?.[task.id] === undefined)
+      const byId = new Map(tasks.map(task => [task.id, task]))
       // One record count per task drives the panel's "run records" line
-      // without a second round trip.
+      // without a second round trip, and only a task whose delivery changed is
+      // asked again.
       const records = {}
+      const seen = new Set()
       for (const task of tasks) {
-        const page = await recordsOf(service, task.id, task.prompt)
-        records[task.id] = page.records.length
+        seen.add(task.id)
+        const stamp = `${task.updatedAt ?? ''}|${task.lastDelivery?.messageId ?? ''}|${task.lastDelivery?.deliveredAt ?? ''}`
+        const cached = recordCounts.get(task.id)
+        let count = cached?.stamp === stamp ? cached.count : undefined
+        if (count === undefined) {
+          count = (await recordsOf(service, task.id, task.prompt)).records.length
+          recordCounts.set(task.id, { stamp, count })
+        }
+        records[task.id] = count
+      }
+      for (const id of [...recordCounts.keys()]) {
+        if (!seen.has(id)) recordCounts.delete(id)
+      }
+      // Conversations a binding already covers, so the dialog never offers one
+      // that would be skipped.
+      const copiesOfTask = {}
+      for (const [sourceId, ids] of Object.entries(state.copies ?? {})) {
+        const sessions = ids
+          .map(id => byId.get(id)?.target?.sessionId)
+          .filter(sessionId => typeof sessionId === 'string' && sessionId.length > 0)
+        if (sessions.length > 0) copiesOfTask[sourceId] = [...new Set(sessions)]
       }
       sendJson(res, 200, {
         ok: true,
         value: {
-          tasks: tasks.map(rowOf),
+          tasks: tasks.map(task => ({
+            ...rowOf(task),
+            copySessionIds: copiesOfTask[task.id] ?? [],
+          })),
           autoClean: { ...state.autoClean },
           records,
         },
@@ -747,14 +892,43 @@ export function createAutomationSurface(options) {
       patch.target = target
     }
     const wantsAutoClean = typeof body.autoClean === 'boolean'
+    // Optimistic concurrency: the panel sends the revision it rendered, so a
+    // second window that saved in between is reported instead of overwritten.
+    const expectedUpdatedAt = typeof body.expectedUpdatedAt === 'string'
+      ? body.expectedUpdatedAt
+      : body.expectedUpdatedAt === null ? null : undefined
     if (Object.keys(patch).length === 0 && !wantsAutoClean) {
       sendJson(res, 400, failure('empty-patch', '没有需要保存的改动。'))
       return
     }
+    // The Client always rebuilds the whole rule from the row it rendered. Sending
+    // that rule back unchanged would look like a rule change to the Host — which
+    // re-arms an ended task and rejects an ended one-shot as `not_future` — so
+    // compare first and drop it when nothing changed.
+    if (patch.timing !== undefined) {
+      let current
+      try {
+        current = await service.view({ id })
+      } catch (error) {
+        warn(`automation: reading ${id} before an update failed: ${String(error)}`)
+        sendJson(res, 503, failure('schedule-unavailable', '读取任务失败，请稍后重试。'))
+        return
+      }
+      if (current === undefined || current.code === 'schedule_not_found') {
+        sendJson(res, 404, failure('schedule_not_found', '任务不存在或已删除。'))
+        return
+      }
+      if (sameTiming(patch.timing, timingOf(current))) delete patch.timing
+    }
     try {
       const result = Object.keys(patch).length === 0
         ? await service.view({ id })
-        : await service.edit({ id, action: 'update', patch })
+        : await service.edit({
+          id,
+          action: 'update',
+          patch,
+          ...(expectedUpdatedAt === undefined ? {} : { expectedUpdatedAt }),
+        })
       if (result?.code === 'schedule_not_found') {
         sendJson(res, 404, failure('schedule_not_found', '任务不存在或已删除。'))
         return
@@ -777,6 +951,32 @@ export function createAutomationSurface(options) {
   }
 
   /**
+   * Why the Host refused an immediate delivery.
+   *
+   * The Host folds three different refusals into `schedule_execution_pending`:
+   * the task is executing right now, it is still inside its minimum delivery
+   * interval, or a previous delivery has not settled yet. They need different
+   * answers — only the interval one may fall back to a clone, and only when the
+   * caller asked for that — so the refusal is classified from a fresh row.
+   * @param service - the Host Schedule service.
+   * @param id - task identity.
+   * @returns executing | interval | pending | missing | unknown.
+   */
+  const pendingReasonOf = async (service, id) => {
+    let task
+    try {
+      task = (await service.catalog()).find(candidate => candidate.id === id)
+    } catch (error) {
+      warn(`automation: reading ${id} to classify a pending delivery failed: ${String(error)}`)
+      return 'unknown'
+    }
+    if (task === undefined) return 'missing'
+    if (task.executionActive === true) return 'executing'
+    const floor = typeof task.deliveryFloorEndsAt === 'string' ? Date.parse(task.deliveryFloorEndsAt) : Number.NaN
+    return Number.isFinite(floor) && floor > Date.now() ? 'interval' : 'pending'
+  }
+
+  /**
    * Deliver one task through the Host's own manual execution.
    *
    * This is the shipped mechanism: it records the delivery on the task, and for
@@ -784,10 +984,13 @@ export function createAutomationSurface(options) {
    * task's destination to it. Exact destination and a real run record, so it is
    * always tried first.
    *
-   * The Host refuses a task that is still inside its minimum delivery interval
-   * or still executing. `intervalFallback` decides how that refusal is reported:
-   * as the signal the panel turns into "deliver anyway?", or as a plain error
-   * for a task that cannot be delivered twice (a `new_once` one).
+   * The Host refuses a task that is still executing, still inside its minimum
+   * delivery interval, or whose previous delivery has not settled.
+   * `intervalFallback` decides how the interval refusal is reported: as the
+   * signal the panel turns into "deliver anyway?", or as a plain error for a
+   * task that cannot be delivered twice (a `new_once` one). A task that is
+   * executing is never a fallback: a clone would deliver the same reminder a
+   * second time.
    * @param res - the HTTP response to answer.
    * @param task - the automation row.
    * @param intervalFallback - whether "inside the interval" is a fallback signal.
@@ -811,11 +1014,20 @@ export function createAutomationSurface(options) {
       return
     }
     if (result.code === 'schedule_execution_pending') {
-      if (intervalFallback) {
+      const reason = await pendingReasonOf(service, task.id)
+      if (reason === 'missing') {
+        sendJson(res, 404, failure('schedule_not_found', '任务不存在或已删除。'))
+        return
+      }
+      if (reason === 'executing') {
+        sendJson(res, 409, failure('schedule-execution-active', '该任务正在投递中，请等这次投递结束后再试。'))
+        return
+      }
+      if (reason === 'interval' && intervalFallback) {
         sendJson(res, 409, failure('schedule-delivery-interval', '该任务仍在投递间隔内。'))
         return
       }
-      sendJson(res, 409, failure('schedule_execution_pending', '该任务正在投递，请稍后再试。'))
+      sendJson(res, 409, failure('schedule_execution_pending', '该任务上一次投递尚未结束，请稍后再试。'))
       return
     }
     // The returned entry already carries the delivered destination, so the panel
@@ -859,6 +1071,13 @@ export function createAutomationSurface(options) {
     }
     if (typeof task.title !== 'string' || typeof task.prompt !== 'string') {
       sendJson(res, 409, failure('schedule-run-failed', '该任务的名称或内容无效，无法立即投递。'))
+      return
+    }
+    // A delivery already queued or running owns this task's slot. Delivering
+    // again here would send the same reminder twice, so refuse before the Host
+    // ever sees the request.
+    if (task.executionActive === true) {
+      sendJson(res, 409, failure('schedule-execution-active', '该任务正在投递中，请等这次投递结束后再试。'))
       return
     }
     if (task.target?.kind === 'new_once' || !withinInterval) {

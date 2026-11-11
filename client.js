@@ -1605,8 +1605,10 @@ window.__ModuleLoader__.load({
           return `${tr('auto.daily')} ${String(task.time ?? '').slice(0, 5)}`.trim();
         case 'weekly':
           return `${tr('auto.weekly')} ${(task.weekdays ?? []).map((day) => tr(`auto.weekday.${WEEKDAY_KEYS[day] ?? 'mon'}`)).join('、')} ${String(task.time ?? '').slice(0, 5)}`.trim();
-        case 'cron':
-          return tr('auto.custom');
+        case 'cron': {
+          const expression = typeof task.expression === 'string' ? task.expression.trim() : '';
+          return expression.length > 0 ? tr('auto.cronSummary').replace('{expr}', expression) : tr('auto.custom');
+        }
         case 'rrule':
           return rruleSummaryOf(task, tr);
         default:
@@ -1663,8 +1665,22 @@ window.__ModuleLoader__.load({
     /** Local `HH:mm:ss` of one instant. */
     const clockOf = (when) => `${String(when.getHours()).padStart(2, '0')}:${String(when.getMinutes()).padStart(2, '0')}:${String(when.getSeconds()).padStart(2, '0')}`;
 
-    /** Pad a `HH:mm` or `HH:mm:ss` value to seconds. */
-    const withSeconds = (value) => (typeof value === 'string' && /^\d{1,2}:\d{2}$/.test(value) ? `${value}:00` : value);
+    /**
+     * Normalise a stored clock to `HH:mm:ss`.
+     *
+     * The Host stores `time` as a full clock and with millisecond precision
+     * (`09:00:00.000`), which the `<input type="time">` element and the Host's own
+     * `HH:mm[:ss]` request validator both reject. Truncating to seconds here is
+     * what keeps a daily/weekly task editable at all.
+     * @param value - stored clock, `HH:mm` or longer.
+     * @returns the padded `HH:mm:ss` clock, or the input unchanged.
+     */
+    const withSeconds = (value) => {
+      if (typeof value !== 'string') return value;
+      const match = /^(\d{1,2}):(\d{2})(?::(\d{2}))?(?:\.\d+)?$/.exec(value.trim());
+      if (match === null) return value;
+      return `${match[1].padStart(2, '0')}:${match[2]}:${match[3] ?? '00'}`;
+    };
 
     /** `HHmmss` body for an RRULE `DTSTART`. */
     const rruleClock = (value) => withSeconds(value).replace(/:/g, '');
@@ -1678,6 +1694,9 @@ window.__ModuleLoader__.load({
 
     /**
      * Which repeat choice in the editor describes one stored task.
+     *
+     * A cron task keeps its cron form: presenting it as an RRULE would show a
+     * fabricated rule and silently rewrite the expression on save.
      * @param task - one catalog row, or null.
      * @returns the editor kind.
      */
@@ -1692,7 +1711,8 @@ window.__ModuleLoader__.load({
       }
       if (kind === 'daily') return 'daily';
       if (kind === 'weekly') return 'weekly';
-      if (kind === 'rrule' || kind === 'cron') {
+      if (kind === 'cron') return 'cron';
+      if (kind === 'rrule') {
         if (/FREQ=WEEKLY/i.test(rule) && /BYDAY=MO,TU,WE,TH,FR/i.test(rule)) return 'weekdays';
         if (/FREQ=MONTHLY/i.test(rule) && /BYMONTHDAY=/i.test(rule)) return 'monthly';
         return 'rrule';
@@ -1742,12 +1762,22 @@ window.__ModuleLoader__.load({
         weekday: Array.isArray(task?.weekdays) && task.weekdays.length > 0 ? task.weekdays[0] : 1,
         monthDay: `${monthDayOf(task?.rrule)}`,
         rrule: task?.rrule ?? `DTSTART;TZID=${timeZone()}:${dateOf(soon).replace(/-/g, '')}T${rruleClock(clockOf(soon))}\nRRULE:FREQ=WEEKLY;BYDAY=MO`,
+        cron: typeof task?.expression === 'string' && task.expression.length > 0 ? task.expression : '0 9 * * *',
         targetKind: target.kind === 'session' ? 'session' : target.kind === 'new' ? 'new' : 'new_once',
         sessionId: target.kind === 'session' ? target.sessionId : '',
         cwd: target.cwd ?? '',
+        // Kept so saving an edit cannot silently drop the preset the task was
+        // created with.
+        agentPreset: typeof target.agentPreset === 'string' ? target.agentPreset : '',
         autoClean: task !== null && task !== undefined && cleanFlags !== undefined
           && cleanFlags[task.id] === true,
-        active: task?.status !== 'paused',
+        // `paused` means "do not run", `active` means "running", and `ended` is a
+        // terminal state that must not be re-armed by an ordinary edit.
+        active: task === null || task === undefined
+          ? true
+          : task.status === 'paused' ? false : task.status === 'active' ? true : undefined,
+        // The revision this draft was rendered from, for the Host's conflict check.
+        updatedAt: typeof task?.updatedAt === 'string' ? task.updatedAt : null,
       };
       return draft;
     };
@@ -1789,6 +1819,13 @@ window.__ModuleLoader__.load({
         }
         case 'rrule':
           return draft.rrule.trim().length > 0 ? { kind: 'rrule', rrule: draft.rrule } : undefined;
+        case 'cron': {
+          const expression = typeof draft.cron === 'string' ? draft.cron.trim() : '';
+          // Five to seven whitespace-separated fields, the shape every cron
+          // evaluator the Host accepts understands.
+          if (expression.split(/\s+/).filter((part) => part.length > 0).length < 5) return undefined;
+          return { kind: 'cron', cron: { expression, time_zone: zone } };
+        }
         default:
           return undefined;
       }
@@ -1799,9 +1836,15 @@ window.__ModuleLoader__.load({
         if (typeof draft.sessionId !== 'string' || draft.sessionId.length === 0) return undefined;
         return { kind: 'session', sessionId: draft.sessionId };
       }
-      return draft.cwd.length > 0
+      const target = draft.cwd.length > 0
         ? { kind: draft.targetKind, cwd: draft.cwd }
         : { kind: draft.targetKind };
+      // The Host keeps this in `target.create`; dropping it silently reset a task
+      // to the default persona on every edit.
+      if (typeof draft.agentPreset === 'string' && draft.agentPreset.length > 0) {
+        target.agentPreset = draft.agentPreset;
+      }
+      return target;
     };
 
     /**
@@ -1831,6 +1874,10 @@ window.__ModuleLoader__.load({
       const [draftError, setDraftError] = React.useState('');
       const [confirm, setConfirm] = React.useState(null);
       const [intervalRun, setIntervalRun] = React.useState(null);
+      const [conflict, setConflict] = React.useState(null);
+      // Whether the open draft holds an edit the human made. Only an untouched
+      // draft may adopt a newer revision from the polling list.
+      const [draftDirty, setDraftDirty] = React.useState(false);
       const [bindTasks, setBindTasks] = React.useState([]);
       const [bindPicks, setBindPicks] = React.useState(() => new Set());
       const [cleanPending, setCleanPending] = React.useState(false);
@@ -1930,6 +1977,8 @@ window.__ModuleLoader__.load({
         setDraftError('');
         setNotice(null);
         setActionError('');
+        setConflict(null);
+        setDraftDirty(false);
       };
 
       /** The stock page's "create in a session": a new chat seeded with a create request. */
@@ -1950,6 +1999,8 @@ window.__ModuleLoader__.load({
         setRecords([]);
         setDraftError('');
         setActionError('');
+        setConflict(null);
+        setDraftDirty(false);
         if (typeof task?.id === 'string' && task.id.length > 0) void loadRecords(task.id);
       };
 
@@ -1958,11 +2009,29 @@ window.__ModuleLoader__.load({
         setDetailTab('edit');
         setDraftError('');
         setRecords([]);
+        setConflict(null);
+        setDraftDirty(false);
       };
 
-      const updateDraft = (patch) => setDraft((current) => (current === null ? current : { ...current, ...patch }));
+      const updateDraft = (patch) => {
+        setDraftDirty(true);
+        setDraft((current) => (current === null ? current : { ...current, ...patch }));
+      };
 
-      const saveDraft = async () => {
+      // A delivery bumps the task's revision without touching anything the
+      // drawer edits, and the panel re-reads the list every 20 s. Adopting the
+      // new revision while the draft is untouched keeps that from turning into a
+      // bogus conflict (and the human's unsaved text into a dead end).
+      React.useEffect(() => {
+        if (draft === null || draft.id === '' || draftDirty) return;
+        const row = rows.find((task) => task.id === draft.id);
+        if (row === undefined) return;
+        if (typeof row.updatedAt !== 'string' || row.updatedAt === draft.updatedAt) return;
+        setDraft((current) => (current === null || current.id !== draft.id ? current : { ...current, updatedAt: row.updatedAt }));
+      }, [rows, draft, draftDirty]);
+
+      const saveDraft = async (options) => {
+        const force = options?.force === true;
         if (draft === null || busy !== '') return;
         const timing = timingOfDraft(draft);
         const target = targetOfDraft(draft);
@@ -1987,25 +2056,43 @@ window.__ModuleLoader__.load({
         // Only a one-shot rule ends on its own, so only it can be cleaned up
         // after delivery; a recurring rule keeps the flag off.
         const clean = (draft.kind === 'delay' || draft.kind === 'once') && draft.autoClean === true;
+        // Send `active` only when the draft actually flips the stored state. An
+        // ended task is terminal, so it must carry no opinion at all: `true`
+        // would make the Host treat the save as a resume (an English
+        // `not_future` error, or a quietly re-armed task), and resetting a
+        // running task's schedule on every edit is pointless.
+        const status = panelTask?.status;
+        const activePatch = draft.active === true
+          ? (status === 'active' ? undefined : true)
+          : draft.active === false
+            ? (status === 'paused' ? undefined : false)
+            : undefined;
+        const request = {
+          title: draft.title.trim(),
+          prompt: draft.prompt,
+          timing,
+          target,
+          ...(activePatch === undefined ? {} : { active: activePatch }),
+          autoClean: clean,
+        };
         const result = draft.id === ''
-          ? await automationCall('create', {
-            title: draft.title.trim(),
-            prompt: draft.prompt,
-            timing,
-            target,
-            autoClean: clean,
-          })
+          ? await automationCall('create', request)
           : await automationCall('update', {
             id: draft.id,
-            title: draft.title.trim(),
-            prompt: draft.prompt,
-            timing,
-            target,
-            active: draft.active,
-            autoClean: clean,
+            ...request,
+            // The Host compares this with the stored revision, so a save from a
+            // drawer someone else has since updated is reported instead of
+            // silently winning. A confirmed overwrite drops it.
+            ...(force || typeof draft.updatedAt !== 'string' ? {} : { expectedUpdatedAt: draft.updatedAt }),
           });
         setBusy('');
         if (!result.ok) {
+          // The task changed under this drawer. Keep the human's text and let
+          // them choose between keeping the other change and overwriting it.
+          if (!force && draft.id !== '' && result.code === 'schedule_conflict') {
+            setConflict({ title: draft.title });
+            return;
+          }
           setDraftError(result.error);
           return;
         }
@@ -2035,7 +2122,14 @@ window.__ModuleLoader__.load({
         }
         announce(tr(next ? 'auto.resumeOne' : 'auto.pauseOne').replace('{name}', task.title), next ? 'success' : 'warn');
         await load();
-        if (draft !== null && draft.id === task.id) updateDraft({ active: next });
+        // Keep the open draft in step with the row it belongs to, so a save after
+        // pausing does not report a stale revision as a conflict.
+        if (draft !== null && draft.id === task.id) {
+          updateDraft({
+            active: next,
+            updatedAt: typeof result.value?.updatedAt === 'string' ? result.value.updatedAt : draft.updatedAt,
+          });
+        }
       };
 
       /**
@@ -2062,7 +2156,9 @@ window.__ModuleLoader__.load({
         if (!result.ok) {
           // The Host's own delivery is the one that records a run. A task still
           // inside its interval is refused there; the fallback delivers anyway but
-          // cannot report a run record, so the human has to accept that.
+          // cannot report a run record, so the human has to accept that. A task
+          // that is executing right now is a different answer: delivering again
+          // would send the same reminder twice, so there is nothing to confirm.
           if (!confirmed && result.code === 'schedule-delivery-interval') {
             setIntervalRun(task);
             return;
@@ -2085,6 +2181,12 @@ window.__ModuleLoader__.load({
        */
       const requestRun = (task) => {
         if (busy !== '') return;
+        // The catalog marks a task whose delivery is queued or running. Nothing
+        // to confirm here: a second delivery would duplicate the reminder.
+        if (task?.executionActive === true) {
+          setActionError(tr('auto.deliveringNote'));
+          return;
+        }
         if (withinInterval(task)) {
           setIntervalRun(task);
           return;
@@ -2261,6 +2363,9 @@ window.__ModuleLoader__.load({
         for (const task of bindTasks) {
           if (task?.target?.kind === 'session') bound.add(task.target.sessionId);
           for (const id of Array.isArray(task?.involvedSessionIds) ? task.involvedSessionIds : []) bound.add(id);
+          // Conversations an earlier binding already covers, identified by the
+          // copies it created rather than by a title match.
+          for (const id of Array.isArray(task?.copySessionIds) ? task.copySessionIds : []) bound.add(id);
         }
         return sessionOptions.filter((session) => !bound.has(session.id));
       }, [sessionOptions, bindTasks]);
@@ -2445,7 +2550,8 @@ window.__ModuleLoader__.load({
             h('option', { value: 'monthly' }, tr('auto.repeat.monthly')),
             h('option', { value: 'delay' }, tr('auto.repeat.delay')),
             h('option', { value: 'once' }, tr('auto.repeat.once')),
-            h('option', { value: 'rrule' }, tr('auto.repeat.rrule')))),
+            h('option', { value: 'rrule' }, tr('auto.repeat.rrule')),
+            h('option', { value: 'cron' }, tr('auto.repeat.cron')))),
           draft.kind === 'delay'
             ? h('div', { className: 'ove-inline' },
               h('label', { className: 'ove-field' },
@@ -2553,6 +2659,18 @@ window.__ModuleLoader__.load({
                     }),
                   }, tr(example.label))))))
             : null,
+          draft.kind === 'cron'
+            ? h('label', { className: 'ove-field' },
+              h('span', { className: 'ove-label' }, tr('auto.cronExpr')),
+              h('input', {
+                className: 'ove-input ove-cron',
+                value: draft.cron,
+                spellCheck: false,
+                placeholder: '0 9 * * 1-5',
+                onChange: (event) => updateDraft({ cron: event.target.value }),
+              }),
+              h('span', { className: 'ove-hint' }, tr('auto.cronHint')))
+            : null,
           oneShot
             ? h('div', { className: 'ove-field' },
               h('label', { className: 'ove-check-row' },
@@ -2569,11 +2687,13 @@ window.__ModuleLoader__.load({
               h('button', {
                 type: 'button',
                 className: `ove-btn ${withinInterval(panelTask) ? 'ove-btn-warn' : 'ove-btn-ok'}`,
-                disabled: busy !== '',
+                disabled: busy !== '' || panelTask.executionActive === true,
                 onClick: () => requestRun(panelTask),
-              }, busy === 'run'
-                ? tr('auto.running')
-                : tr(withinInterval(panelTask) ? 'auto.runInterval' : 'auto.run')),
+              }, panelTask.executionActive === true
+                ? tr('auto.delivering')
+                : busy === 'run'
+                  ? tr('auto.running')
+                  : tr(withinInterval(panelTask) ? 'auto.runInterval' : 'auto.run')),
               h('button', {
                 type: 'button',
                 className: 'ove-btn ove-btn-warn',
@@ -2586,15 +2706,19 @@ window.__ModuleLoader__.load({
                 disabled: busy !== '',
                 onClick: () => setConfirm({ ids: [panelTask.id], title: panelTask.title }),
               }, tr('auto.deleteTask')))
-            : null,
-          draftError.length > 0 ? h('p', { className: 'ove-error' }, draftError) : null,
-          h('div', { className: 'ove-detail-foot' },
+            : null),
+        // The save control lives outside the scrolling body, so it stays visible
+        // however long the form gets.
+        detailTab === 'records' && draft.id !== ''
+          ? null
+          : h('div', { className: 'ove-detail-foot' },
+            draftError.length > 0 ? h('p', { className: 'ove-error' }, draftError) : null,
             h('button', {
               type: 'button',
               className: 'ove-primary ove-detail-save',
               disabled: busy !== '',
               onClick: () => void saveDraft(),
-            }, busy === 'save' ? tr('auto.saving') : tr('auto.save')))));
+            }, busy === 'save' ? tr('auto.saving') : tr('auto.save'))));
 
       return h('div', { className: 'ove-auto' },
         h('style', { key: 'styles', 'data-plugin-css': `${NS}-automation` }, CSS),
@@ -2819,15 +2943,19 @@ window.__ModuleLoader__.load({
                 h('button', {
                   type: 'button',
                   className: `ove-hover-btn ${withinInterval(task) ? 'ove-hover-warn' : 'ove-hover-ok'}`,
-                  title: tr(withinInterval(task) ? 'auto.runIntervalTitle' : 'auto.run'),
-                  disabled: busy !== '',
+                  title: tr(task.executionActive === true
+                    ? 'auto.deliveringNote'
+                    : withinInterval(task) ? 'auto.runIntervalTitle' : 'auto.run'),
+                  disabled: busy !== '' || task.executionActive === true,
                   onClick: (event) => {
                     event.stopPropagation();
                     requestRun(task);
                   },
-                }, busy === 'run'
-                  ? tr('auto.running')
-                  : tr(withinInterval(task) ? 'auto.runInterval' : 'auto.run')),
+                }, task.executionActive === true
+                  ? tr('auto.delivering')
+                  : busy === 'run'
+                    ? tr('auto.running')
+                    : tr(withinInterval(task) ? 'auto.runInterval' : 'auto.run')),
                 task.status === 'active' || task.status === 'paused'
                   ? h('button', {
                     type: 'button',
@@ -2876,6 +3004,30 @@ window.__ModuleLoader__.load({
                     void runNow(task, { confirmed: true });
                   },
                 }, busy === 'run' ? tr('auto.running') : tr('auto.intervalConfirm')))))
+          : null),
+
+        portal(conflict !== null
+          ? h('div', { className: 'ove-overlay ove-overlay-portal' },
+            h('div', { className: 'ove-dialog', role: 'dialog', 'aria-modal': 'true' },
+              h('h2', { className: 'ove-dialog-title' }, tr('auto.conflictTitle')),
+              h('p', { className: 'ove-dialog-desc' }, tr('auto.conflictDesc')),
+              conflict.title.length > 0 ? h('p', { className: 'ove-dialog-target' }, conflict.title) : null,
+              h('div', { className: 'ove-dialog-actions' },
+                h('button', {
+                  type: 'button',
+                  className: 'ove-btn',
+                  disabled: busy !== '',
+                  onClick: () => setConflict(null),
+                }, tr('cancel')),
+                h('button', {
+                  type: 'button',
+                  className: 'ove-btn ove-btn-warn',
+                  disabled: busy !== '',
+                  onClick: () => {
+                    setConflict(null);
+                    void saveDraft({ force: true });
+                  },
+                }, busy === 'save' ? tr('auto.saving') : tr('auto.conflictOverwrite')))))
           : null),
 
         portal(confirm !== null

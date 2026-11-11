@@ -534,11 +534,13 @@
 .ove-empty-art { color: var(--dsw-alias-label-tertiary); opacity: .45; display: flex; }
 .ove-empty-text { margin: 0; font-size: 14px; line-height: 22px; color: var(--dsw-alias-label-tertiary); }
 
+/* Fills the panel's full height: the old `100vh - 110px` guess left a blank
+   strip under the footer and stole that height from the scrollable form. */
 .ove-detail {
-  flex: 0 0 380px; width: 380px; max-width: 50%; height: 100%; max-height: calc(100vh - 110px); display: flex; flex-direction: column; min-height: 0; overflow: hidden;
+  flex: 0 0 380px; width: 380px; max-width: 50%; height: 100%; max-height: 100%; align-self: stretch; display: flex; flex-direction: column; min-height: 0; overflow: hidden;
   border-left: .5px solid var(--dsw-alias-border-l1); background: var(--dsw-alias-bg-base);
 }
-.ove-detail-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 14px 16px 6px; }
+.ove-detail-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px 16px 4px; }
 .ove-detail-actions { display: flex; align-items: center; gap: 6px; }
 .ove-detail-actions-row { display: flex; gap: 8px; padding-top: 4px; }
 .ove-detail-tabs {
@@ -557,20 +559,24 @@
   border-bottom-color: var(--dsw-alias-label-primary);
 }
 .ove-primary-sm { height: 28px; padding: 0 12px; font-size: 12px; }
-.ove-detail-body { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 8px 16px 20px; display: grid; gap: 14px; align-content: start; }
+.ove-detail-body { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 6px 16px 12px; display: grid; gap: 11px; align-content: start; }
+/* Outside the scrolling body, so the save controls never need a scroll. */
 .ove-detail-foot {
-  display: flex; justify-content: stretch; gap: 8px; padding: 10px 0 2px;
-  border-top: .5px solid var(--dsw-alias-border-l1); margin-top: 4px;
+  flex: 0 0 auto; display: grid; gap: 8px; padding: 8px 16px 10px;
+  border-top: .5px solid var(--dsw-alias-border-l1); background: var(--dsw-alias-bg-base);
 }
 .ove-detail-save { width: 100%; }
-.ove-field { display: grid; gap: 6px; }
+.ove-field { display: grid; gap: 5px; }
+.ove-records { gap: 8px; }
+.ove-unit { flex: 0 0 104px; }
+.ove-cron { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 12px; }
 .ove-label { font-size: 13px; line-height: 20px; color: var(--dsw-alias-label-secondary); }
 .ove-input, .ove-select, .ove-textarea {
   box-sizing: border-box; width: 100%; font: inherit; font-size: 13px; line-height: 20px;
   padding: 8px 10px; border-radius: 10px; border: .5px solid var(--dsw-alias-border-l2);
   background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary);
 }
-.ove-textarea { min-height: 110px; resize: vertical; }
+.ove-textarea { min-height: 76px; resize: vertical; }
 .ove-rule { min-height: 96px; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 12px; }
 .ove-inline { display: flex; gap: 8px; }
 .ove-inline > .ove-field { flex: 1 1 0; min-width: 0; }
