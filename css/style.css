@@ -608,7 +608,36 @@
 .ove-session-pick { max-height: 260px; overflow: auto; display: grid; gap: 2px; padding: 4px; border-radius: 10px; background: var(--dsw-alias-bg-base); }
 .ove-session-option { display: flex; align-items: center; gap: 10px; padding: 7px 8px; border-radius: 8px; font-size: 13px; line-height: 20px; cursor: pointer; transition: background .12s ease; }
 .ove-session-option:hover { background: var(--dsw-alias-bg-layer-1); }
-.ove-session-option span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ove-session-label { display: flex; align-items: baseline; min-width: 0; overflow: hidden; }
+.ove-session-ws { flex: 0 0 auto; font-weight: 700; }
+.ove-session-sep { flex: 0 0 auto; margin: 0 1px; color: var(--dsw-alias-label-tertiary); }
+.ove-session-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ove-session-tag { flex: 0 0 auto; color: var(--dsw-alias-label-tertiary); }
+/* Conversations are picked from a combobox instead of a native <select>, so the
+   workspace half can be bold and the list can react while it is moved over. */
+.ove-combo { position: relative; }
+.ove-combo-btn {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  text-align: left; cursor: pointer;
+}
+.ove-combo-btn[data-empty="true"] .ove-combo-value { color: var(--dsw-alias-label-tertiary); }
+.ove-combo-btn:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 2px; }
+.ove-combo-value { display: flex; align-items: baseline; min-width: 0; overflow: hidden; white-space: nowrap; }
+.ove-combo-caret { flex: 0 0 auto; font-size: 10px; line-height: 20px; color: var(--dsw-alias-label-tertiary); }
+.ove-combo-list {
+  position: fixed; z-index: 1200; box-sizing: border-box; overflow: auto;
+  padding: 4px; border-radius: 10px; border: .5px solid var(--dsw-alias-border-l2);
+  background: var(--dsw-alias-bg-base); box-shadow: 0 14px 36px rgba(15, 23, 42, .18);
+}
+.ove-combo-option {
+  display: flex; align-items: baseline; padding: 6px 8px; border-radius: 8px;
+  font-size: 13px; line-height: 20px; white-space: nowrap; overflow: hidden; cursor: pointer;
+}
+.ove-combo-option[data-active="true"] { background: color-mix(in srgb, #2563eb 12%, transparent); }
+.ove-combo-option[aria-selected="true"] { font-weight: 500; }
+.ove-combo-empty { margin: 0; padding: 8px; font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-tertiary); }
+/* The row in the workspace list that the current option points at. */
+.ove-sidebar-focus { outline: 2px solid #2563eb; outline-offset: -2px; border-radius: 6px; }
 .ove-notice {
   margin: 0 0 8px; padding: 6px 10px; border-radius: 8px;
   font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-secondary);

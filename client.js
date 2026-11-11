@@ -1848,6 +1848,255 @@ window.__ModuleLoader__.load({
     };
 
     /**
+     * One conversation as "workspace/name", with the workspace half emphasised.
+     * @param session - an entry carrying `workspace`, `label` and `archived`.
+     * @param tr - translator, for the archived suffix.
+     * @returns the nodes to render inside a row or trigger.
+     */
+    const sessionNodes = (session, tr) => [
+      session.workspace
+        ? h('span', { className: 'ove-session-ws', key: 'workspace' }, session.workspace)
+        : null,
+      session.workspace ? h('span', { className: 'ove-session-sep', key: 'separator' }, '/') : null,
+      h('span', { className: 'ove-session-name', key: 'name' }, session.label),
+      session.archived
+        ? h('span', { className: 'ove-session-tag', key: 'tag' }, `（${tr('auto.archived')}）`)
+        : null,
+    ];
+
+    /**
+     * The same pair as one plain string, for titles and failure messages.
+     * @param session - an entry carrying `workspace` and `label`.
+     * @returns "workspace/name", or just the name when the workspace is unknown.
+     */
+    const sessionPathText = (session) => (session.workspace.length > 0
+      ? `${session.workspace}/${session.label}`
+      : session.label);
+
+    /**
+     * Whether a sidebar row is actually on screen: laid out, and intersecting
+     * both the viewport and the scroll box that holds it.
+     * @param node - the session row in the workspace list.
+     * @returns true when the row can be seen.
+     */
+    const rowIsVisible = (node) => {
+      const box = node.getBoundingClientRect();
+      if (box.width <= 0 || box.height <= 0) return false;
+      let reachTop = 0;
+      let reachBottom = window.innerHeight;
+      let parent = node.parentElement;
+      while (parent !== null && parent !== document.body) {
+        const style = window.getComputedStyle(parent);
+        if (/(auto|scroll|overlay)/u.test(style.overflowY) && parent.scrollHeight > parent.clientHeight) {
+          const frame = parent.getBoundingClientRect();
+          reachTop = Math.max(reachTop, frame.top);
+          reachBottom = Math.min(reachBottom, frame.bottom);
+          break;
+        }
+        parent = parent.parentElement;
+      }
+      return box.bottom > reachTop && box.top < reachBottom;
+    };
+
+    /**
+     * Conversation combobox for the automation drawer. A native <select> can
+     * neither emphasise the workspace half nor react to the pointer moving
+     * through the options, so it is rebuilt here: every row reads
+     * "workspace/name", conversations sharing a title stay separate, and
+     * moving over one outlines its row in the workspace list.
+     * @param props - options, the chosen session id, and the change handler.
+     * @returns the trigger button and its portalled list.
+     */
+    function SessionPicker({ options, value, onChange, tr }) {
+      const [open, setOpen] = React.useState(false);
+      const [cursor, setCursor] = React.useState(-1);
+      const [box, setBox] = React.useState(null);
+      const buttonRef = React.useRef(null);
+      const listRef = React.useRef(null);
+
+      const selectedIndex = options.findIndex((option) => option.id === value);
+      const selected = selectedIndex >= 0 ? options[selectedIndex] : null;
+      const active = open && cursor >= 0 && cursor < options.length ? options[cursor] : null;
+
+      const close = React.useCallback(() => {
+        setOpen(false);
+        setCursor(-1);
+        setBox(null);
+      }, []);
+
+      /** Anchor the list to the trigger, flipping above when room runs out. */
+      const place = React.useCallback(() => {
+        const button = buttonRef.current;
+        if (button === null) return;
+        const rect = button.getBoundingClientRect();
+        const gap = 6;
+        const below = window.innerHeight - rect.bottom - gap - 8;
+        const above = rect.top - gap - 8;
+        const flip = below < 150 && above > below;
+        const height = Math.max(96, Math.min(260, flip ? above : below));
+        setBox({
+          left: Math.round(rect.left),
+          width: Math.max(180, Math.round(rect.width)),
+          top: Math.round(flip ? rect.bottom - height - gap : rect.bottom + gap),
+          maxHeight: Math.round(height),
+        });
+      }, []);
+
+      const toggle = () => {
+        if (open) {
+          close();
+          return;
+        }
+        place();
+        setCursor(selectedIndex);
+        setOpen(true);
+      };
+
+      // The list is anchored to the button, so a scroll anywhere else (or a
+      // resize) closes it instead of leaving it stranded over the page.
+      React.useEffect(() => {
+        if (!open) return undefined;
+        const onScroll = (event) => {
+          if (listRef.current !== null && event.target instanceof Node && listRef.current.contains(event.target)) return;
+          close();
+        };
+        const onResize = () => close();
+        window.addEventListener('scroll', onScroll, true);
+        window.addEventListener('resize', onResize);
+        return () => {
+          window.removeEventListener('scroll', onScroll, true);
+          window.removeEventListener('resize', onResize);
+        };
+      }, [open, close]);
+
+      React.useEffect(() => {
+        if (!open) return undefined;
+        const onPointer = (event) => {
+          const target = event.target;
+          if (!(target instanceof Node)) return;
+          if (buttonRef.current?.contains(target) === true) return;
+          if (listRef.current?.contains(target) === true) return;
+          close();
+        };
+        document.addEventListener('mousedown', onPointer, true);
+        return () => document.removeEventListener('mousedown', onPointer, true);
+      }, [open, close]);
+
+      // The workspace list is the map: outline the conversation the pointer or
+      // the keyboard is on, but only while that row is actually visible there.
+      React.useEffect(() => {
+        if (active === null) return undefined;
+        const escape = typeof CSS !== 'undefined' && typeof CSS.escape === 'function'
+          ? CSS.escape(active.id)
+          : active.id;
+        const node = document.querySelector(`[data-row-key="session:${escape}"]`);
+        if (!(node instanceof HTMLElement) || !rowIsVisible(node)) return undefined;
+        node.classList.add('ove-sidebar-focus');
+        return () => node.classList.remove('ove-sidebar-focus');
+      }, [active]);
+
+      React.useEffect(() => {
+        if (!open || cursor < 0) return undefined;
+        const node = listRef.current === null ? null : listRef.current.querySelector(`[data-index="${cursor}"]`);
+        node?.scrollIntoView?.({ block: 'nearest' });
+        return undefined;
+      }, [open, cursor]);
+
+      const pick = (option) => {
+        close();
+        if (option.id !== value) onChange(option.id);
+      };
+
+      const move = (step) => {
+        if (options.length === 0) return;
+        const start = cursor < 0 ? (step > 0 ? -1 : 0) : cursor;
+        setCursor(Math.max(0, Math.min(options.length - 1, start + step)));
+      };
+
+      const onKeyDown = (event) => {
+        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+          event.preventDefault();
+          if (!open) {
+            place();
+            setCursor(selectedIndex);
+            setOpen(true);
+            return;
+          }
+          move(event.key === 'ArrowDown' ? 1 : -1);
+          return;
+        }
+        if (!open) return;
+        if (event.key === 'Home') {
+          event.preventDefault();
+          setCursor(0);
+          return;
+        }
+        if (event.key === 'End') {
+          event.preventDefault();
+          setCursor(options.length - 1);
+          return;
+        }
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          const option = options[cursor];
+          if (option !== undefined) pick(option);
+          return;
+        }
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          close();
+          return;
+        }
+        if (event.key === 'Tab') close();
+      };
+
+      return h('div', { className: 'ove-combo' },
+        h('button', {
+          ref: buttonRef,
+          type: 'button',
+          className: 'ove-select ove-combo-btn',
+          role: 'combobox',
+          'aria-haspopup': 'listbox',
+          'aria-expanded': open,
+          'data-empty': selected === null,
+          title: selected === null ? tr('auto.pickSession') : sessionPathText(selected),
+          onClick: toggle,
+          onKeyDown,
+        },
+        h('span', { className: 'ove-combo-value' }, selected === null
+          ? tr('auto.pickSession')
+          : sessionNodes(selected, tr)),
+        h('span', { className: 'ove-combo-caret', 'aria-hidden': 'true' }, '▾')),
+        open && box !== null
+          ? ReactDOM.createPortal(h('div', {
+            ref: listRef,
+            className: 'ove-combo-list',
+            role: 'listbox',
+            style: {
+              left: `${box.left}px`,
+              top: `${box.top}px`,
+              width: `${box.width}px`,
+              maxHeight: `${box.maxHeight}px`,
+            },
+          },
+          options.length === 0
+            ? h('p', { className: 'ove-combo-empty' }, tr('auto.bindEmpty'))
+            : options.map((option, index) => h('div', {
+              key: option.id,
+              'data-index': index,
+              className: 'ove-combo-option',
+              role: 'option',
+              'aria-selected': option.id === value,
+              'data-active': index === cursor,
+              title: sessionPathText(option),
+              onMouseEnter: () => setCursor(index),
+              onMouseDown: (event) => event.preventDefault(),
+              onClick: () => pick(option),
+            }, sessionNodes(option, tr)))), document.body)
+          : null);
+    }
+
+    /**
      * Automation task management beside the stock Automation tasks page:
      * the same list, tabs and search, plus in-place creation, bulk deletion,
      * multi-conversation binding and the auto-clean flag.
@@ -2293,7 +2542,11 @@ window.__ModuleLoader__.load({
           announce(`${done}${skippedText}`, 'success');
         } else {
           setActionError(tr('auto.bindFailed').replace('{names}', failed
-            .map((entry) => (entry.message ? `${sessionTitle(entry.sessionId)}（${entry.message}）` : sessionTitle(entry.sessionId)))
+            .map((entry) => {
+              const known = sessionInfo(entry.sessionId);
+              const name = known === null ? sessionTitle(entry.sessionId) : sessionPathText(known);
+              return entry.message ? `${name}（${entry.message}）` : name;
+            })
             .join('、')));
         }
         await load();
@@ -2312,9 +2565,14 @@ window.__ModuleLoader__.load({
           const record = recordOf(id);
           return Date.parse(record.updatedAt ?? record.createdAt ?? '') || 0;
         };
-        // Every sidebar conversation, tagged with the workspace that owns it. A
-        // conversation still carrying its workspace's name is an untitled
-        // placeholder; those are what filled the picker with identical rows.
+        // The workspace title is what tells two conversations with one name
+        // apart, so every candidate carries the workspace that owns it.
+        const ownerOf = (id) => {
+          const owner = items.find((item) => Array.isArray(item.sessionIds) && item.sessionIds.includes(id));
+          return owner === undefined ? '' : String(owner.title || owner.path || '').trim();
+        };
+        // Every sidebar conversation, tagged with its workspace. A conversation
+        // still carrying its workspace's name is an untitled placeholder.
         const candidates = [];
         const seen = new Set();
         for (const workspace of items) {
@@ -2326,25 +2584,22 @@ window.__ModuleLoader__.load({
             const title = titleOf(id);
             if (title.length === 0) continue;
             if (workspaceTitle.length > 0 && title === workspaceTitle) continue;
-            candidates.push({ id, title, stamp: stampOf(id) });
+            candidates.push({ id, title, workspace: workspaceTitle, stamp: stampOf(id) });
           }
         }
         for (const id of Object.keys(byId)) {
           if (seen.has(id) || archived.has(id)) continue;
           const title = titleOf(id);
           if (title.length === 0) continue;
-          candidates.push({ id, title, stamp: stampOf(id) });
+          candidates.push({ id, title, workspace: ownerOf(id), stamp: stampOf(id) });
         }
-        // One row per title: the newest conversation wins, so duplicate names
-        // collapse instead of repeating down the list.
-        const newest = new Map();
-        for (const session of candidates) {
-          const current = newest.get(session.title);
-          if (current === undefined || session.stamp > current.stamp) newest.set(session.title, session);
-        }
-        return [...newest.values()]
+        // Duplicate names are kept: the workspace half tells them apart, and
+        // hiding one would hide the conversation the human wants to pick.
+        return candidates
           .map((session) => ({ ...session, archived: false, label: session.title }))
-          .sort((a, b) => a.label.localeCompare(b.label));
+          .sort((a, b) => a.label.localeCompare(b.label)
+            || a.workspace.localeCompare(b.workspace)
+            || b.stamp - a.stamp);
       }, [sessions, workspaces]);
 
       /** Sessions a task may point at, plus its own archived target when it has one. */
@@ -2354,8 +2609,27 @@ window.__ModuleLoader__.load({
         if (sessionOptions.some((session) => session.id === current)) return sessionOptions;
         const record = sessions?.byId?.[current];
         const title = String(record?.displayTitle || current);
-        return [{ id: current, title, label: title, archived: true, stamp: 0 }, ...sessionOptions];
-      }, [sessionOptions, draft?.sessionId, sessions]);
+        const items = Array.isArray(workspaces?.items) ? workspaces.items : [];
+        const owner = items.find((item) => Array.isArray(item.sessionIds) && item.sessionIds.includes(current));
+        const workspace = owner === undefined ? '' : String(owner.title || owner.path || '').trim();
+        return [{ id: current, title, workspace, label: title, archived: true, stamp: 0 }, ...sessionOptions];
+      }, [sessionOptions, draft?.sessionId, sessions, workspaces]);
+
+      /** One conversation by id, qualified with its workspace when known. */
+      const sessionInfo = (id) => {
+        if (typeof id !== 'string' || id.length === 0) return null;
+        const known = sessionOptions.find((session) => session.id === id)
+          ?? targetSessions.find((session) => session.id === id);
+        if (known !== undefined) return known;
+        const items = Array.isArray(workspaces?.items) ? workspaces.items : [];
+        const owner = items.find((item) => Array.isArray(item.sessionIds) && item.sessionIds.includes(id));
+        return {
+          id,
+          label: sessionTitle(id),
+          workspace: owner === undefined ? '' : String(owner.title || owner.path || '').trim(),
+          archived: false,
+        };
+      };
 
       /** Conversations that do not already take part in one of the tasks being bound. */
       const bindCandidates = React.useMemo(() => {
@@ -2479,7 +2753,10 @@ window.__ModuleLoader__.load({
                     h('div', { className: 'ove-record-head' },
                       h('span', { className: 'ove-record-time' }, formatInstant(record.deliveredAt)),
                       h('span', { className: 'ove-record-target' },
-                        record.targetSessionId ? sessionTitle(record.targetSessionId) : '')),
+                        record.targetSessionId
+                          ? sessionNodes(sessionInfo(record.targetSessionId)
+                            ?? { workspace: '', label: sessionTitle(record.targetSessionId), archived: false }, tr)
+                          : '')),
                     h('p', { className: 'ove-record-prompt' },
                       typeof record.prompt === 'string' && record.prompt.length > 0
                         ? record.prompt
@@ -2512,16 +2789,12 @@ window.__ModuleLoader__.load({
           draft.targetKind === 'session'
             ? h('label', { className: 'ove-field' },
               h('span', { className: 'ove-label' }, tr('auto.session')),
-              h('select', {
-                className: 'ove-select',
+              h(SessionPicker, {
+                options: targetSessions,
                 value: draft.sessionId,
-                onChange: (event) => updateDraft({ sessionId: event.target.value }),
-              },
-              h('option', { value: '' }, tr('auto.pickSession')),
-              targetSessions.map((session) => h('option', {
-                key: session.id,
-                value: session.id,
-              }, session.archived ? `${session.label}（${tr('auto.archived')}）` : session.label))))
+                tr,
+                onChange: (sessionId) => updateDraft({ sessionId }),
+              }))
             : h('label', { className: 'ove-field' },
               h('span', { className: 'ove-label' }, tr('auto.workspace')),
               h('select', {
@@ -3078,7 +3351,7 @@ window.__ModuleLoader__.load({
                     return next;
                   }),
                 }),
-                h('span', null, session.label)))),
+                h('span', { className: 'ove-session-label' }, sessionNodes(session, tr))))),
               h('div', { className: 'ove-dialog-actions' },
                 h('button', {
                   type: 'button',
