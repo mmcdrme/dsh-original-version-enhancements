@@ -3426,15 +3426,14 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * Workspace chooser with the same combobox face as the conversation
-     * picker. A native `<select>` cannot report which option the pointer is on,
-     * so the sidebar row it belongs to could never be pointed at; a real list
-     * moves the highlight while the pointer travels.
-     * @param props - choices, the current path, a translator, a change callback,
-     * and a highlight callback (a path, or null to clear).
+     * One dropdown in the plugin's own combobox style: a button plus a portalled
+     * list. A native <select> cannot report which option the pointer is on, so
+     * an open list built this way can react while the pointer travels, and every
+     * chooser in the task editor shares one look.
+     * @param props - choices, the current value, change and active callbacks, and labels.
      * @returns the combobox.
      */
-    function WorkspacePicker({ options, value, onChange, onHighlight, tr }) {
+    function ComboSelect({ options, value, onChange, onActive, ariaLabel, placeholder }) {
       const [open, setOpen] = React.useState(false);
       const [cursor, setCursor] = React.useState(-1);
       const [box, setBox] = React.useState(null);
@@ -3446,13 +3445,18 @@ window.__ModuleLoader__.load({
       const selected = selectedIndex >= 0 ? options[selectedIndex] : null;
       const active = open && cursor >= 0 && cursor < options.length ? options[cursor] : null;
       const optionId = (index) => `${listId}-option-${index}`;
+      const labelOf = (option) => String(option?.label ?? option?.value ?? '');
+
+      const report = React.useCallback((next) => {
+        if (typeof onActive === 'function') onActive(next === null ? null : next.value);
+      }, [onActive]);
 
       const close = React.useCallback(() => {
         setOpen(false);
         setCursor(-1);
         setBox(null);
-        onHighlight(null);
-      }, [onHighlight]);
+        report(null);
+      }, [report]);
 
       const place = React.useCallback(() => {
         const button = buttonRef.current;
@@ -3479,7 +3483,7 @@ window.__ModuleLoader__.load({
         place();
         setCursor(selectedIndex);
         setOpen(true);
-        onHighlight(value);
+        report(selected);
       };
 
       // Outside pointer presses, scrolling anywhere else, and resizing all
@@ -3508,11 +3512,11 @@ window.__ModuleLoader__.load({
         };
       }, [open, close]);
 
-      // The row the caret or the pointer is on is the row the sidebar marks.
+      // Whatever the caret or the pointer is on is what the surface marks.
       React.useEffect(() => {
         if (!open || active === null) return;
-        onHighlight(active.value);
-      }, [open, active, onHighlight]);
+        report(active);
+      }, [open, active, report]);
 
       const pick = (option) => {
         close();
@@ -3560,7 +3564,11 @@ window.__ModuleLoader__.load({
         if (event.key === 'Tab') close();
       };
 
-      const label = selected === null ? (value.length > 0 ? value : tr('auto.workspaceDefault')) : selected.label;
+      const shown = selected === null
+        ? (typeof placeholder === 'string' && placeholder.length > 0
+          ? placeholder
+          : (typeof value === 'string' ? value : ''))
+        : labelOf(selected);
 
       return h('div', { className: 'ove-combo' },
         h('button', {
@@ -3572,12 +3580,13 @@ window.__ModuleLoader__.load({
           'aria-expanded': open,
           'aria-controls': open ? listId : undefined,
           'aria-activedescendant': open && cursor >= 0 ? optionId(cursor) : undefined,
-          'aria-label': tr('auto.workspace'),
-          title: selected === null ? value : selected.path,
+          'data-empty': selected === null && (typeof placeholder !== 'string' || placeholder.length === 0),
+          'aria-label': ariaLabel,
+          title: selected === null ? '' : (typeof selected.title === 'string' ? selected.title : labelOf(selected)),
           onClick: toggle,
           onKeyDown,
         },
-        h('span', { className: 'ove-combo-value' }, label),
+        h('span', { className: 'ove-combo-value' }, shown),
         h('span', { className: 'ove-combo-caret', 'aria-hidden': 'true' }, '▾')),
         open && box !== null
           ? overlayPortal(h('div', {
@@ -3585,7 +3594,7 @@ window.__ModuleLoader__.load({
             id: listId,
             className: 'ove-combo-list',
             role: 'listbox',
-            'aria-label': tr('auto.workspace'),
+            'aria-label': ariaLabel,
             style: {
               left: `${box.left}px`,
               top: `${box.top}px`,
@@ -3593,20 +3602,39 @@ window.__ModuleLoader__.load({
               maxHeight: `${box.maxHeight}px`,
             },
           },
-          options.map((option, index) => h('div', {
-            key: option.value.length > 0 ? option.value : 'default',
-            id: optionId(index),
-            'data-index': index,
-            className: 'ove-combo-option',
-            role: 'option',
-            'aria-selected': option.value === value,
-            'data-active': index === cursor,
-            title: option.path,
-            onMouseEnter: () => setCursor(index),
-            onMouseDown: (event) => event.preventDefault(),
-            onClick: () => pick(option),
-          }, option.label))))
+          options.length === 0
+            ? h('p', { className: 'ove-combo-empty' }, placeholder ?? '')
+            : options.map((option, index) => h('div', {
+              key: option.value.length > 0 ? option.value : `empty-${index}`,
+              id: optionId(index),
+              'data-index': index,
+              className: 'ove-combo-option',
+              role: 'option',
+              'aria-selected': option.value === value,
+              'data-active': index === cursor,
+              title: typeof option.title === 'string' ? option.title : labelOf(option),
+              onMouseEnter: () => setCursor(index),
+              onMouseDown: (event) => event.preventDefault(),
+              onClick: () => pick(option),
+            }, labelOf(option)))))
           : null);
+    }
+
+    /**
+     * The Workspace chooser: the shared combobox plus the sidebar mark it drives.
+     * @param props - choices, the current path, a translator, change and
+     * highlight callbacks.
+     * @returns the combobox.
+     */
+    function WorkspacePicker({ options, value, onChange, onHighlight, tr }) {
+      return h(ComboSelect, {
+        options,
+        value,
+        onChange,
+        onActive: onHighlight,
+        ariaLabel: tr('auto.workspace'),
+        placeholder: tr('auto.workspaceDefault'),
+      });
     }
 
     /**
@@ -4367,16 +4395,18 @@ window.__ModuleLoader__.load({
               value: draft.prompt,
               onChange: (event) => updateDraft({ prompt: event.target.value }),
             })),
-          h('label', { className: 'ove-field' },
+          h('div', { className: 'ove-field' },
             h('span', { className: 'ove-label' }, tr('auto.target')),
-            h('select', {
-              className: 'ove-select',
+            h(ComboSelect, {
+              options: [
+                { value: 'new_once', label: tr('auto.target.newOnce') },
+                { value: 'new', label: tr('auto.target.new') },
+                { value: 'session', label: tr('auto.target.session') },
+              ],
               value: draft.targetKind,
-              onChange: (event) => updateDraft({ targetKind: event.target.value }),
-            },
-            h('option', { value: 'new_once' }, tr('auto.target.newOnce')),
-            h('option', { value: 'new' }, tr('auto.target.new')),
-            h('option', { value: 'session' }, tr('auto.target.session')))),
+              ariaLabel: tr('auto.target'),
+              onChange: (value) => updateDraft({ targetKind: value }),
+            })),
           draft.targetKind === 'session'
             ? h('label', { className: 'ove-field' },
               h('span', { className: 'ove-label' }, tr('auto.session')),
@@ -4397,23 +4427,25 @@ window.__ModuleLoader__.load({
                 onHighlight: highlightWorkspaceChoice,
                 onChange: (cwd) => updateDraft({ cwd }),
               })),
-          h('label', { className: 'ove-field' },
+          h('div', { className: 'ove-field' },
             h('span', { className: 'ove-label' }, tr('auto.repeat')),
-            h('select', {
-              className: 'ove-select',
+            h(ComboSelect, {
+              options: [
+                { value: 'weekly', label: tr('auto.repeat.weekly') },
+                { value: 'weekdays', label: tr('auto.repeat.weekdays') },
+                { value: 'daily', label: tr('auto.repeat.daily') },
+                { value: 'hourly', label: tr('auto.repeat.hourly') },
+                { value: 'minutely', label: tr('auto.repeat.minutely') },
+                { value: 'monthly', label: tr('auto.repeat.monthly') },
+                { value: 'delay', label: tr('auto.repeat.delay') },
+                { value: 'once', label: tr('auto.repeat.once') },
+                { value: 'rrule', label: tr('auto.repeat.rrule') },
+                { value: 'cron', label: tr('auto.repeat.cron') },
+              ],
               value: draft.kind,
-              onChange: (event) => updateDraft({ kind: event.target.value }),
-            },
-            h('option', { value: 'weekly' }, tr('auto.repeat.weekly')),
-            h('option', { value: 'weekdays' }, tr('auto.repeat.weekdays')),
-            h('option', { value: 'daily' }, tr('auto.repeat.daily')),
-            h('option', { value: 'hourly' }, tr('auto.repeat.hourly')),
-            h('option', { value: 'minutely' }, tr('auto.repeat.minutely')),
-            h('option', { value: 'monthly' }, tr('auto.repeat.monthly')),
-            h('option', { value: 'delay' }, tr('auto.repeat.delay')),
-            h('option', { value: 'once' }, tr('auto.repeat.once')),
-            h('option', { value: 'rrule' }, tr('auto.repeat.rrule')),
-            h('option', { value: 'cron' }, tr('auto.repeat.cron')))),
+              ariaLabel: tr('auto.repeat'),
+              onChange: (value) => updateDraft({ kind: value }),
+            })),
           draft.kind === 'delay'
             ? h('div', { className: 'ove-inline' },
               h('label', { className: 'ove-field' },
@@ -4425,15 +4457,17 @@ window.__ModuleLoader__.load({
                   value: draft.interval,
                   onChange: (event) => updateDraft({ interval: event.target.value }),
                 })),
-              h('label', { className: 'ove-field ove-unit' },
+              h('div', { className: 'ove-field ove-unit' },
                 h('span', { className: 'ove-label' }, tr('auto.unit')),
-                h('select', {
-                  className: 'ove-select',
+                h(ComboSelect, {
+                  options: [
+                    { value: 'min', label: tr('auto.unitMinute') },
+                    { value: 'sec', label: tr('auto.unitSecond') },
+                  ],
                   value: draft.delayUnit,
-                  onChange: (event) => updateDraft({ delayUnit: event.target.value }),
-                },
-                h('option', { value: 'min' }, tr('auto.unitMinute')),
-                h('option', { value: 'sec' }, tr('auto.unitSecond')))))
+                  ariaLabel: tr('auto.unit'),
+                  onChange: (value) => updateDraft({ delayUnit: value }),
+                })))
             : draft.kind === 'minutely' || draft.kind === 'hourly'
               ? h('label', { className: 'ove-field' },
                 h('span', { className: 'ove-label' }, tr(draft.kind === 'hourly' ? 'auto.intervalHours' : 'auto.intervalMinutes')),
