@@ -60,6 +60,7 @@
 .ove-intro { margin: 0; font-size: 14px; line-height: 22px; color: var(--dsw-alias-label-tertiary); }
 .ove-group { display: grid; gap: 8px; }
 .ove-group-title { margin: 0; font-size: 14px; line-height: 22px; font-weight: 600; color: var(--dsw-alias-label-secondary); }
+.ove-group-desc { margin: 6px 0 0; font-size: 13px; line-height: 20px; color: var(--dsw-alias-label-tertiary); }
 .ove-card {
   border: .5px solid var(--dsw-alias-border-l2);
   background: var(--dsw-alias-bg-layer-2);
@@ -163,6 +164,25 @@
   background: color-mix(in srgb, #eab308 12%, transparent);
 }
 .ove-btn-warn:hover:not(:disabled) { background: color-mix(in srgb, #eab308 22%, transparent); }
+/* A quiet action for a settings row (clear the sent-message history). */
+.ove-btn-quiet { color: var(--dsw-alias-label-secondary); }
+/* Key binding recorder: one chip that turns into "press a combination". */
+.ove-key-field { display: grid; gap: 4px; justify-items: end; }
+.ove-key {
+  min-width: 92px; height: 28px; padding: 0 12px; border-radius: 7px; cursor: pointer;
+  border: .5px solid var(--dsw-alias-border-l2); background: transparent;
+  color: var(--dsw-alias-label-primary); font: inherit; font-size: 13px; font-weight: 600;
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.ove-key:hover:not(:disabled) { background: color-mix(in srgb, var(--dsw-alias-label-primary) 9%, transparent); }
+.ove-key:disabled { opacity: .5; cursor: default; }
+.ove-key:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 2px; }
+.ove-key[data-recording="true"] {
+  border-color: #2563eb; color: #2563eb;
+  background: color-mix(in srgb, #2563eb 12%, transparent);
+}
+.ove-key-error { margin: 0; max-width: 220px; text-align: right; font-size: 12px; line-height: 16px; color: var(--dsw-alias-state-error-primary); }
+.ove-number { width: 88px; text-align: right; }
 .ove-btn-ok {
   color: #15803d;
   border-color: #22c55e;

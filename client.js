@@ -33,7 +33,7 @@ window.__ModuleLoader__.load({
     /* ------------------------------------------------------------------ */
 
     const FLAGS_KEY = 'original-version-enhancements.flags.v1';
-    const DEFAULT_FLAGS = { stepSwitcher: true, chatManager: true, automation: true };
+    const DEFAULT_FLAGS = { stepSwitcher: true, chatManager: true, automation: true, recall: true };
     const flagListeners = new Set();
 
     const readFlags = () => {
@@ -44,6 +44,7 @@ window.__ModuleLoader__.load({
           stepSwitcher: flags.stepSwitcher !== false,
           chatManager: flags.chatManager !== false,
           automation: flags.automation !== false,
+          recall: flags.recall !== false,
         };
       } catch {
         return { ...DEFAULT_FLAGS };
@@ -68,6 +69,200 @@ window.__ModuleLoader__.load({
     };
 
     const useFlags = () => React.useSyncExternalStore(subscribeFlags, getFlags, getFlags);
+
+    /* ------------------------------------------------------------------ */
+    /* Sent-message history: recall the last submissions in the composer   */
+    /* ------------------------------------------------------------------ */
+
+    /**
+     * The composer keeps no submission log of its own: the draft is cleared
+     * once the Host accepts a message, and that is the only client-side trace
+     * of "what was sent". This module turns that trace into a shell-like
+     * history stack, so Alt+P / Alt+B can walk it back and forth.
+     *
+     * Both the keys and the depth are edited on the plugin page and kept in
+     * localStorage next to the feature switches (this browser's own view).
+     */
+    const RECALL_KEY = 'original-version-enhancements.recall.v1';
+    const HISTORY_KEY = 'original-version-enhancements.history.v1';
+    const HISTORY_LIMIT_MAX = 100;
+    const DEFAULT_RECALL = { prev: 'alt+p', next: 'alt+b', max: 20 };
+
+    const clampHistoryLimit = (value) => {
+      const count = Math.round(Number(value));
+      if (!Number.isFinite(count)) return DEFAULT_RECALL.max;
+      return Math.min(HISTORY_LIMIT_MAX, Math.max(1, count));
+    };
+
+    /**
+     * The modifiers of a keyboard event, in a fixed order.
+     * @param event - a keyboard event.
+     * @returns the pressed modifier names.
+     */
+    const modifiersOf = (event) => [
+      event.ctrlKey ? 'ctrl' : '',
+      event.altKey ? 'alt' : '',
+      event.shiftKey ? 'shift' : '',
+      event.metaKey ? 'meta' : '',
+    ].filter(name => name.length > 0);
+
+    /** Keys that only modify the next stroke, never a binding on their own. */
+    const MODIFIER_KEYS = new Set([
+      'control', 'ctrl', 'alt', 'altgraph', 'shift', 'meta', 'os', 'super', 'dead', 'unidentified', 'process',
+    ]);
+
+    /**
+     * The letter a physical key produces without the current modifiers, so a
+     * binding still works when Alt turns `p` into another character on a
+     * layout where `event.key` follows the composed character.
+     * @param code - `KeyboardEvent.code`.
+     * @returns the plain key name, or an empty string.
+     */
+    const keyOfCode = (code) => {
+      if (typeof code !== 'string') return '';
+      const letter = /^Key([A-Z])$/.exec(code);
+      if (letter !== null) return letter[1].toLowerCase();
+      const digit = /^Digit([0-9])$/.exec(code);
+      if (digit !== null) return digit[1];
+      return '';
+    };
+
+    /**
+     * Read one keyboard event as a stored binding (`alt+p`).
+     * @param event - a keyboard event.
+     * @returns the combination, or undefined for a modifier-only or unmodified stroke.
+     */
+    const comboOfEvent = (event) => {
+      const key = typeof event.key === 'string' ? event.key.toLowerCase() : '';
+      if (key.length === 0 || MODIFIER_KEYS.has(key)) return undefined;
+      const modifiers = modifiersOf(event);
+      if (modifiers.length === 0) return undefined;
+      return [...modifiers, key].join('+');
+    };
+
+    /**
+     * Whether one keyboard event matches a stored binding.
+     *
+     * Both `event.key` and the physical key are accepted, in either case: the
+     * record button stores what the browser reported, while a different
+     * layout (or Alt composing a character) may report another `key` for the
+     * same physical stroke.
+     * @param combo - the stored binding.
+     * @param event - a keyboard event.
+     * @returns true when every modifier and the key match.
+     */
+    const matchesCombo = (combo, event) => {
+      if (typeof combo !== 'string' || combo.length === 0) return false;
+      const parts = combo.split('+');
+      const key = parts.pop();
+      if (key === undefined || key.length === 0) return false;
+      const wanted = new Set(parts);
+      const pressed = new Set(modifiersOf(event));
+      if (wanted.size !== pressed.size) return false;
+      for (const name of wanted) if (!pressed.has(name)) return false;
+      const reported = typeof event.key === 'string' ? event.key.toLowerCase() : '';
+      const physical = keyOfCode(event.code);
+      return reported === key || (physical.length > 0 && physical === key);
+    };
+
+    /** Human-readable label of a binding (`alt+p` → `Alt + P`). */
+    const comboLabel = (combo) => {
+      if (typeof combo !== 'string' || combo.length === 0) return '';
+      const names = { ctrl: 'Ctrl', alt: 'Alt', shift: 'Shift', meta: 'Meta' };
+      const special = {
+        ' ': 'Space', arrowup: '↑', arrowdown: '↓', arrowleft: '←', arrowright: '→',
+        enter: 'Enter', escape: 'Esc', tab: 'Tab', backspace: 'Backspace', delete: 'Delete',
+      };
+      return combo.split('+').map((part, index, all) => {
+        if (names[part] !== undefined) return names[part];
+        if (special[part] !== undefined && index === all.length - 1) return special[part];
+        return part.length === 1 ? part.toUpperCase() : part.charAt(0).toUpperCase() + part.slice(1);
+      }).join(' + ');
+    };
+
+    const readRecall = () => {
+      try {
+        const raw = JSON.parse(globalThis.localStorage?.getItem(RECALL_KEY) ?? '{}');
+        const saved = raw !== null && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+        const prev = typeof saved.prev === 'string' && saved.prev.length > 0 ? saved.prev : DEFAULT_RECALL.prev;
+        const next = typeof saved.next === 'string' && saved.next.length > 0 && saved.next !== prev
+          ? saved.next
+          : (prev === DEFAULT_RECALL.next ? 'alt+n' : DEFAULT_RECALL.next);
+        return {
+          prev,
+          next,
+          max: clampHistoryLimit(saved.max),
+        };
+      } catch {
+        return { ...DEFAULT_RECALL };
+      }
+    };
+
+    let recallState = readRecall();
+    const recallListeners = new Set();
+    const subscribeRecall = (listener) => {
+      recallListeners.add(listener);
+      return () => { recallListeners.delete(listener); };
+    };
+    const getRecall = () => recallState;
+    const useRecall = () => React.useSyncExternalStore(subscribeRecall, getRecall, getRecall);
+
+    const setRecall = (patch) => {
+      const next = { ...recallState, ...patch };
+      next.max = clampHistoryLimit(next.max);
+      if (next.next === next.prev) next.next = next.prev === 'alt+b' ? 'alt+n' : 'alt+b';
+      recallState = next;
+      try {
+        globalThis.localStorage?.setItem(RECALL_KEY, JSON.stringify(next));
+      } catch { /* a blocked storage keeps the setting for this page only */ }
+      for (const listener of recallListeners) listener();
+    };
+
+    const readHistory = () => {
+      try {
+        const raw = JSON.parse(globalThis.localStorage?.getItem(HISTORY_KEY) ?? '[]');
+        if (!Array.isArray(raw)) return [];
+        return raw.filter(text => typeof text === 'string' && text.trim().length > 0);
+      } catch {
+        return [];
+      }
+    };
+
+    /** Newest first; consecutive duplicates collapse, the tail is trimmed to `max`. */
+    const nextHistory = (list, text, max) => {
+      const body = typeof text === 'string' ? text : '';
+      if (body.trim().length === 0) return Array.isArray(list) ? list : [];
+      const kept = Array.isArray(list) ? list.filter(item => typeof item === 'string' && item.trim().length > 0) : [];
+      const trimmed = kept[0] === body ? kept : [body, ...kept];
+      return trimmed.slice(0, clampHistoryLimit(max));
+    };
+
+    let historySnapshot = readHistory();
+    const historyListeners = new Set();
+    const subscribeHistory = (listener) => {
+      historyListeners.add(listener);
+      return () => { historyListeners.delete(listener); };
+    };
+    /** The published list; one stable identity until the next change. */
+    const getHistory = () => historySnapshot;
+    const useHistory = () => React.useSyncExternalStore(subscribeHistory, getHistory, getHistory);
+
+    const publishHistory = (list) => {
+      historySnapshot = list;
+      try {
+        globalThis.localStorage?.setItem(HISTORY_KEY, JSON.stringify(list));
+      } catch { /* a blocked storage keeps the history for this page only */ }
+      for (const listener of historyListeners) listener();
+    };
+
+    const rememberSentText = (text) => {
+      const before = getHistory();
+      const after = nextHistory(before, text, recallState.max);
+      if (after.length === before.length && after.every((item, index) => item === before[index])) return;
+      publishHistory(after);
+    };
+
+    const clearSentHistory = () => publishHistory([]);
 
     /* ------------------------------------------------------------------ */
     /* Pending permanent-deletion target, shared by the page and the menu  */
@@ -726,8 +921,167 @@ window.__ModuleLoader__.load({
     }
 
     /* ------------------------------------------------------------------ */
-    /* Plugin page: the two feature switches                               */
+    /* Composer: walk the sent-message history with the configured keys    */
     /* ------------------------------------------------------------------ */
+
+    /**
+     * Records every accepted submission and answers the recall keys.
+     *
+     * It is mounted inside the composer so the Session's standard props reach
+     * it: `useInput` publishes the draft and its phase, `inputActions.setDraft`
+     * replaces the draft. It renders nothing — the history lives in
+     * localStorage, the shortcut in a document listener.
+     * @param props - the Session's standard input props.
+     * @returns null.
+     */
+    function RecallBridge({ inputActions, useInput }) {
+      const flags = useFlags();
+      const recall = useRecall();
+      const subscribe = typeof useInput === 'function' ? useInput : () => (state) => state;
+      const draft = subscribe((state) => (typeof state?.draft === 'string' ? state.draft : ''));
+      const phase = subscribe((state) => (typeof state?.phase === 'string' ? state.phase : 'plain'));
+
+      const actionsRef = React.useRef(inputActions);
+      actionsRef.current = inputActions;
+      const recallRef = React.useRef(recall);
+      recallRef.current = recall;
+      /** The last non-blank draft, i.e. the text a submission would carry. */
+      const lastText = React.useRef(null);
+      /** When the composer was last in flight (`sending`/`submitting`). */
+      const inFlightAt = React.useRef(0);
+      /** -1 = not walking the history; 0 = the newest entry. */
+      const cursor = React.useRef(-1);
+      /** What this bridge itself put into the composer, to tell edits apart. */
+      const shown = React.useRef(null);
+
+      /**
+       * Replace the draft with one history entry (or the empty text at the
+       * bottom). A failed call must not leave the cursor pointing at text the
+       * composer never received.
+       */
+      const apply = (text) => {
+        const setDraft = actionsRef.current?.setDraft;
+        if (typeof setDraft !== 'function') return;
+        shown.current = text;
+        try {
+          setDraft(text);
+        } catch {
+          shown.current = null;
+        }
+      };
+
+      // A submission is the only thing that clears a non-blank draft: the
+      // composer goes in flight (`sending`/`submitting`) and empties once the
+      // Host accepts. A refusal returns to `plain` with the draft intact, so a
+      // later manual clear outside that window is not recorded as a message.
+      React.useEffect(() => {
+        const text = typeof draft === 'string' ? draft : '';
+        if (phase !== 'plain') inFlightAt.current = Date.now();
+        if (text.trim().length > 0) {
+          lastText.current = text;
+        } else if (lastText.current !== null) {
+          if (Date.now() - inFlightAt.current <= 3000) rememberSentText(lastText.current);
+          lastText.current = null;
+        }
+        // Any edit of a recalled draft ends the walk: the next stroke starts
+        // again from the newest entry instead of continuing from a stale index.
+        if (shown.current !== null && text !== shown.current) {
+          shown.current = null;
+          cursor.current = -1;
+        }
+      }, [draft, phase]);
+
+      React.useEffect(() => {
+        if (!flags.recall) return undefined;
+        const onKeyDown = (event) => {
+          if (event.defaultPrevented || event.isComposing || event.keyCode === 229) return;
+          const target = event.target instanceof HTMLElement ? event.target : null;
+          // Only the composer's own editor: a settings search field must keep
+          // its Alt+P, and another plugin's editable must not be rewritten.
+          if (target === null || target.isContentEditable !== true) return;
+          const config = recallRef.current;
+          const stack = getHistory().slice(0, config.max);
+          if (stack.length === 0) return;
+          if (matchesCombo(config.prev, event)) {
+            event.preventDefault();
+            event.stopPropagation();
+            const next = Math.min(cursor.current + 1, stack.length - 1);
+            cursor.current = next;
+            apply(stack[next]);
+            return;
+          }
+          if (matchesCombo(config.next, event)) {
+            if (cursor.current < 0) return;
+            event.preventDefault();
+            event.stopPropagation();
+            cursor.current -= 1;
+            // The step below the oldest entry is the empty draft, so walking
+            // all the way down always ends at a blank composer.
+            apply(cursor.current < 0 ? '' : stack[cursor.current]);
+          }
+        };
+        document.addEventListener('keydown', onKeyDown, true);
+        return () => document.removeEventListener('keydown', onKeyDown, true);
+      }, [flags.recall, recall.prev, recall.next]);
+
+      return null;
+    }
+
+    /* ------------------------------------------------------------------ */
+    /* Plugin page: the feature switches                                   */
+    /* ------------------------------------------------------------------ */
+
+    /**
+     * One configurable key binding: shows the saved combination and records a
+     * replacement by capturing the next stroke.
+     * @param props - the stored combination, a label, and the capture callback.
+     * @returns the binding row's control.
+     */
+    function KeyRecorder({ value, label, disabled, onCapture }) {
+      const [recording, setRecording] = React.useState(false);
+      const [error, setError] = React.useState('');
+
+      React.useEffect(() => {
+        if (!recording) return undefined;
+        const onKeyDown = (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          if (event.key === 'Escape') {
+            setRecording(false);
+            setError('');
+            return;
+          }
+          const combo = comboOfEvent(event);
+          if (combo === undefined) {
+            setError(label('recall.needModifier'));
+            return;
+          }
+          const failure = onCapture(combo);
+          if (typeof failure === 'string' && failure.length > 0) {
+            setError(failure);
+            return;
+          }
+          setError('');
+          setRecording(false);
+        };
+        window.addEventListener('keydown', onKeyDown, true);
+        return () => window.removeEventListener('keydown', onKeyDown, true);
+      }, [recording, onCapture, label]);
+
+      return h('div', { className: 'ove-key-field' },
+        h('button', {
+          type: 'button',
+          className: 'ove-key',
+          'data-recording': recording ? 'true' : undefined,
+          'aria-label': label('recall.change'),
+          disabled: disabled === true,
+          onClick: () => {
+            setRecording(true);
+            setError('');
+          },
+        }, recording ? label('recall.recording') : comboLabel(value)),
+        error.length > 0 ? h('p', { className: 'ove-key-error' }, error) : null);
+    }
 
     /**
      * Feature switches; the archive surface now has its own settings entry.
@@ -737,8 +1091,19 @@ window.__ModuleLoader__.load({
     function PluginPage({ t }) {
       const tr = typeof t === 'function' ? t : (key) => key;
       const flags = useFlags();
+      const recall = useRecall();
+      const history = useHistory();
 
       const toggle = (key) => setFlag(key, !flags[key]);
+
+      const capture = (which) => (combo) => {
+        const other = which === 'prev' ? recall.next : recall.prev;
+        if (combo === other) return tr('recall.duplicate');
+        setRecall({ [which]: combo });
+        return '';
+      };
+
+      const count = history.length;
 
       return h(React.Fragment, null,
         h('style', { key: 'styles', 'data-plugin-css': `${NS}-page` }, CSS),
@@ -787,7 +1152,73 @@ window.__ModuleLoader__.load({
                   'aria-checked': flags.automation,
                   'aria-label': tr('switch.automation'),
                   onClick: () => toggle('automation'),
+                }, h('span', { className: 'ove-switch-thumb' }))),
+
+              h('div', { className: 'ove-row' },
+                h('div', { className: 'ove-row-text' },
+                  h('div', { className: 'ove-row-title' }, tr('switch.recall')),
+                  h('div', { className: 'ove-row-desc' }, tr('switch.recall.desc'))),
+                h('button', {
+                  type: 'button',
+                  className: 'ove-switch',
+                  role: 'switch',
+                  'aria-checked': flags.recall,
+                  'aria-label': tr('switch.recall'),
+                  onClick: () => toggle('recall'),
                 }, h('span', { className: 'ove-switch-thumb' }))))),
+
+          h('div', { className: 'ove-group' },
+            h('h2', { className: 'ove-group-title' }, tr('recall.title')),
+            h('p', { className: 'ove-group-desc' }, tr('recall.desc')),
+            h('div', { className: 'ove-card' },
+              h('div', { className: 'ove-row' },
+                h('div', { className: 'ove-row-text' },
+                  h('div', { className: 'ove-row-title' }, tr('recall.prev')),
+                  h('div', { className: 'ove-row-desc' }, tr('recall.prev.desc'))),
+                h(KeyRecorder, {
+                  value: recall.prev,
+                  label: tr,
+                  disabled: !flags.recall,
+                  onCapture: capture('prev'),
+                })),
+
+              h('div', { className: 'ove-row' },
+                h('div', { className: 'ove-row-text' },
+                  h('div', { className: 'ove-row-title' }, tr('recall.next')),
+                  h('div', { className: 'ove-row-desc' }, tr('recall.next.desc'))),
+                h(KeyRecorder, {
+                  value: recall.next,
+                  label: tr,
+                  disabled: !flags.recall,
+                  onCapture: capture('next'),
+                })),
+
+              h('div', { className: 'ove-row' },
+                h('div', { className: 'ove-row-text' },
+                  h('div', { className: 'ove-row-title' }, tr('recall.max')),
+                  h('div', { className: 'ove-row-desc' }, tr('recall.max.desc'))),
+                h('input', {
+                  type: 'number',
+                  className: 'ove-input ove-number',
+                  min: 1,
+                  max: HISTORY_LIMIT_MAX,
+                  step: 1,
+                  value: recall.max,
+                  disabled: !flags.recall,
+                  'aria-label': tr('recall.max'),
+                  onChange: (event) => setRecall({ max: event.target.value }),
+                })),
+
+              h('div', { className: 'ove-row' },
+                h('div', { className: 'ove-row-text' },
+                  h('div', { className: 'ove-row-title' }, tr('recall.saved').replace('{n}', String(count))),
+                  h('div', { className: 'ove-row-desc' }, tr('recall.saved.desc'))),
+                h('button', {
+                  type: 'button',
+                  className: 'ove-btn ove-btn-quiet',
+                  disabled: count === 0,
+                  onClick: () => clearSentHistory(),
+                }, tr('recall.clear'))))),
 
           h('p', { className: 'ove-hint' }, tr('pageHint')),
           h('p', { className: 'ove-footnote' }, tr('footnote'))),
@@ -4358,6 +4789,36 @@ window.__ModuleLoader__.load({
             disposers = [];
           };
         }, 'original-version-enhancements: automation panel');
+
+        // The composer history bridge renders nothing; it only needs the
+        // Session's standard input props, so it lives in the composer's dock
+        // list and disappears with the switch.
+        ctx.effect(() => {
+          let disposers = [];
+          const sync = () => {
+            const enabled = getFlags().recall;
+            if (enabled && disposers.length === 0) {
+              disposers = [
+                ctx.slots.inject('conversation.input.dock', () => ctx.slots.register({
+                  name: 'conversation.input.dock',
+                  id: 'original-version-enhancements.recall',
+                  order: 40,
+                  locale: NS,
+                }, RecallBridge)),
+              ];
+            } else if (!enabled && disposers.length > 0) {
+              for (const dispose of disposers) dispose();
+              disposers = [];
+            }
+          };
+          const unsubscribe = subscribeFlags(sync);
+          sync();
+          return () => {
+            unsubscribe();
+            for (const dispose of disposers) dispose();
+            disposers = [];
+          };
+        }, 'original-version-enhancements: composer history recall');
 
         ctx.effect(() => ctx.configForms.whileServed(['ui-chat'], () => {
           const form = ctx.configForms.get('ui-chat');
