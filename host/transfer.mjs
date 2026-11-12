@@ -8,8 +8,9 @@
 // files that new Session into the target Workspace.
 
 import { randomUUID } from 'node:crypto'
-import { realpath, stat } from 'node:fs/promises'
-import { deleteSessionSafely, quarantineSessionForMove } from './delete-session.mjs'
+import { lstat, mkdtemp, readdir, realpath, rename, rm, stat } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
+import { deleteSessionWithoutReservation, quarantineSessionForMove } from './delete-session.mjs'
 
 const MAX_REQUEST_BYTES = 8 * 1024
 /** Request header that must accompany every transfer; a link or form cannot set it. */
@@ -111,14 +112,23 @@ const materializeCopy = async (deps, meta, events) => {
   try {
     await handle.append(events)
     await handle.flush()
+    // Never file a copy that has no durable log: a half-written session shows up
+    // in the sidebar and then refuses to open its history. Verify while the
+    // failure is still recoverable rather than leaving the shell behind.
+    await verifyMaterialized(sessionPersistence, meta.id, events.length)
+  } catch (error) {
+    // `create` has already published the header, so append/flush/verify failing
+    // (full disk, EIO, short log) leaves a session the backend can list. The
+    // old code left exactly that behind: a second log for one id after a failed
+    // move. Remove what this call created before reporting the failure.
+    try { await handle.close() } catch { /* the leased handle is already gone */ }
+    const removed = await removeCopyWhileReserved(deps, meta.id)
+    const problem = error instanceof Error ? error : new Error(String(error))
+    problem.copyCleanup = removed ? 'done' : 'failed'
+    throw problem
   } finally {
     try { await handle.close() } catch { /* flush already settled the log */ }
   }
-  // Never file a copy that has no durable log: a half-written session shows up in
-  // the sidebar and then refuses to open its history. The signature of that bug
-  // is exactly the phantom the deletion path above has to clean up afterwards, so
-  // the copy is verified here and rolled back instead.
-  await verifyMaterialized(sessionPersistence, meta.id, events.length)
   try {
     sessionProjectionCache?.coldSnapshot?.(meta, inherited, events)
   } catch { /* the copy is filed either way; the next cold read fills it */ }
@@ -177,6 +187,21 @@ const resolveWorkspace = async (registry, id) => {
   } catch {
     return undefined
   }
+}
+
+/**
+ * Take the deletion reservation for one session id when the Host tracks
+ * lifecycles. Transfer and permanent deletion share this set, so a move and a
+ * delete of the same id can no longer rename each other's directory.
+ * @param deps - dependencies, optionally carrying the lifecycle hooks.
+ * @param sessionId - the id the operation is about to rewrite or file.
+ * @returns the release function, a no-op when tracking is unavailable, or
+ *   undefined when another operation already owns the id.
+ */
+const reserveSession = (deps, sessionId) => {
+  const reserve = deps.agentHandles?.reserve
+  if (typeof reserve !== 'function') return () => {}
+  return reserve.call(deps.agentHandles, sessionId)
 }
 
 /**
@@ -243,25 +268,44 @@ export async function transferSession(deps, request) {
   }
 
   if (mode === 'move') {
-    return await moveSession(deps, { sessionId, header, target })
+    // The move rewrites the session under its own id, so it must own the same
+    // reservation a permanent delete takes; otherwise the two can rename and
+    // delete each other's directories.
+    const reservation = reserveSession(deps, sessionId)
+    if (reservation === undefined) {
+      return failure('deletion-in-progress', '该会话正在删除或移动中，请等待当前操作完成。')
+    }
+    try {
+      return await moveSession(deps, { sessionId, header, target })
+    } finally {
+      reservation()
+    }
   }
 
   const copyId = `session-${randomUUID()}`
   const copyMeta = copyHeader(header, copyId, target.path)
-  let created = false
   try {
-    created = await materializeCopy(deps, copyMeta, events)
+    await materializeCopy(deps, copyMeta, events)
   } catch (error) {
-    if (created) await removeCopy(deps, copyId)
-    return failure('copy-failed', `复制会话失败：${String(error?.message ?? error)}`)
+    const suffix = error?.copyCleanup === 'failed' ? '；临时副本未能自动清理，请重启后再清理。' : ''
+    return failure('copy-failed', `复制会话失败：${String(error?.message ?? error)}${suffix}`)
   }
-  if (!created) return failure('copy-failed', '无法创建会话副本。')
 
+  // Reserve the fresh id before filing it: a concurrent permanent delete must
+  // not find the copy between materialising and attaching it.
+  const reservation = reserveSession(deps, copyId)
+  if (reservation === undefined) {
+    await removeCopyWhileReserved(deps, copyId)
+    return failure('deletion-in-progress', '复制出的会话正在被另一个操作使用，请稍后重试。')
+  }
   try {
     await target.attachSession(copyId)
   } catch (error) {
-    await removeCopy(deps, copyId)
-    return failure('copy-failed', `复制出的会话无法归入目标工作区：${String(error?.message ?? error)}`)
+    const removed = await removeCopyWhileReserved(deps, copyId)
+    const suffix = removed ? '' : '；临时副本未能自动清理，请重启后再清理。'
+    return failure('copy-failed', `复制出的会话无法归入目标工作区：${String(error?.message ?? error)}${suffix}`)
+  } finally {
+    reservation()
   }
 
   return { ok: true, value: { sessionId: copyId, workspaceId: target.id, mode } }
@@ -336,19 +380,28 @@ const moveSession = async (deps, { sessionId, header, target }) => {
     return failure('session-running', '会话还有未结束的回合，请等它结束后再操作。')
   }
   const movedMeta = moveHeader(liveHeader, target.path)
-  let created = false
+  let materialized = false
   let attached = false
   try {
-    created = await materializeCopy(deps, movedMeta, events)
+    await materializeCopy(deps, movedMeta, events)
+    materialized = true
     if (!await reindexMovedSession(workspaceRegistry, movedMeta)) {
       throw new Error('宿主没有接受更新后的会话归属信息')
     }
     await target.attachSession(sessionId)
     attached = true
   } catch (error) {
-    // Undo in the only order that never leaves two logs for one id: remove the
-    // recreated log first, and only then put the quarantined original back.
-    const removed = created ? await removeCopy(deps, sessionId) : true
+    // materializeCopy removed its own half-written log when it could. When it
+    // could not, the new log and the quarantined original both exist, so the
+    // original must stay quarantined and the caller has to report the residual path.
+    if (error?.copyCleanup === 'failed') {
+      return failure(
+        'move-partial',
+        `移动失败，且临时会话未能清理；原会话目录暂存于 ${quarantine.directory}，请重启后再清理。`,
+      )
+    }
+    // Only a copy that actually reached persistence needs removing here.
+    const removed = materialized ? await removeCopyWhileReserved(deps, sessionId) : true
     if (!removed) {
       return failure(
         'move-partial',
@@ -388,25 +441,99 @@ const moveSession = async (deps, { sessionId, header, target }) => {
   } catch (error) {
     warning = String(error?.message ?? error)
   }
-  return { ok: true, value: { sessionId, workspaceId: target.id, mode: 'move', ...(warning === undefined ? {} : { warning }) } }
+  const sourceWorkspaceId = sourceWorkspace === undefined ? '' : String(sourceWorkspace.id ?? '')
+  return {
+    ok: true,
+    value: {
+      sessionId,
+      workspaceId: target.id,
+      mode: 'move',
+      // Enough for the client's toast to offer Undo even when the conversation
+      // was not filed under any workspace: the notification names both the
+      // workspace id and the recorded directory.
+      source: { workspaceId: sourceWorkspaceId, cwd: sourcePath },
+      ...(warning === undefined ? {} : { warning }),
+    },
+  }
 }
 
 /**
  * Drop a copy whose filing failed, so a failed transfer leaves no orphan log.
+ * For a caller that already holds this session's reservation (the move path
+ * owns the source id, the copy path owns the new id), so the removal itself
+ * does not try to reserve it again.
  * @param deps - the deletion dependencies.
  * @param sessionId - the copy to remove.
  * @returns whether the copy is gone.
  */
-const removeCopy = async (deps, sessionId) => {
+const removeCopyWhileReserved = async (deps, sessionId) => {
   try {
-    const result = await deleteSessionSafely({
+    const result = await deleteSessionWithoutReservation({
       ...deps,
       sessionPersistence: deps.sessionPersistence,
-    }, { sessionRoot: deps.sessionRoot, sessionId, force: true })
-    return result.ok === true
+    }, { sessionRoot: deps.sessionRoot, sessionId, force: true, purge: false })
+    if (result.ok === true) return true
+  } catch { /* fall through to the storage scan */ }
+  // A backend that has not indexed the fresh header yet cannot locate the log
+  // through `list`/`stat`; the directory is still under the persistence root.
+  return removeUnindexedMaterialization(deps, sessionId)
+}
+
+/**
+ * Last-resort removal for a copy this call just created whose backend cannot
+ * see it yet. Under the persistence root the id can only be this call's own
+ * log: a move has already quarantined the original outside the root, and a
+ * copy's id is a fresh uuid.
+ * @param deps - transfer dependencies (only `sessionRoot` is used).
+ * @param sessionId - the id whose materialization should be removed.
+ * @returns whether a directory with that id was found and removed.
+ */
+const removeUnindexedMaterialization = async (deps, sessionId) => {
+  let root
+  try {
+    root = await realpath(deps.sessionRoot)
   } catch {
     return false
   }
+  let projects
+  try {
+    projects = await readdir(root, { withFileTypes: true })
+  } catch {
+    return false
+  }
+  let removed = false
+  for (const project of projects) {
+    if (!project.isDirectory() || project.isSymbolicLink()) continue
+    const directory = join(root, project.name, sessionId)
+    let info
+    try {
+      info = await lstat(directory, { bigint: true })
+    } catch {
+      continue
+    }
+    if (!info.isDirectory() || info.isSymbolicLink()) continue
+    const entries = await readdir(directory).catch(() => [])
+    if (!entries.some(name => /^session(?:\.v[1-9]\d*)?\.jsonl(?:\.zstd)?$/u.test(name))) continue
+    let quarantineRoot
+    try {
+      quarantineRoot = await mkdtemp(join(dirname(root), '.ove-transfer-rollback-'))
+      const quarantined = join(quarantineRoot, `${project.name}-${sessionId}`)
+      await rename(directory, quarantined)
+      const after = await lstat(quarantined, { bigint: true })
+      if (!after.isDirectory() || after.isSymbolicLink()) {
+        await rename(quarantined, directory)
+        await rm(quarantineRoot, { recursive: true, force: true })
+        return false
+      }
+      await rm(quarantined, { recursive: true, force: false })
+      await rm(quarantineRoot, { recursive: true, force: true })
+      removed = true
+    } catch {
+      if (quarantineRoot !== undefined) await rm(quarantineRoot, { recursive: true, force: true }).catch(() => undefined)
+      return false
+    }
+  }
+  return removed
 }
 
 /**

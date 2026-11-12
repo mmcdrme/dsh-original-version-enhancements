@@ -153,6 +153,9 @@ window.__ModuleLoader__.load({
         ready: snapshot?.phase === 'ready',
         origin: owner === undefined ? tr('ungrouped') : String(owner.title || owner.path || ''),
         sourceWorkspaceId: ownerId,
+        // The recorded directory is enough for the Host to resolve the source
+        // even when the conversation is not filed under any workspace.
+        sourceCwd: typeof owner?.path === 'string' ? owner.path : '',
         targets,
       };
     };
@@ -213,6 +216,29 @@ window.__ModuleLoader__.load({
     };
 
     /**
+     * Wording for a transport failure. The Host's own failures already carry a
+     * Chinese message; this only covers the cases where the browser would
+     * otherwise print "Failed to fetch" or "HTTP 500" into the panel.
+     * @param error - the value a fetch/parse path threw.
+     * @returns a sentence a person can act on.
+     */
+    const describeRequestFailure = (error) => {
+      if (typeof error?.hostStatus === 'number') {
+        console.warn('original-version-enhancements: the Host answered with a non-JSON body', error);
+        return `宿主返回了无法解析的响应（HTTP ${error.hostStatus}），请查看宿主日志。`;
+      }
+      if (error instanceof TypeError) {
+        console.warn('original-version-enhancements: cannot reach the Host', error);
+        return '无法连接宿主，请确认 DeepSeek Harness 仍在运行。';
+      }
+      const message = String(error?.message ?? error);
+      return message.length > 0 ? message : '请求失败，请稍后重试。';
+    };
+
+    /** Wording for a response that failed without describing why. */
+    const describeHttpStatus = (status) => `宿主返回了 HTTP ${status}，请查看宿主日志。`;
+
+    /**
      * Read a JSON body, turning an empty or non-JSON answer into a status error.
      * @param response - the fetch response.
      * @returns the parsed JSON payload.
@@ -221,8 +247,11 @@ window.__ModuleLoader__.load({
       const text = await response.text();
       try {
         return JSON.parse(text);
-      } catch {
-        throw Error(`HTTP ${response.status}`);
+      } catch (error) {
+        const failure = new Error(`host answered with non-JSON HTTP ${response.status}`);
+        failure.hostStatus = response.status;
+        failure.cause = error;
+        throw failure;
       }
     };
 
@@ -249,7 +278,7 @@ window.__ModuleLoader__.load({
           const failure = body?.error ?? {};
           return {
             ok: false,
-            error: failure.message || `HTTP ${response.status}`,
+            error: failure.message || describeHttpStatus(response.status),
             code: typeof failure.code === 'string' ? failure.code : '',
           };
         }
@@ -257,7 +286,7 @@ window.__ModuleLoader__.load({
         leaveRemovedSession(ctx, target.id);
         return { ok: true };
       } catch (error) {
-        return { ok: false, error: String(error?.message ?? error), code: '' };
+        return { ok: false, error: describeRequestFailure(error), code: '' };
       }
     };
 
@@ -287,7 +316,7 @@ window.__ModuleLoader__.load({
           const failure = body?.error ?? {};
           return {
             ok: false,
-            error: failure.message || `HTTP ${response.status}`,
+            error: failure.message || describeHttpStatus(response.status),
             code: typeof failure.code === 'string' ? failure.code : '',
             copyId: typeof failure.copyId === 'string' ? failure.copyId : '',
           };
@@ -295,7 +324,7 @@ window.__ModuleLoader__.load({
         await refreshStores(ctx);
         return { ok: true, value: body.value ?? {} };
       } catch (error) {
-        return { ok: false, error: String(error?.message ?? error), code: '' };
+        return { ok: false, error: describeRequestFailure(error), code: '' };
       }
     };
 
@@ -310,13 +339,23 @@ window.__ModuleLoader__.load({
       if (undo?.kind === 'move') {
         const created = Array.isArray(undo.created) ? undo.created : [];
         const first = created[0];
-        if (first === undefined || undo.sourceWorkspaceId.length === 0) return false;
+        const workspaceId = typeof undo.sourceWorkspaceId === 'string' ? undo.sourceWorkspaceId : '';
+        const sourceCwd = typeof undo.sourceCwd === 'string' ? undo.sourceCwd : '';
+        // The Host resolves either an id or the recorded directory.
+        const destination = workspaceId.length > 0 ? workspaceId : sourceCwd;
+        if (first === undefined || destination.length === 0) return { ok: false, unavailable: true };
         const result = await requestTransfer(ctx, {
           sessionId: first.sessionId,
-          workspaceId: undo.sourceWorkspaceId,
+          workspaceId: destination,
           mode: 'move',
         });
         return result.ok
+          ? { ok: true }
+          : {
+              ok: false,
+              error: result.code === 'workspace-not-found' ? undefined : result.error,
+              unavailable: result.code === 'workspace-not-found',
+            };
       }
       const created = Array.isArray(undo?.created) ? undo.created : [];
       let ok = true
@@ -329,7 +368,7 @@ window.__ModuleLoader__.load({
         if (!forced.ok) ok = false
       }
       await refreshStores(ctx)
-      return ok
+      return { ok }
     };
 
     /* ------------------------------------------------------------------ */
@@ -477,6 +516,9 @@ window.__ModuleLoader__.load({
       const [pending, setPending] = React.useState(null);
       const [failed, setFailed] = React.useState(false);
       const request = React.useRef(0);
+      const settleTimer = React.useRef(0);
+
+      React.useEffect(() => () => clearTimeout(settleTimer.current), []);
 
       React.useEffect(() => {
         if (form === undefined || typeof form.subscribe !== 'function') return undefined;
@@ -486,7 +528,10 @@ window.__ModuleLoader__.load({
       }, [form]);
 
       React.useEffect(() => {
-        if (pending !== null && live === pending) setPending(null);
+        if (pending !== null && live === pending) {
+          clearTimeout(settleTimer.current);
+          setPending(null);
+        }
       }, [live, pending]);
 
       if (!flags.stepSwitcher) return null;
@@ -502,10 +547,22 @@ window.__ModuleLoader__.load({
         setFailed(false);
         const current = ++request.current;
         setPending(mode);
+        clearTimeout(settleTimer.current);
+        // An accepted write is not proof the form moved: the Host may normalise
+        // the value, another surface may overwrite it, or the form may only
+        // publish on its next snapshot. Without this the busy state lived on
+        // forever (and the clicked mode stayed pressed).
+        settleTimer.current = setTimeout(() => {
+          if (request.current !== current) return;
+          if (readMode() === mode) return;
+          setPending(null);
+          setFailed(true);
+        }, 2000);
         let result;
         try {
           result = form.set('transcriptView', mode);
         } catch (_error) {
+          clearTimeout(settleTimer.current);
           setPending(null);
           setFailed(true);
           return;
@@ -513,6 +570,7 @@ window.__ModuleLoader__.load({
         Promise.resolve(result).then((accepted) => {
           if (request.current !== current) return;
           if (accepted === false) {
+            clearTimeout(settleTimer.current);
             setPending(null);
             setFailed(true);
           }
@@ -670,7 +728,7 @@ window.__ModuleLoader__.load({
             });
             const body = await readJson(response);
             if (!response.ok || body?.ok !== true) {
-              throw Error(body?.error?.message || `HTTP ${response.status}`);
+              throw Error(body?.error?.message || describeHttpStatus(response.status));
             }
             if (controller.signal.aborted) return;
             const next = new Map();
@@ -678,7 +736,7 @@ window.__ModuleLoader__.load({
             setMatches(next);
             setHasMore(body.value?.hasMore === true);
           } catch (error) {
-            if (!controller.signal.aborted) setSearchError(String(error?.message ?? error));
+            if (!controller.signal.aborted) setSearchError(describeRequestFailure(error));
           } finally {
             if (!controller.signal.aborted) setSearching(false);
           }
@@ -1128,11 +1186,24 @@ window.__ModuleLoader__.load({
         finish({
           text: `${tr('transferDoneMove')} ${workspace.title}`,
           tone: 'success',
-          undo: {
-            kind: 'move',
-            created: [{ sessionId: String(result.value?.sessionId ?? ''), workspaceId: workspace.id, title: workspace.title }],
-            sourceWorkspaceId: sourceId,
-          },
+          undo: (() => {
+            // Prefer the source the Host reported: it also covers a conversation
+            // that is not filed under any workspace (its directory is enough).
+            const source = result.value?.source ?? {};
+            const sourceWorkspaceId = typeof source.workspaceId === 'string' && source.workspaceId.length > 0
+              ? source.workspaceId
+              : sourceId;
+            const sourceCwd = typeof source.cwd === 'string' && source.cwd.length > 0
+              ? source.cwd
+              : choices.sourceCwd;
+            if (sourceWorkspaceId.length === 0 && sourceCwd.length === 0) return null;
+            return {
+              kind: 'move',
+              created: [{ sessionId: String(result.value?.sessionId ?? ''), workspaceId: workspace.id, title: workspace.title }],
+              sourceWorkspaceId,
+              sourceCwd,
+            };
+          })(),
         });
       };
 
@@ -1263,12 +1334,16 @@ window.__ModuleLoader__.load({
       if (notice === null) return null;
 
       const dismiss = () => { publishTransfer({ notice: null }); };
+      const undoable = notice.undo !== null && notice.undo !== undefined
+        && !(notice.undo.kind === 'move'
+          && (notice.undo.sourceWorkspaceId ?? '').length === 0
+          && (notice.undo.sourceCwd ?? '').length === 0);
       const undo = async () => {
         if (busy) return
         setBusy(true);
-        const ok = await undoTransfer(ctx, notice.undo);
+        const outcome = await undoTransfer(ctx, notice.undo);
         setBusy(false);
-        if (ok) {
+        if (outcome.ok) {
           transferNoticeSeq += 1;
           publishTransfer({
             notice: {
@@ -1280,10 +1355,13 @@ window.__ModuleLoader__.load({
           });
         } else {
           transferNoticeSeq += 1;
+          const reason = outcome.unavailable
+            ? tr('transferUndoUnavailable')
+            : outcome.error || tr('transferFailed');
           publishTransfer({
             notice: {
               seq: transferNoticeSeq,
-              text: `${tr('transferUndoFailed')}${tr('transferFailed')}`,
+              text: `${tr('transferUndoFailed')}${reason}`,
               tone: 'warning',
               undo: null,
             },
@@ -1299,7 +1377,7 @@ window.__ModuleLoader__.load({
           role: 'status',
         },
           h('span', { className: 'ove-toast-text' }, notice.text),
-          notice.undo !== null && notice.undo !== undefined && h('button', {
+          notice.undo !== null && notice.undo !== undefined && undoable && h('button', {
             type: 'button',
             className: 'ove-toast-action',
             disabled: busy,
@@ -1445,13 +1523,13 @@ window.__ModuleLoader__.load({
         if (!response.ok || body?.ok !== true) {
           return {
             ok: false,
-            error: body?.error?.message || `HTTP ${response.status}`,
+            error: body?.error?.message || describeHttpStatus(response.status),
             code: typeof body?.error?.code === 'string' ? body.error.code : '',
           };
         }
         return { ok: true, value: body.value };
       } catch (error) {
-        return { ok: false, error: String(error?.message ?? error), code: '' };
+        return { ok: false, error: describeRequestFailure(error), code: '' };
       }
     };
 
@@ -1951,6 +2029,10 @@ window.__ModuleLoader__.load({
       const selected = selectedIndex >= 0 ? options[selectedIndex] : null;
       const active = open && cursor >= 0 && cursor < options.length ? options[cursor] : null;
       const duplicates = React.useMemo(() => duplicateIdsOf(options), [options]);
+      // Stable ids let a screen reader follow the highlighted row even though
+      // focus stays on the combobox button (the list itself is portalled).
+      const listId = React.useId();
+      const optionId = (index) => `${listId}-option-${index}`;
 
       const close = React.useCallback(() => {
         setOpen(false);
@@ -2143,6 +2225,8 @@ window.__ModuleLoader__.load({
           role: 'combobox',
           'aria-haspopup': 'listbox',
           'aria-expanded': open,
+          'aria-controls': open ? listId : undefined,
+          'aria-activedescendant': open && cursor >= 0 ? optionId(cursor) : undefined,
           'data-empty': selected === null,
           title: selected === null ? tr('auto.pickSession') : sessionPathText(selected),
           onClick: toggle,
@@ -2155,8 +2239,10 @@ window.__ModuleLoader__.load({
         open && box !== null
           ? ReactDOM.createPortal(h('div', {
             ref: listRef,
+            id: listId,
             className: 'ove-combo-list',
             role: 'listbox',
+            'aria-label': tr('auto.session'),
             style: {
               left: `${box.left}px`,
               top: `${box.top}px`,
@@ -2168,6 +2254,7 @@ window.__ModuleLoader__.load({
             ? h('p', { className: 'ove-combo-empty' }, tr('auto.bindEmpty'))
             : options.map((option, index) => h('div', {
               key: option.id,
+              id: optionId(index),
               'data-index': index,
               className: 'ove-combo-option',
               role: 'option',
@@ -2218,6 +2305,9 @@ window.__ModuleLoader__.load({
       const [detailTab, setDetailTab] = React.useState('edit');
       const [records, setRecords] = React.useState([]);
       const [createMenu, setCreateMenu] = React.useState(false);
+      const createTriggerRef = React.useRef(null);
+      const createMenuRef = React.useRef(null);
+      const createMenuId = React.useId();
       const [now, setNow] = React.useState(() => Date.now());
 
       const announce = (text, tone = 'success') => setNotice(text.length > 0 ? { text, tone } : null);
@@ -2262,6 +2352,18 @@ window.__ModuleLoader__.load({
         };
         document.addEventListener('mousedown', onDown);
         return () => document.removeEventListener('mousedown', onDown);
+      }, [createMenu]);
+
+      // Opening "新建方式" moves focus to its first row; the menu itself handles
+      // Escape, arrows, Home/End and Tab, so a keyboard user never has to click
+      // empty space to close it.
+      React.useEffect(() => {
+        if (!createMenu) return undefined;
+        const frame = requestAnimationFrame(() => {
+          const first = createMenuRef.current?.querySelector('[role="menuitem"]');
+          if (first instanceof HTMLElement) first.focus();
+        });
+        return () => cancelAnimationFrame(frame);
       }, [createMenu]);
 
       // A saved/deleted/delivered toast is a receipt, not a banner: clear it
@@ -3098,7 +3200,14 @@ window.__ModuleLoader__.load({
             h('div', { className: 'ove-auto-inner' },
               h('div', { className: 'ove-auto-heading' },
                 h('h1', { className: 'ove-auto-title-text' }, tr('auto.panel')),
-                h('div', { className: 'ove-head-actions' },
+                h('div', {
+                  className: 'ove-head-actions',
+                  onBlur: (event) => {
+                    const next = event.relatedTarget;
+                    if (next instanceof Node && event.currentTarget.contains(next)) return;
+                    setCreateMenu(false);
+                  },
+                },
                   h('span', { className: 'ove-split', role: 'group', 'aria-label': tr('auto.new') },
                     h('button', {
                       type: 'button',
@@ -3106,12 +3215,20 @@ window.__ModuleLoader__.load({
                       onClick: openNew,
                     }, `+ ${tr('auto.new')}`),
                     h('button', {
+                      ref: createTriggerRef,
                       type: 'button',
                       className: 'ove-split-more',
                       'aria-label': tr('auto.createMethod'),
                       'aria-haspopup': 'menu',
                       'aria-expanded': createMenu,
+                      'aria-controls': createMenu ? createMenuId : undefined,
                       onClick: () => setCreateMenu((value) => !value),
+                      onKeyDown: (event) => {
+                        if (event.key === 'ArrowDown' && !createMenu) {
+                          event.preventDefault();
+                          setCreateMenu(true);
+                        }
+                      },
                     }, h('svg', {
                       viewBox: '0 0 16 16',
                       width: 12,
@@ -3124,7 +3241,41 @@ window.__ModuleLoader__.load({
                       'aria-hidden': 'true',
                     }, h('path', { d: 'm3.5 6 4.5 4.5L12.5 6' })))),
                   createMenu
-                    ? h('div', { className: 'ove-split-menu', role: 'menu' },
+                    ? h('div', {
+                      ref: createMenuRef,
+                      id: createMenuId,
+                      className: 'ove-split-menu',
+                      role: 'menu',
+                      onKeyDown: (event) => {
+                        const items = [...(createMenuRef.current?.querySelectorAll('[role="menuitem"]') ?? [])];
+                        const current = items.indexOf(document.activeElement);
+                        if (event.key === 'Escape') {
+                          event.preventDefault();
+                          setCreateMenu(false);
+                          createTriggerRef.current?.focus();
+                          return;
+                        }
+                        if (event.key === 'Tab') {
+                          setCreateMenu(false);
+                          return;
+                        }
+                        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                          event.preventDefault();
+                          if (items.length === 0) return;
+                          const step = event.key === 'ArrowDown' ? 1 : -1;
+                          const next = current < 0
+                            ? (step > 0 ? 0 : items.length - 1)
+                            : (current + step + items.length) % items.length;
+                          items[next].focus();
+                          return;
+                        }
+                        if (event.key === 'Home' || event.key === 'End') {
+                          event.preventDefault();
+                          const target = event.key === 'Home' ? items[0] : items[items.length - 1];
+                          target?.focus();
+                        }
+                      },
+                    },
                       h('button', {
                         type: 'button',
                         role: 'menuitem',

@@ -228,6 +228,7 @@
     "transferUndo": "撤销",
     "transferUndone": "已撤销",
     "transferUndoFailed": "撤销失败：",
+    "transferUndoUnavailable": "源目录不在任何工作区，无法撤销。",
     "transferNoPick": "请至少选择一个工作区"
   },
   "en": {
@@ -459,6 +460,7 @@
     "transferUndo": "Undo",
     "transferUndone": "Undone",
     "transferUndoFailed": "Undo failed: ",
+    "transferUndoUnavailable": "Its source directory is not inside any workspace, so the move cannot be undone.",
     "transferNoPick": "Choose at least one workspace"
   }
 }

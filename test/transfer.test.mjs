@@ -7,7 +7,7 @@
 // backend for the log itself.
 
 import assert from 'node:assert/strict'
-import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -43,11 +43,11 @@ const makeSession = async () => {
 }
 
 /**
- * Fake JSONL persistence: `open` serves the source log, `create` records the
- * recreated log under whatever id the host path asks for (which must stay the
- * source id), and `stat` reports the materialized copy.
+ * Fake JSONL persistence: `open` serves the source log, `create` writes a real
+ * header file under a project directory (as the backend does) so a rollback can
+ * locate and remove it, and `stat` reports the materialized copy.
  */
-const makePersistence = ({ transcript, events, writeEvents, failCreate = false }) => {
+const makePersistence = ({ root, transcript, events, writeEvents, failCreate = false, failAppend = false, indexCreated = true }) => {
   const state = { created: new Map(), openedWrite: false, closed: 0 }
   const persistence = {
     state,
@@ -60,27 +60,41 @@ const makePersistence = ({ transcript, events, writeEvents, failCreate = false }
         close: async () => { state.closed += 1 },
       }
     },
-    async resolveCurrentLog() {
-      return transcript
+    async resolveCurrentLog(id) {
+      return state.created.get(id)?.location ?? transcript
     },
     async stat(id) {
       const created = state.created.get(id)
-      if (created !== undefined) {
-        return { header: created.header, eventCount: created.events.length, sizeBytes: 10 }
+      if (created !== undefined && indexCreated) {
+        return {
+          header: created.header,
+          eventCount: created.eventCount,
+          sizeBytes: 10,
+          location: { kind: 'jsonl', path: created.location },
+        }
       }
       return id === SESSION_ID ? { header: HEADER, location: { kind: 'jsonl', path: transcript } } : undefined
     },
     async list() {
-      const headers = [HEADER, ...[...state.created.values()].map(entry => entry.header)]
-      return headers.map(header => ({ header }))
+      if (!indexCreated) return []
+      return [...state.created.values()].map(entry => ({ header: entry.header }))
     },
     async create(meta) {
       if (failCreate) throw new Error('disk is full')
-      const entry = { header: meta, events: [] }
+      const directory = join(root, 'target-project', meta.id)
+      await mkdir(directory, { recursive: true })
+      const location = join(directory, 'session.jsonl')
+      await writeFile(location, `${JSON.stringify(meta)}\n`)
+      const entry = { header: meta, eventCount: 0, events: [], location }
       state.created.set(meta.id, entry)
       return {
         header: meta,
-        async append(batch) { entry.events.push(...batch) },
+        async append(batch) {
+          if (failAppend) throw new Error('ENOSPC: no space left on device')
+          await writeFile(location, batch.map(event => JSON.stringify(event)).join('\n'), { flag: 'a' })
+          entry.eventCount += batch.length
+          entry.events.push(...batch)
+        },
         async flush() {},
         async close() {},
       }
@@ -129,13 +143,13 @@ const makeRegistry = (source, target, archivedSessionIds = []) => {
   }
 }
 
-const depsFor = ({ root, transcript, events, registry, cache, failCreate, writeEvents }) => ({
+const depsFor = ({ root, transcript, events, registry, cache, failCreate, failAppend, writeEvents, agentHandles, indexCreated }) => ({
   workspaceRegistry: registry,
-  sessionPersistence: makePersistence({ transcript, events, failCreate, writeEvents }),
+  sessionPersistence: makePersistence({ root, transcript, events, failCreate, failAppend, writeEvents, indexCreated }),
   sessionProjectionCache: cache,
   sessions: { get: () => undefined },
   agents: { get: () => undefined },
-  agentHandles: {},
+  agentHandles: agentHandles ?? {},
   sessionRoot: root,
 })
 
@@ -158,6 +172,9 @@ test('a move keeps the session id and only changes its workspace', async () => {
   assert.equal(result.value.sessionId, SESSION_ID)
   assert.equal(result.value.workspaceId, target.id)
   assert.equal(result.value.mode, 'move')
+  // The undo receipt carries where the session came from, so the toast can
+  // offer undo even when the client's workspace snapshot is stale.
+  assert.deepEqual(result.value.source, { workspaceId: 'ws-source', cwd: SOURCE_PATH })
 
   // The recreated log carries the SAME id and every event, filed under the target.
   const recreated = deps.sessionPersistence.state.created.get(SESSION_ID)
@@ -282,6 +299,140 @@ test('a copy still creates a distinct session id', async () => {
   assert.deepEqual(target.calls, [['attach', result.value.sessionId]])
   // A copy never touches the source.
   assert.deepEqual(source.calls, [])
+  assert.match(await readFile(transcript, 'utf8'), /session-1234/)
+  await rm(root, { recursive: true, force: true })
+})
+
+test('a move that fails after create removes the half-written copy', async () => {
+  const { root, transcript } = await makeSession()
+  const source = makeWorkspace('ws-source', SOURCE_PATH)
+  const target = makeWorkspace('ws-target', TARGET_PATH)
+  const registry = makeRegistry(source, target)
+  // create publishes a header; the following append fails (ENOSPC/EIO).
+  const deps = depsFor({ root, transcript, events: EVENTS, registry, failAppend: true })
+
+  const result = await transferSession(deps, {
+    sessionId: SESSION_ID,
+    workspaceId: target.id,
+    mode: 'move',
+  })
+
+  assert.equal(result.ok, false)
+  assert.equal(result.error.code, 'move-failed')
+  // The source is back where it was, and no second log for the same id was
+  // left behind in the target project.
+  assert.match(await readFile(transcript, 'utf8'), /session-1234/)
+  await assert.rejects(stat(join(root, 'target-project', SESSION_ID)), error => error.code === 'ENOENT')
+  assert.deepEqual(target.calls, [])
+  // The still-existing source was not detached from its workspace.
+  assert.deepEqual(source.calls, [])
+  await rm(root, { recursive: true, force: true })
+})
+
+test('a move still clears a copy the backend has not indexed yet', async () => {
+  const { root, transcript } = await makeSession()
+  const source = makeWorkspace('ws-source', SOURCE_PATH)
+  const target = makeWorkspace('ws-target', TARGET_PATH)
+  const registry = makeRegistry(source, target)
+  // create wrote the log, but `list`/`stat` do not see it yet (an interrupted
+  // index). The removal falls back to the storage scan instead of leaving it.
+  const deps = depsFor({
+    root,
+    transcript,
+    events: EVENTS,
+    registry,
+    failAppend: true,
+    indexCreated: false,
+  })
+
+  const result = await transferSession(deps, {
+    sessionId: SESSION_ID,
+    workspaceId: target.id,
+    mode: 'move',
+  })
+
+  assert.equal(result.ok, false)
+  assert.equal(result.error.code, 'move-failed')
+  assert.deepEqual(await readdir(join(root, 'target-project')), [])
+  assert.match(await readFile(transcript, 'utf8'), /session-1234/)
+  await rm(root, { recursive: true, force: true })
+})
+
+test('a copy that fails after create removes the half-written copy', async () => {
+  const { root, transcript } = await makeSession()
+  const source = makeWorkspace('ws-source', SOURCE_PATH)
+  const target = makeWorkspace('ws-target', TARGET_PATH)
+  const registry = makeRegistry(source, target)
+  const deps = depsFor({ root, transcript, events: EVENTS, registry, failAppend: true })
+
+  const result = await transferSession(deps, {
+    sessionId: SESSION_ID,
+    workspaceId: target.id,
+    mode: 'copy',
+  })
+
+  assert.equal(result.ok, false)
+  assert.equal(result.error.code, 'copy-failed')
+  assert.deepEqual(target.calls, [])
+  assert.deepEqual(await readdir(join(root, 'target-project')), [])
+  await rm(root, { recursive: true, force: true })
+})
+
+test('a move takes the deletion reservation for the whole operation', async () => {
+  const { root, transcript } = await makeSession()
+  const source = makeWorkspace('ws-source', SOURCE_PATH)
+  const target = makeWorkspace('ws-target', TARGET_PATH)
+  const registry = makeRegistry(source, target)
+  const held = []
+  const deps = depsFor({
+    root,
+    transcript,
+    events: EVENTS,
+    registry,
+    agentHandles: {
+      reserve(sessionId) {
+        held.push(['reserve', sessionId])
+        return () => held.push(['release', sessionId])
+      },
+    },
+  })
+
+  const result = await transferSession(deps, {
+    sessionId: SESSION_ID,
+    workspaceId: target.id,
+    mode: 'move',
+  })
+
+  assert.equal(result.ok, true, JSON.stringify(result))
+  assert.deepEqual(held, [['reserve', SESSION_ID], ['release', SESSION_ID]])
+  await rm(root, { recursive: true, force: true })
+})
+
+test('a move is refused while a deletion owns the session', async () => {
+  const { root, transcript } = await makeSession()
+  const source = makeWorkspace('ws-source', SOURCE_PATH)
+  const target = makeWorkspace('ws-target', TARGET_PATH)
+  const registry = makeRegistry(source, target)
+  const deps = depsFor({
+    root,
+    transcript,
+    events: EVENTS,
+    registry,
+    // The delete path already holds the id's reservation.
+    agentHandles: { reserve: () => undefined },
+  })
+
+  const result = await transferSession(deps, {
+    sessionId: SESSION_ID,
+    workspaceId: target.id,
+    mode: 'move',
+  })
+
+  assert.equal(result.ok, false)
+  assert.equal(result.error.code, 'deletion-in-progress')
+  // Refused before the write lease or any directory rename.
+  assert.equal(deps.sessionPersistence.state.openedWrite, false)
+  assert.deepEqual(target.calls, [])
   assert.match(await readFile(transcript, 'utf8'), /session-1234/)
   await rm(root, { recursive: true, force: true })
 })

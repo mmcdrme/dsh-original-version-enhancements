@@ -240,19 +240,20 @@ const validateExistingLocation = async (paths) => {
  * @param sessionId - the session whose directory is wanted.
  * @returns the validated project root and session directory, or undefined.
  */
-const findPhantomSessionDirectory = async (sessionRoot, sessionId) => {
+const findPhantomSessionDirectories = async (sessionRoot, sessionId) => {
   let root
   try {
     root = await realpath(sessionRoot)
   } catch {
-    return undefined
+    return []
   }
   let projects
   try {
     projects = await readdir(root, { withFileTypes: true })
   } catch {
-    return undefined
+    return []
   }
+  const found = []
   for (const project of projects) {
     if (!project.isDirectory() || project.isSymbolicLink()) continue
     const candidate = join(root, project.name, sessionId)
@@ -279,9 +280,34 @@ const findPhantomSessionDirectory = async (sessionRoot, sessionId) => {
     // A real log is handled by the ordinary location path; only an empty
     // storage shell takes this branch.
     if (entries.some(name => /^session(?:\.v[1-9]\d*)?\.jsonl(?:\.zstd)?$/.test(name))) continue
-    return { root, resolvedDirectory: resolved }
+    found.push({ root, resolvedDirectory: resolved, identity: info })
   }
-  return undefined
+  return found
+}
+
+/**
+ * Remove every empty storage shell carrying one session id. Interrupted writes
+ * can leave a shell in more than one project directory, and deleting only the
+ * first is what made a removed conversation come back. The tree is scanned
+ * again after each pass, so a shell that appeared during the removal is not
+ * left behind either.
+ * @param deps - removable directory hooks.
+ * @param sessionRoot - the persistence root.
+ * @param sessionId - the session whose shells should be removed.
+ * @returns a tagged result, or undefined when there was nothing to remove.
+ */
+const removePhantomSessionDirectories = async (deps, sessionRoot, sessionId) => {
+  let last
+  for (let pass = 0; pass < 8; pass += 1) {
+    const found = await findPhantomSessionDirectories(sessionRoot, sessionId).catch(() => [])
+    if (found.length === 0) return last
+    for (const phantom of found) {
+      const result = await removePhantomDirectory(deps, phantom)
+      if (result?.ok !== true) return result
+      last = result
+    }
+  }
+  return failure('storage-partial', '会话已从 DSH 摘载，但仍有残留的空存储目录，不能确认永久删除成功。')
 }
 
 /**
@@ -305,7 +331,7 @@ const removePhantomDirectory = async (deps, phantom) => {
     detached = true
 
     const after = await lstat(quarantined, { bigint: true })
-    if (!after.isDirectory() || after.isSymbolicLink()) {
+    if (!after.isDirectory() || after.isSymbolicLink() || !sameFile(phantom.identity, after)) {
       await moveDirectory(quarantined, phantom.resolvedDirectory)
       detached = false
       await rm(quarantineRoot, { recursive: true, force: true })
@@ -382,6 +408,51 @@ export async function stopLoadedSession(deps, sessionId) {
  * @returns a tagged result understood by the settings page.
  */
 export async function deleteSessionSafely(deps, { sessionRoot, sessionId, force = false }) {
+  const releaseReservation = deps.agentHandles?.reserve?.(sessionId)
+  if (typeof deps.agentHandles?.reserve === 'function' && releaseReservation === undefined) {
+    return failure('deletion-in-progress', '该会话正在删除中，请等待当前操作完成。')
+  }
+
+  let result
+  try {
+    result = await deleteSessionStorage(deps, { sessionRoot, sessionId, force })
+  } finally {
+    releaseReservation?.()
+  }
+  // The transcript standing alone is not the whole record: the Workspace
+  // registry would keep listing its id (a ghost conversation) and the
+  // projection cache would keep its last title. Both are dropped here — after
+  // the storage lease is released, so a dispose-triggered checkpoint cannot
+  // resurrect the cache row — and never at the cost of reporting a failed delete.
+  if (result.ok) await purgeSessionAccounting(deps, sessionId)
+  return result
+}
+
+/**
+ * Remove one session for a caller that already owns the session's deletion
+ * reservation (for example the transfer rollback, which must not deadlock on
+ * its own move reservation). Accounting is purged here too, because the caller
+ * may never reach its normal success path.
+ * @param deps - sessions, agents and the JSONL persistence backend.
+ * @param target - the session root and the exact session id.
+ * @returns a tagged result understood by the settings page.
+ */
+export async function deleteSessionWithoutReservation(deps, { sessionRoot, sessionId, force = false, purge = true }) {
+  const result = await deleteSessionStorage(deps, { sessionRoot, sessionId, force })
+  // A transfer rollback removes a copy whose files were never filed anywhere:
+  // purging accounting would detach the *source* workspace while a failed move
+  // is still restoring the original log under the same id.
+  if (result.ok && purge) await purgeSessionAccounting(deps, sessionId)
+  return result
+}
+
+/**
+ * Remove one session's storage, without touching the reservation set.
+ * @param deps - sessions, agents and the JSONL persistence backend.
+ * @param target - the session root, id and whether to bypass the load check.
+ * @returns a tagged result understood by the settings page.
+ */
+const deleteSessionStorage = async (deps, { sessionRoot, sessionId, force }) => {
   const persistence = deps.sessionPersistence
   const usesHandles = persistence.supportsRawArtifacts === undefined
     && persistence.name === 'session-persistence-jsonl'
@@ -392,26 +463,12 @@ export async function deleteSessionSafely(deps, { sessionRoot, sessionId, force 
     return failure('unsupported-backend', '当前会话存储不是可逐会话删除的 JSONL 后端。')
   }
 
-  const releaseReservation = deps.agentHandles?.reserve?.(sessionId)
-  if (typeof deps.agentHandles?.reserve === 'function' && releaseReservation === undefined) {
-    return failure('deletion-in-progress', '该会话正在删除中，请等待当前操作完成。')
-  }
-
   const ownership = { usesHandles, handle: undefined, force }
-  let result
   try {
-    result = await deleteReservedSession(deps, { sessionRoot, sessionId }, ownership)
+    return await deleteReservedSession(deps, { sessionRoot, sessionId }, ownership)
   } finally {
     try { await ownership.handle?.close() } catch { /* the lease is already gone */ }
-    finally { releaseReservation?.() }
   }
-  // The transcript standing alone is not the whole record: the Workspace
-  // registry would keep listing its id (a ghost conversation) and the
-  // projection cache would keep its last title. Both are dropped here — after
-  // the storage lease is released, so a dispose-triggered checkpoint cannot
-  // resurrect the cache row — and never at the cost of reporting a failed delete.
-  if (result.ok) await purgeSessionAccounting(deps, sessionId)
-  return result
 }
 
 const UNLOAD_POLL_MS = 50
@@ -458,8 +515,8 @@ async function deleteReservedSession(deps, { sessionRoot, sessionId }, ownership
     if (usesHandles && /^[A-Za-z0-9_-]+$/.test(sessionId)
       && deps.sessions.get(sessionId) === undefined && deps.agents.get(sessionId) === undefined
       && await deps.sessionPersistence.stat(sessionId) === undefined) {
-      const phantom = await findPhantomSessionDirectory(sessionRoot, sessionId).catch(() => undefined)
-      if (phantom !== undefined) return removePhantomDirectory(deps, phantom)
+      const removed = await removePhantomSessionDirectories(deps, sessionRoot, sessionId).catch(() => undefined)
+      if (removed !== undefined) return removed
       const projects = await readdir(sessionRoot, { withFileTypes: true })
       let absent = true
       for (const project of projects) {
@@ -497,8 +554,8 @@ async function deleteReservedSession(deps, { sessionRoot, sessionId }, ownership
   // A session whose storage is an empty shell holds no transcript, so no read or
   // write lease can ever locate it: remove the shell rather than failing to
   // locate a log that is gone. Healthy sessions return here without a change.
-  const shell = await findPhantomSessionDirectory(sessionRoot, sessionId).catch(() => undefined)
-  if (shell !== undefined) return removePhantomDirectory(deps, shell)
+  const shell = await removePhantomSessionDirectories(deps, sessionRoot, sessionId).catch(() => undefined)
+  if (shell !== undefined) return shell
 
   let location
   let raw
@@ -591,8 +648,8 @@ async function deleteReservedSession(deps, { sessionRoot, sessionId }, ownership
   if (paths === undefined || raw === undefined || (!force && !sameHeader(header, raw.meta))) {
     // A header that survives its own log (an interrupted write, a hand-deleted
     // transcript) still leaves a removable storage shell behind.
-    const phantom = await findPhantomSessionDirectory(sessionRoot, sessionId).catch(() => undefined)
-    if (phantom !== undefined) return removePhantomDirectory(deps, phantom)
+    const removed = await removePhantomSessionDirectories(deps, sessionRoot, sessionId).catch(() => undefined)
+    if (removed !== undefined) return removed
     return failure('unsafe-location', '无法验证该会话的独立 JSONL 存储位置。')
   }
 
@@ -601,15 +658,15 @@ async function deleteReservedSession(deps, { sessionRoot, sessionId }, ownership
     validated = await validateExistingLocation(paths)
   } catch (error) {
     if (error?.code === 'ENOENT') {
-      const phantom = await findPhantomSessionDirectory(sessionRoot, sessionId).catch(() => undefined)
-      if (phantom !== undefined) return removePhantomDirectory(deps, phantom)
+      const removed = await removePhantomSessionDirectories(deps, sessionRoot, sessionId).catch(() => undefined)
+      if (removed !== undefined) return removed
       return failure('session-not-found', '会话不存在或已经删除。')
     }
     return failure('storage-error', '读取会话存储失败，未删除任何文件。')
   }
   if (validated === undefined) {
-    const phantom = await findPhantomSessionDirectory(sessionRoot, sessionId).catch(() => undefined)
-    if (phantom !== undefined) return removePhantomDirectory(deps, phantom)
+    const removed = await removePhantomSessionDirectories(deps, sessionRoot, sessionId).catch(() => undefined)
+    if (removed !== undefined) return removed
     return failure('unsafe-location', '会话存储位置未通过安全校验，未删除任何文件。')
   }
   if (!force && (deps.sessions.get(sessionId) !== undefined || deps.agents.get(sessionId) !== undefined)) {

@@ -352,6 +352,26 @@ test('a session whose storage is an empty shell is removable', async () => {
   await rm(root, { recursive: true, force: true })
 })
 
+test('every empty shell for one id is removed, not just the first', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'ove-delete-'))
+  const first = join(root, 'project-a', SESSION_ID)
+  const second = join(root, 'project-b', SESSION_ID)
+  await mkdir(first, { recursive: true })
+  await mkdir(second, { recursive: true })
+  const host = makeHost()
+
+  const result = await deleteSessionSafely(depsFor(host, makePhantomPersistence()), {
+    sessionRoot: root,
+    sessionId: SESSION_ID,
+  })
+
+  assert.equal(result.ok, true, JSON.stringify(result))
+  assert.equal(result.value.phantom, true)
+  await assert.rejects(stat(first), error => error.code === 'ENOENT')
+  await assert.rejects(stat(second), error => error.code === 'ENOENT')
+  await rm(root, { recursive: true, force: true })
+})
+
 test('a listed session whose log disappeared is removable', async () => {
   const root = await mkdtemp(join(tmpdir(), 'ove-delete-'))
   const sessionDirectory = join(root, 'project', SESSION_ID)
