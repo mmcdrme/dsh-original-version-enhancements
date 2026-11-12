@@ -2019,6 +2019,48 @@ window.__ModuleLoader__.load({
     const WORKDAYS = ['MO', 'TU', 'WE', 'TH', 'FR'];
 
     /**
+     * The clauses of a rule's single `RRULE` line, or null when the text holds
+     * anything the guided forms cannot reproduce.
+     *
+     * The guided forms rebuild the rule from a few fields, so they may only
+     * claim a rule whose whole meaning lies in those fields: reaching
+     * `weekdays` with an `INTERVAL=2` rule silently turned "every other week"
+     * into "every week", and an `UNTIL` rule never ends.
+     * @param rule - the RRULE text.
+     * @returns a key→value map (upper-cased), or null when not a single rule.
+     */
+    const rruleClausesOf = (rule) => {
+      if (typeof rule !== 'string') return null;
+      const lines = rule.split(/\r?\n/).map(line => line.trim()).filter(line => line.length > 0);
+      if (lines.some(line => !/^(RRULE|DTSTART)([;:])/i.test(line))) return null;
+      const starts = lines.filter(line => /^DTSTART([;:])/i.test(line)).length;
+      const bodies = lines.filter(line => /^RRULE:/i.test(line));
+      if (starts > 1 || bodies.length !== 1) return null;
+      const clauses = new Map();
+      for (const part of bodies[0].replace(/^RRULE:/i, '').split(';')) {
+        const at = part.indexOf('=');
+        if (at <= 0) return null;
+        const key = part.slice(0, at).trim().toUpperCase();
+        if (clauses.has(key)) return null;
+        clauses.set(key, part.slice(at + 1).trim().toUpperCase());
+      }
+      return clauses;
+    };
+
+    /**
+     * Whether a rule only carries clauses a guided form faithfully rebuilds.
+     * `INTERVAL=1` is allowed (dropping it changes the text, not the schedule).
+     * @param clauses - the parsed clauses.
+     * @param allowed - the clause names the guided form understands.
+     * @returns true when nothing else is present and the interval is 1.
+     */
+    const isPlainRule = (clauses, allowed) => {
+      if (clauses === null) return false;
+      if ([...clauses.keys()].some(key => key !== 'INTERVAL' && !allowed.includes(key))) return false;
+      return !clauses.has('INTERVAL') || clauses.get('INTERVAL') === '1';
+    };
+
+    /**
      * The `BYDAY` codes of a rule, upper-cased.
      *
      * A substring test matched `…,FR,SA` as well, so a six-day weekly rule was
@@ -2036,13 +2078,28 @@ window.__ModuleLoader__.load({
     /**
      * Whether a rule repeats on exactly the five workdays.
      * @param rule - the RRULE text.
-     * @returns true when the set is exactly MO,TU,WE,TH,FR.
+     * @returns true when the rule is a plain weekly rule on exactly MO–FR.
      */
     const isWorkdayRule = (rule) => {
+      const clauses = rruleClausesOf(rule);
+      if (clauses === null || clauses.get('FREQ') !== 'WEEKLY') return false;
+      if (!isPlainRule(clauses, ['FREQ', 'BYDAY'])) return false;
       const days = byDayOf(rule);
       if (days.length !== WORKDAYS.length) return false;
       const unique = new Set(days);
       return unique.size === WORKDAYS.length && WORKDAYS.every(code => unique.has(code));
+    };
+
+    /**
+     * Whether a rule repeats monthly on one day of the month.
+     * @param rule - the RRULE text.
+     * @returns true when the rule is a plain monthly rule with `BYMONTHDAY`.
+     */
+    const isMonthlyRule = (rule) => {
+      const clauses = rruleClausesOf(rule);
+      if (clauses === null || clauses.get('FREQ') !== 'MONTHLY') return false;
+      if (!clauses.has('BYMONTHDAY')) return false;
+      return isPlainRule(clauses, ['FREQ', 'BYMONTHDAY']);
     };
 
     /**
@@ -2085,8 +2142,8 @@ window.__ModuleLoader__.load({
       if (kind === 'weekly') return 'weekly';
       if (kind === 'cron') return 'cron';
       if (kind === 'rrule') {
-        if (/FREQ=WEEKLY/i.test(rule) && isWorkdayRule(rule)) return 'weekdays';
-        if (/FREQ=MONTHLY/i.test(rule) && /BYMONTHDAY=/i.test(rule)) return 'monthly';
+        if (isWorkdayRule(rule)) return 'weekdays';
+        if (isMonthlyRule(rule)) return 'monthly';
         return 'rrule';
       }
       return 'minutely';
@@ -2195,6 +2252,23 @@ window.__ModuleLoader__.load({
     };
 
     /**
+     * Whether two drafts agree on the task's run state.
+     *
+     * A pause or resume made in another window bumps the revision without
+     * touching any edited field; adopting it kept the stale `active` and the
+     * next save flipped the other window's choice back. `undefined` means "no
+     * opinion" (an ended task), so it never counts as a disagreement.
+     * @param left - the open draft.
+     * @param right - a draft rebuilt from the current row.
+     * @returns true when both agree, or when at least one has no opinion.
+     */
+    const sameRunState = (left, right) => {
+      const runnable = (value) => value === true || value === false;
+      if (!runnable(left?.active) || !runnable(right?.active)) return true;
+      return left.active === right.active;
+    };
+
+    /**
      * Whether two drafts describe the same stored task.
      *
      * Adopting a newer revision is only safe when the row still holds exactly
@@ -2206,6 +2280,7 @@ window.__ModuleLoader__.load({
      */
     const sameDraftContent = (left, right) => {
       if (left?.kind !== right?.kind) return false;
+      if (!sameRunState(left, right)) return false;
       const fields = [...DRAFT_IDENTITY_FIELDS, ...(DRAFT_TIMING_FIELDS[left.kind] ?? [])];
       return fields.every(field => (
         JSON.stringify(left?.[field] ?? null) === JSON.stringify(right?.[field] ?? null)
@@ -2234,11 +2309,13 @@ window.__ModuleLoader__.load({
         case 'daily':
           return { kind: 'daily', daily: { time: withSeconds(draft.time), time_zone: zone } };
         case 'weekly': {
-          // Every selected day is kept; an empty selection falls back to Monday
-          // instead of saving a rule that repeats on no day at all.
+          // Every selected day is kept. An empty selection used to fall back to
+          // `draft.weekday` — the day the drawer opened on — so clearing the
+          // picker saved the one day the human had just removed. Monday is the
+          // documented fallback.
           const days = Array.isArray(draft.weekdays) && draft.weekdays.length > 0
             ? [...new Set(draft.weekdays.filter(day => Number.isInteger(day) && day >= 0 && day <= 6))].sort((a, b) => a - b)
-            : [Number.isInteger(draft.weekday) ? draft.weekday : 1];
+            : [1];
           return { kind: 'weekly', weekly: { time: withSeconds(draft.time), time_zone: zone, weekdays: days.length > 0 ? days : [1] } };
         }
         case 'weekdays':
@@ -2930,8 +3007,13 @@ window.__ModuleLoader__.load({
         const row = rows.find((task) => task.id === draft.id);
         if (row === undefined) return;
         if (typeof row.updatedAt !== 'string' || row.updatedAt === draft.updatedAt) return;
-        if (!sameDraftContent(draft, draftOf(row))) return;
-        setDraft((current) => (current === null || current.id !== draft.id ? current : { ...current, updatedAt: row.updatedAt }));
+        const fresh = draftOf(row, autoClean);
+        if (!sameDraftContent(draft, fresh)) return;
+        // The run state travels with the adopted revision: a drawer that never
+        // touched it must not carry the previous pause/resume into the save.
+        setDraft((current) => (current === null || current.id !== draft.id
+          ? current
+          : { ...current, updatedAt: row.updatedAt, active: fresh.active }));
       }, [rows, draft, draftDirty]);
 
       const saveDraft = async (options) => {
@@ -2960,23 +3042,16 @@ window.__ModuleLoader__.load({
         // Only a one-shot rule ends on its own, so only it can be cleaned up
         // after delivery; a recurring rule keeps the flag off.
         const clean = (draft.kind === 'delay' || draft.kind === 'once') && draft.autoClean === true;
-        // Send `active` only when the draft actually flips the stored state. An
-        // ended task is terminal, so it must carry no opinion at all: `true`
-        // would make the Host treat the save as a resume (an English
-        // `not_future` error, or a quietly re-armed task), and resetting a
-        // running task's schedule on every edit is pointless.
-        const status = panelTask?.status;
-        const activePatch = draft.active === true
-          ? (status === 'active' ? undefined : true)
-          : draft.active === false
-            ? (status === 'paused' ? undefined : false)
-            : undefined;
+        // The drawer has no run-state control: pausing and resuming are their
+        // own row actions (`toggleActive`). Sending `active` from here could
+        // only ever repeat a status the human did not choose in this form, so a
+        // pause made in another window is never flipped back by a later save —
+        // not even by the "overwrite" answer to the conflict dialog.
         const request = {
           title: draft.title.trim(),
           prompt: draft.prompt,
           timing,
           target,
-          ...(activePatch === undefined ? {} : { active: activePatch }),
           autoClean: clean,
         };
         const result = draft.id === ''
@@ -3564,7 +3639,12 @@ window.__ModuleLoader__.load({
                         ? draft.weekdays.filter(day => day !== index)
                         : [...draft.weekdays, index].sort((a, b) => a - b),
                     }),
-                  }, tr(`auto.weekday.${key}`))))),
+                  }, tr(`auto.weekday.${key}`)))),
+                draft.weekdays.length === 0
+                  // The save falls back to Monday; saying so keeps the result
+                  // from looking like the removed day came back.
+                  ? h('p', { className: 'ove-hint' }, tr('auto.weekdayEmpty'))
+                  : null),
               h('label', { className: 'ove-field' },
                 h('span', { className: 'ove-label' }, tr('auto.time')),
                 h('input', {

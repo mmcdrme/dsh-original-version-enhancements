@@ -631,6 +631,9 @@
   border-color: #2563eb; color: #2563eb;
   background: color-mix(in srgb, #2563eb 12%, transparent);
 }
+/* The weekday picker can be emptied; the note under it says what the save does
+   instead of letting the fallback look like a resurrected day. */
+.ove-weekdays + .ove-hint { margin-top: 4px; font-size: 12px; color: #b45309; }
 .ove-weekday:focus-visible { outline: 2px solid #2563eb; outline-offset: 1px; }
 /* Conversations are picked from a combobox instead of a native <select>, so the
    workspace half can be bold and the list can react while it is moved over. */
