@@ -54,6 +54,13 @@ test('a rule with a second line the guided form cannot rebuild keeps the raw edi
   assert.equal(editor.repeatKindOf({ kind: 'rrule', rrule: doubled }), 'rrule')
 })
 
+test('a rule without DTSTART keeps the raw editor', () => {
+  // The guided form writes its own start; adopting a start-less rule would
+  // invent one on the next save.
+  assert.equal(editor.repeatKindOf({ kind: 'rrule', rrule: 'RRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR' }), 'rrule')
+  assert.equal(editor.repeatKindOf({ kind: 'rrule', rrule: 'RRULE:FREQ=MONTHLY;BYMONTHDAY=5' }), 'rrule')
+})
+
 test('the weekly form keeps every selected day', () => {
   const timing = timingOfDraft({
     kind: 'weekly', weekdays: [4, 1, 1, 2], weekday: 1, time: '09:00', interval: '1',

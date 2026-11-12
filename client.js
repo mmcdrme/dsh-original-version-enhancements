@@ -2084,6 +2084,9 @@ window.__ModuleLoader__.load({
       const clauses = rruleClausesOf(rule);
       if (clauses === null || clauses.get('FREQ') !== 'WEEKLY') return false;
       if (!isPlainRule(clauses, ['FREQ', 'BYDAY'])) return false;
+      // The guided form writes its own `DTSTART`; a rule without one would be
+      // given an invented start time, so it stays in the raw editor.
+      if (ruleStartOf(rule) === undefined) return false;
       const days = byDayOf(rule);
       if (days.length !== WORKDAYS.length) return false;
       const unique = new Set(days);
@@ -2099,6 +2102,7 @@ window.__ModuleLoader__.load({
       const clauses = rruleClausesOf(rule);
       if (clauses === null || clauses.get('FREQ') !== 'MONTHLY') return false;
       if (!clauses.has('BYMONTHDAY')) return false;
+      if (ruleStartOf(rule) === undefined) return false;
       return isPlainRule(clauses, ['FREQ', 'BYMONTHDAY']);
     };
 
