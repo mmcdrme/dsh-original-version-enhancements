@@ -2074,9 +2074,36 @@ window.__ModuleLoader__.load({
         close();
       }, [restoreExpanded, close]);
 
+      // A click on a workspace row needs the opposite order: that row's own
+      // toggle decides its state first, and only afterwards are the workspaces
+      // it did not touch given back. Restoring between mousedown and click
+      // would move the row out from under the pointer, and the click would then
+      // toggle it straight back — which is exactly what must not happen.
+      const pendingRef = React.useRef(null);
+
+      const dropGiveBack = () => {
+        if (pendingRef.current === null) return;
+        document.removeEventListener('click', pendingRef.current);
+        pendingRef.current = null;
+      };
+
+      /** Return every borrowed expansion except `keep`, once the click lands. */
+      const giveBackAfterClick = (keep) => {
+        dropGiveBack();
+        const listener = () => {
+          dropGiveBack();
+          restoreExpanded(keep);
+        };
+        pendingRef.current = listener;
+        document.addEventListener('click', listener);
+      };
+
       // A drawer closed while the list was still open must not leave the
       // workspaces it expanded behind either.
-      React.useEffect(() => () => restoreExpanded(), [restoreExpanded]);
+      React.useEffect(() => () => {
+        dropGiveBack();
+        restoreExpanded();
+      }, [restoreExpanded]);
 
       /** Anchor the list to the trigger, flipping above when room runs out. */
       const place = React.useCallback(() => {
@@ -2101,6 +2128,7 @@ window.__ModuleLoader__.load({
           dismiss();
           return;
         }
+        dropGiveBack();
         expandedRef.current = new Map();
         place();
         setCursor(selectedIndex);
@@ -2131,6 +2159,26 @@ window.__ModuleLoader__.load({
           if (!(target instanceof Node)) return;
           if (buttonRef.current?.contains(target) === true) return;
           if (listRef.current?.contains(target) === true) return;
+          const row = target instanceof Element ? target.closest('[data-row-key]') : null;
+          const key = row === null ? '' : String(row.getAttribute('data-row-key'));
+          // A row in the workspace list is the human taking the sidebar back:
+          // their click owns the state it lands on. A workspace row toggles
+          // itself, so only the other borrowed expansions are returned, and
+          // only after the click has been handled.
+          if (key.startsWith('workspace:')) {
+            giveBackAfterClick(key.slice('workspace:'.length));
+            close();
+            return;
+          }
+          // Every other row — a conversation, or the "show the rest" control —
+          // is used where it stands: collapsing around the row under the
+          // pointer would swallow the click or move another row beneath it.
+          if (key.length > 0) {
+            dropGiveBack();
+            expandedRef.current = new Map();
+            close();
+            return;
+          }
           dismiss();
         };
         document.addEventListener('mousedown', onPointer, true);
@@ -2214,6 +2262,7 @@ window.__ModuleLoader__.load({
         // A choice keeps the sidebar as it is: the conversation that was just
         // picked should stay visible. This component no longer owns those
         // expansions, so a later close must not take them back.
+        dropGiveBack();
         expandedRef.current = new Map();
         if (option.id !== value) onChange(option.id);
       };
