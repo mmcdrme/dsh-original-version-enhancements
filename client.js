@@ -1973,6 +1973,16 @@ window.__ModuleLoader__.load({
     };
 
     /**
+     * `CSS.escape` when the page provides it, for building attribute selectors
+     * out of ids that may carry punctuation.
+     * @param value - the raw attribute value.
+     * @returns the value safe to interpolate into a selector.
+     */
+    const cssEscape = (value) => (typeof CSS !== 'undefined' && typeof CSS.escape === 'function'
+      ? CSS.escape(value)
+      : String(value).replace(/["\\]/gu, '\\$&'));
+
+    /**
      * The same pair as one plain string, for titles and failure messages.
      * @param session - an entry carrying `workspace` and `label`.
      * @returns "workspace/name", or just the name when the workspace is unknown.
@@ -2021,9 +2031,11 @@ window.__ModuleLoader__.load({
       const [box, setBox] = React.useState(null);
       const buttonRef = React.useRef(null);
       const listRef = React.useRef(null);
-      // Workspaces this opening already expanded, so a manual collapse is not
-      // fought by the next hover.
-      const expandedRef = React.useRef(new Set());
+      // Workspaces this opening expanded, each mapped to the state the human
+      // last chose. Re-entering one is skipped so a manual collapse is not
+      // fought by the next hover, and closing without a choice walks the map
+      // to put the sidebar back exactly as they left it.
+      const expandedRef = React.useRef(new Map());
 
       const selectedIndex = options.findIndex((option) => option.id === value);
       const selected = selectedIndex >= 0 ? options[selectedIndex] : null;
@@ -2039,6 +2051,32 @@ window.__ModuleLoader__.load({
         setCursor(-1);
         setBox(null);
       }, []);
+
+      /**
+       * Undo the expansions this opening made for navigation. Only workspaces
+       * this component opened are touched, and only while they still hold the
+       * state it left them in, so a collapse the human made meanwhile stands.
+       */
+      const restoreExpanded = React.useCallback(() => {
+        const expanded = expandedRef.current;
+        expandedRef.current = new Map();
+        for (const [workspaceId, wasExpanded] of expanded) {
+          const header = document.querySelector(`[data-row-key="workspace:${cssEscape(workspaceId)}"]`);
+          if (!(header instanceof HTMLElement)) continue;
+          if ((header.getAttribute('aria-expanded') === 'true') === wasExpanded) continue;
+          header.click();
+        }
+      }, []);
+
+      /** Close with no choice: the sidebar returns to the human's own layout. */
+      const dismiss = React.useCallback(() => {
+        restoreExpanded();
+        close();
+      }, [restoreExpanded, close]);
+
+      // A drawer closed while the list was still open must not leave the
+      // workspaces it expanded behind either.
+      React.useEffect(() => () => restoreExpanded(), [restoreExpanded]);
 
       /** Anchor the list to the trigger, flipping above when room runs out. */
       const place = React.useCallback(() => {
@@ -2060,10 +2098,10 @@ window.__ModuleLoader__.load({
 
       const toggle = () => {
         if (open) {
-          close();
+          dismiss();
           return;
         }
-        expandedRef.current = new Set();
+        expandedRef.current = new Map();
         place();
         setCursor(selectedIndex);
         setOpen(true);
@@ -2075,16 +2113,16 @@ window.__ModuleLoader__.load({
         if (!open) return undefined;
         const onScroll = (event) => {
           if (listRef.current !== null && event.target instanceof Node && listRef.current.contains(event.target)) return;
-          close();
+          dismiss();
         };
-        const onResize = () => close();
+        const onResize = () => dismiss();
         window.addEventListener('scroll', onScroll, true);
         window.addEventListener('resize', onResize);
         return () => {
           window.removeEventListener('scroll', onScroll, true);
           window.removeEventListener('resize', onResize);
         };
-      }, [open, close]);
+      }, [open, dismiss]);
 
       React.useEffect(() => {
         if (!open) return undefined;
@@ -2093,37 +2131,39 @@ window.__ModuleLoader__.load({
           if (!(target instanceof Node)) return;
           if (buttonRef.current?.contains(target) === true) return;
           if (listRef.current?.contains(target) === true) return;
-          close();
+          dismiss();
         };
         document.addEventListener('mousedown', onPointer, true);
         return () => document.removeEventListener('mousedown', onPointer, true);
-      }, [open, close]);
+      }, [open, dismiss]);
 
       // The workspace list is the map. Moving through the options outlines the
-      // conversation there: its row when visible, the "expand the rest" row
-      // when it sits behind that, and — for a collapsed workspace — the row
+      // conversation there: its row when visible (blue), the "expand the rest"
+      // row when it sits behind that (green, because it is a control rather
+      // than the conversation), and — for a collapsed workspace — the row
       // appears only after the workspace is opened.
       React.useEffect(() => {
         if (active === null) return undefined;
-        const escape = (value) => (typeof CSS !== 'undefined' && typeof CSS.escape === 'function'
-          ? CSS.escape(value)
-          : value);
         const workspaceId = typeof active.workspaceId === 'string' ? active.workspaceId : '';
-        const rowOf = () => document.querySelector(`[data-row-key="session:${escape(active.id)}"]`);
+        const rowOf = () => document.querySelector(`[data-row-key="session:${cssEscape(active.id)}"]`);
         const overflowOf = () => (workspaceId.length === 0
           ? null
-          : document.querySelector(`[data-row-key="overflow:${escape(workspaceId)}"]`));
+          : document.querySelector(`[data-row-key="overflow:${cssEscape(workspaceId)}"]`));
         let marked = null;
         let cancelled = false;
         let timer = 0;
         const clear = () => {
-          if (marked !== null) marked.classList.remove('ove-sidebar-focus');
+          if (marked !== null) {
+            marked.classList.remove('ove-sidebar-focus');
+            marked.classList.remove('ove-sidebar-focus-overflow');
+          }
           marked = null;
         };
-        const mark = (node) => {
+        const mark = (node, tone) => {
           if (!(node instanceof HTMLElement)) return false;
           clear();
           node.classList.add('ove-sidebar-focus');
+          if (tone === 'overflow') node.classList.add('ove-sidebar-focus-overflow');
           marked = node;
           return true;
         };
@@ -2133,16 +2173,16 @@ window.__ModuleLoader__.load({
           const row = rowOf();
           if (row instanceof HTMLElement && rowIsVisible(row)) return mark(row);
           const overflow = overflowOf();
-          if (overflow instanceof HTMLElement && rowIsVisible(overflow)) return mark(overflow);
+          if (overflow instanceof HTMLElement && rowIsVisible(overflow)) return mark(overflow, 'overflow');
           return false;
         };
         if (!settle() && workspaceId.length > 0) {
-          const header = document.querySelector(`[data-row-key="workspace:${escape(workspaceId)}"]`);
+          const header = document.querySelector(`[data-row-key="workspace:${cssEscape(workspaceId)}"]`);
           const collapsed = header instanceof HTMLElement
             && header.getAttribute('aria-expanded') === 'false'
             && rowIsVisible(header);
           if (collapsed && !expandedRef.current.has(workspaceId)) {
-            expandedRef.current.add(workspaceId);
+            expandedRef.current.set(workspaceId, false);
             header.click();
             let tries = 0;
             timer = window.setInterval(() => {
@@ -2171,6 +2211,10 @@ window.__ModuleLoader__.load({
 
       const pick = (option) => {
         close();
+        // A choice keeps the sidebar as it is: the conversation that was just
+        // picked should stay visible. This component no longer owns those
+        // expansions, so a later close must not take them back.
+        expandedRef.current = new Map();
         if (option.id !== value) onChange(option.id);
       };
 
@@ -2211,10 +2255,10 @@ window.__ModuleLoader__.load({
         }
         if (event.key === 'Escape') {
           event.preventDefault();
-          close();
+          dismiss();
           return;
         }
-        if (event.key === 'Tab') close();
+        if (event.key === 'Tab') dismiss();
       };
 
       return h('div', { className: 'ove-combo' },
@@ -2252,19 +2296,25 @@ window.__ModuleLoader__.load({
           },
           options.length === 0
             ? h('p', { className: 'ove-combo-empty' }, tr('auto.bindEmpty'))
-            : options.map((option, index) => h('div', {
-              key: option.id,
-              id: optionId(index),
-              'data-index': index,
-              className: 'ove-combo-option',
-              role: 'option',
-              'aria-selected': option.id === value,
-              'data-active': index === cursor,
-              title: sessionPathText(option),
-              onMouseEnter: () => setCursor(index),
-              onMouseDown: (event) => event.preventDefault(),
-              onClick: () => pick(option),
-            }, sessionNodes(option, tr, duplicates.has(option.id))))), document.body)
+            : options.map((option, index) => {
+              // Rows sharing a name always carry their short id; the highlighted
+              // row carries it too, so whatever the pointer or the caret is on
+              // names exactly one conversation.
+              const showId = duplicates.has(option.id) || index === cursor;
+              return h('div', {
+                key: option.id,
+                id: optionId(index),
+                'data-index': index,
+                className: 'ove-combo-option',
+                role: 'option',
+                'aria-selected': option.id === value,
+                'data-active': index === cursor,
+                title: sessionPathText(option),
+                onMouseEnter: () => setCursor(index),
+                onMouseDown: (event) => event.preventDefault(),
+                onClick: () => pick(option),
+              }, sessionNodes(option, tr, showId));
+            })), document.body)
           : null);
     }
 

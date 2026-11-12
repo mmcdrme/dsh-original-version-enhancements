@@ -639,6 +639,12 @@
 .ove-combo-empty { margin: 0; padding: 8px; font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-tertiary); }
 /* The row in the workspace list that the current option points at. */
 .ove-sidebar-focus { outline: 2px solid #2563eb; outline-offset: -2px; border-radius: 6px; }
+/* Behind "expand the rest" the target is a control, not the conversation, so it
+   is marked in green: tapping it reveals the row the option is really about. */
+.ove-sidebar-focus-overflow {
+  outline-color: #16a34a;
+  background: color-mix(in srgb, #16a34a 12%, transparent);
+}
 .ove-notice {
   margin: 0 0 8px; padding: 6px 10px; border-radius: 8px;
   font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-secondary);
