@@ -85,7 +85,7 @@ const copyHeader = (header, id, cwd) => {
  * @param events - the copied events in sequence order.
  * @returns the inherited prefix length, zero for an unseeded log.
  */
-const inheritedCount = (events) => {
+export const inheritedEventCount = (events) => {
   const marker = events.findIndex(event => event?.type === 'session/end-seed')
   if (marker < 0) return 0
   return events[marker].seq ?? marker
@@ -105,7 +105,12 @@ const inheritedCount = (events) => {
  */
 const materializeCopy = async (deps, meta, events) => {
   const { sessionPersistence, sessionProjectionCache } = deps
-  const inherited = inheritedCount(events)
+  // Only a seeded log inherits a prefix. A plain log also carries the
+  // `session/end-seed` marker that closes its own seed phase, so counting it as
+  // an inherited prefix makes the projection cache refuse the identity
+  // ("unseeded ... inherited event count must be 0") and the copy is left with
+  // no cached title until the conversation is opened.
+  const inherited = meta.isSeeded === true ? inheritedEventCount(events) : 0
   // The persistence header of a seeded log must carry its inherited prefix
   // length; without it the backend refuses to materialize the copy at all.
   const handle = await sessionPersistence.create(meta, meta.isSeeded ? { inheritedEventCount: inherited } : undefined)
@@ -132,7 +137,34 @@ const materializeCopy = async (deps, meta, events) => {
   try {
     sessionProjectionCache?.coldSnapshot?.(meta, inherited, events)
   } catch { /* the copy is filed either way; the next cold read fills it */ }
+  // The checkpoint write is fire-and-forget, so the listing that follows the
+  // transfer could still read no row and paint the conversation as untitled.
+  // Wait for the row the cache can already serve before reporting success.
+  await waitForCachedProjection(sessionProjectionCache, meta)
   return true
+}
+
+/**
+ * Wait until the projection cache can serve a title for one session. Reads the
+ * same in-memory table every write lands on, so this observes a completed
+ * checkpoint instead of guessing at a delay.
+ * @param cache - the persisted projection cache service.
+ * @param meta - the session header whose identity the record is bound to.
+ * @param timeoutMs - upper bound for the wait.
+ * @returns whether a cached title became readable.
+ */
+export const waitForCachedProjection = async (cache, meta, timeoutMs = 800) => {
+  if (typeof cache?.cachedSnapshot !== 'function') return false
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    try {
+      const block = cache.cachedSnapshot(meta, ['title'])
+      const title = block?.values?.title
+      if (typeof title === 'string' && title.trim().length > 0) return true
+    } catch { /* an unusable cache row is a miss, not a failure */ }
+    if (Date.now() >= deadline) return false
+    await new Promise(resolve => setTimeout(resolve, 20))
+  }
 }
 
 /**

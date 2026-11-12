@@ -18,6 +18,8 @@ window.__ModuleLoader__.load({
     /** Route prefix registered by the Host half. */
     const ROUTE_ROOT = '/plugins/original-version-enhancements';
     const DELETE_ROUTE = `${ROUTE_ROOT}/sessions/delete`;
+    const RESTORE_ROUTE = `${ROUTE_ROOT}/sessions/restore`;
+    const PURGE_ROUTE = `${ROUTE_ROOT}/sessions/purge`;
     const TRANSFER_ROUTE = `${ROUTE_ROOT}/sessions/transfer`;
     /** The four accepted work-details modes, in the same order as Settings. */
     const MODES = ['compact', 'standard', 'detailed', 'verbose'];
@@ -85,6 +87,31 @@ window.__ModuleLoader__.load({
     };
 
     const getDelete = () => deleteState;
+
+    /* ------------------------------------------------------------------ */
+    /* Undo receipt of a permanent deletion                                */
+    /* ------------------------------------------------------------------ */
+
+    /**
+     * The floating receipt a finished deletion leaves behind. It carries the
+     * token the Host kept the (already removed) session under, so the same
+     * toast can put it back until the window closes.
+     */
+    let deleteNoticeState = null;
+    let deleteNoticeSeq = 0;
+    const deleteNoticeListeners = new Set();
+
+    const publishDeleteNotice = (notice) => {
+      deleteNoticeState = notice;
+      for (const listener of deleteNoticeListeners) listener();
+    };
+
+    const subscribeDeleteNotice = (listener) => {
+      deleteNoticeListeners.add(listener);
+      return () => { deleteNoticeListeners.delete(listener); };
+    };
+
+    const getDeleteNotice = () => deleteNoticeState;
 
     /* ------------------------------------------------------------------ */
     /* Pending session transfer, shared by the two menu rows and its panel */
@@ -260,9 +287,12 @@ window.__ModuleLoader__.load({
      * @param ctx - the client plugin context.
      * @param target - the session id and display title.
      * @param force - bypass the persistence lease for a pre-loaded session.
-     * @returns the outcome and the Host failure code when one is returned.
+     * @param retain - keep the removed storage in the Host's undo trash. On for a
+     *   human deletion (its receipt offers undo), off for the transfer undo,
+     *   whose copies are only ever discarded.
+     * @returns the outcome, the Host failure code, and the undo token.
      */
-    const requestDelete = async (ctx, target, force) => {
+    const requestDelete = async (ctx, target, force, retain = true) => {
       try {
         const response = await fetch(DELETE_ROUTE, {
           method: 'POST',
@@ -271,7 +301,10 @@ window.__ModuleLoader__.load({
             'x-dsh-session-delete-confirmation': 'delete-session',
             ...(force ? { 'x-dsh-session-delete-force': 'force' } : {}),
           },
-          body: JSON.stringify({ sessionId: target.id }),
+          // `retain` keeps the removed storage in the Host's undo trash, which is
+          // what the receipt's "撤销" hands back. A deletion without it would be
+          // final the moment the request returns.
+          body: JSON.stringify({ sessionId: target.id, ...(retain ? { retain: true } : {}) }),
         });
         const body = await readJson(response);
         if (!response.ok || body?.ok !== true) {
@@ -284,10 +317,60 @@ window.__ModuleLoader__.load({
         }
         await refreshStores(ctx);
         leaveRemovedSession(ctx, target.id);
-        return { ok: true };
+        const token = body.value?.retained?.token;
+        return { ok: true, token: typeof token === 'string' ? token : '' };
       } catch (error) {
         return { ok: false, error: describeRequestFailure(error), code: '' };
       }
+    };
+
+    /**
+     * Ask the Host to put one retained deletion back.
+     * @param ctx - the client plugin context.
+     * @param token - the receipt's undo token.
+     * @returns the outcome, or the Host failure.
+     */
+    const requestRestore = async (ctx, token) => {
+      try {
+        const response = await fetch(RESTORE_ROUTE, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'x-dsh-session-delete-confirmation': 'delete-session',
+          },
+          body: JSON.stringify({ token }),
+        });
+        const body = await readJson(response);
+        if (!response.ok || body?.ok !== true) {
+          const failure = body?.error ?? {};
+          return { ok: false, error: failure.message || describeHttpStatus(response.status) };
+        }
+        await refreshStores(ctx);
+        return { ok: true, value: body.value ?? {} };
+      } catch (error) {
+        return { ok: false, error: describeRequestFailure(error) };
+      }
+    };
+
+    /**
+     * Drop one retained deletion for good. Best effort: the Host sweeps stale
+     * entries on its next start anyway, so a failure here is not an error.
+     * @param token - the receipt's undo token.
+     * @returns nothing.
+     */
+    const requestPurge = async (token) => {
+      if (typeof token !== 'string' || token.length === 0) return;
+      try {
+        await fetch(PURGE_ROUTE, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'x-dsh-session-delete-confirmation': 'delete-session',
+          },
+          body: JSON.stringify({ token }),
+          keepalive: true,
+        });
+      } catch { /* the sweep on the next start removes it */ }
     };
 
     /**
@@ -360,11 +443,11 @@ window.__ModuleLoader__.load({
       const created = Array.isArray(undo?.created) ? undo.created : [];
       let ok = true
       for (const item of created) {
-        const plain = await requestDelete(ctx, { id: item.sessionId, title: item.title }, false)
+        const plain = await requestDelete(ctx, { id: item.sessionId, title: item.title }, false, false)
         if (plain.ok) continue
         // A still-loaded session refuses the ordinary path; the receipt already
         // promised the undo, so fall back to the forced removal.
-        const forced = await requestDelete(ctx, { id: item.sessionId, title: item.title }, true)
+        const forced = await requestDelete(ctx, { id: item.sessionId, title: item.title }, true, false)
         if (!forced.ok) ok = false
       }
       await refreshStores(ctx)
@@ -809,6 +892,17 @@ window.__ModuleLoader__.load({
           setNotice(`${tr('delete')} · ${pending.title}`);
           setPending(null);
           setDeleteCode('');
+          // The receipt carries the undo; a Host that did not retain the storage
+          // (an older composition) leaves the token empty and the toast is a
+          // plain confirmation.
+          deleteNoticeSeq += 1;
+          publishDeleteNotice({
+            seq: deleteNoticeSeq,
+            text: `${tr('delete')} · ${pending.title}`,
+            tone: 'success',
+            token: result.token ?? '',
+            seconds: 10,
+          });
         } else {
           setDeleteError(result.error);
           setDeleteCode(result.code);
@@ -1391,6 +1485,105 @@ window.__ModuleLoader__.load({
           }, '×'))));
     }
 
+    /**
+     * Receipt for a permanent deletion, carrying its undo. The Host has already
+     * removed the session; the retained copy hands it back until the countdown
+     * runs out, at which point the trash entry is dropped for good.
+     * @param props - injected translator and the plugin context.
+     * @returns the toast, or nothing while no receipt is pending.
+     */
+    function SessionDeleteToast({ t, ctx }) {
+      const tr = typeof t === 'function' ? t : (key) => key;
+      const notice = React.useSyncExternalStore(subscribeDeleteNotice, getDeleteNotice, getDeleteNotice);
+      // A transfer receipt and a deletion receipt can be on screen together; the
+      // deletion one steps below so neither hides the other's undo.
+      const transferNotice = React.useSyncExternalStore(subscribeTransfer, getTransfer, getTransfer).notice;
+      const [busy, setBusy] = React.useState(false);
+      const [remaining, setRemaining] = React.useState(0);
+      const token = typeof notice?.token === 'string' ? notice.token : '';
+      const seconds = typeof notice?.seconds === 'number' ? notice.seconds : 10;
+
+      React.useEffect(() => {
+        if (token.length === 0) return undefined;
+        setRemaining(seconds);
+        const tick = window.setInterval(() => {
+          setRemaining(value => (value > 0 ? value - 1 : 0));
+        }, 1000);
+        const timer = window.setTimeout(() => {
+          void requestPurge(token);
+          publishDeleteNotice(null);
+        }, seconds * 1000);
+        return () => {
+          window.clearInterval(tick);
+          window.clearTimeout(timer);
+        };
+      }, [notice?.seq, token, seconds]);
+
+      // A receipt without an undo (the outcome of an undo, or a failure) is a
+      // plain notice and clears itself.
+      React.useEffect(() => {
+        if (notice === null || token.length > 0) return undefined;
+        const timer = window.setTimeout(() => publishDeleteNotice(null), 4000);
+        return () => window.clearTimeout(timer);
+      }, [notice?.seq, token]);
+
+      if (notice === null) return null;
+
+      const undo = async () => {
+        if (busy || token.length === 0) return;
+        setBusy(true);
+        const outcome = await requestRestore(ctx, token);
+        setBusy(false);
+        deleteNoticeSeq += 1;
+        if (outcome.ok) {
+          publishDeleteNotice({
+            seq: deleteNoticeSeq,
+            text: tr('deleteUndone'),
+            tone: 'success',
+            token: '',
+            seconds: 0,
+          });
+        } else {
+          publishDeleteNotice({
+            seq: deleteNoticeSeq,
+            text: `${tr('deleteUndoFailed')}${outcome.error}`,
+            tone: 'warning',
+            token: '',
+            seconds: 0,
+          });
+        }
+      };
+
+      return overlayPortal(h(React.Fragment, null,
+        h('style', { key: 'styles', 'data-plugin-css': `${NS}-delete-toast` }, CSS),
+        h('div', {
+          key: notice.seq,
+          className: `ove-toast ove-toast-${notice.tone === 'warning' ? 'warning' : 'success'}`
+            + (transferNotice !== null && transferNotice !== undefined ? ' ove-toast-below' : ''),
+          role: 'status',
+        },
+          h('span', { className: 'ove-toast-text' }, notice.text),
+          token.length > 0 && h('span', { className: 'ove-toast-count' },
+            tr('deleteUndoSeconds').replace('{n}', String(remaining))),
+          token.length > 0 && h('button', {
+            type: 'button',
+            className: 'ove-toast-action',
+            disabled: busy,
+            onClick: () => { void undo(); },
+          }, busy ? tr('restoring') : tr('deleteUndo')),
+          h('button', {
+            type: 'button',
+            className: 'ove-toast-close',
+            'aria-label': tr('transferClose'),
+            // Closing the receipt means "do not undo this": the retained copy is
+            // dropped now instead of waiting for the Host's sweep.
+            onClick: () => {
+              if (token.length > 0) void requestPurge(token);
+              publishDeleteNotice(null);
+            },
+          }, '×'))));
+    }
+
     /* ------------------------------------------------------------------ */
     /* Confirmation dialog (frame overlay)                                 */
     /* ------------------------------------------------------------------ */
@@ -1471,6 +1664,7 @@ window.__ModuleLoader__.load({
      * @returns the confirmation overlay, or nothing while no target is pending.
      */
     function DeleteDialog({ t, ctx }) {
+      const tr = typeof t === 'function' ? t : (key) => key;
       const state = React.useSyncExternalStore(subscribeDelete, getDelete, getDelete);
       if (state.target === null) return null;
 
@@ -1485,8 +1679,21 @@ window.__ModuleLoader__.load({
         if (target === null || deleteState.busy) return;
         publishDelete({ busy: true, error: '', code: '' });
         const result = await requestDelete(ctx, target, force);
-        if (result.ok) publishDelete({ target: null, busy: false, error: '', code: '' });
-        else publishDelete({ busy: false, error: result.error, code: result.code });
+        if (result.ok) {
+          publishDelete({ target: null, busy: false, error: '', code: '' });
+          // Same receipt the archive page publishes: deleting from the sidebar
+          // menu is undoable too.
+          deleteNoticeSeq += 1;
+          publishDeleteNotice({
+            seq: deleteNoticeSeq,
+            text: `${tr('delete')} · ${target.title}`,
+            tone: 'success',
+            token: result.token ?? '',
+            seconds: 10,
+          });
+        } else {
+          publishDelete({ busy: false, error: result.error, code: result.code });
+        }
       };
 
       return h(DeleteConfirm, {
@@ -3829,6 +4036,13 @@ window.__ModuleLoader__.load({
                   id: 'original-version-enhancements.delete-dialog',
                   inject: () => ({ t: translator, ctx }),
                 }, DeleteDialog)),
+                // The deletion receipt lives on the shell so it survives leaving
+                // the page it was triggered from.
+                ctx.slots.inject('shell.overlay', () => ctx.slots.register({
+                  name: 'shell.overlay',
+                  id: 'original-version-enhancements.delete-toast',
+                  inject: () => ({ t: translator, ctx }),
+                }, SessionDeleteToast)),
               ];
             } else if (!enabled && disposers.length > 0) {
               for (const dispose of disposers) dispose();
@@ -3837,6 +4051,9 @@ window.__ModuleLoader__.load({
               // back on: its target may already be gone.
               publishDelete({ target: null, busy: false, error: '', code: '' });
               publishTransfer({ target: null, picks: [], busy: false, error: '', done: '', notice: null });
+              // An unclaimed receipt still resolves: the Host keeps its own copy
+              // until the sweep, so dropping the notice cannot lose data.
+              publishDeleteNotice(null);
             }
           };
           const unsubscribe = subscribeFlags(sync);
@@ -3846,6 +4063,7 @@ window.__ModuleLoader__.load({
             for (const dispose of disposers) dispose();
             disposers = [];
             publishDelete({ target: null, busy: false, error: '', code: '' });
+            publishDeleteNotice(null);
           };
         }, 'original-version-enhancements: chat manager surfaces');
 

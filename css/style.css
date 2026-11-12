@@ -350,6 +350,11 @@
   to { opacity: 1; transform: translate(-50%, 0); }
 }
 .ove-toast-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The remaining undo window, next to the receipt's undo action. */
+.ove-toast-count {
+  flex: none; font-size: 11px; line-height: 18px; font-variant-numeric: tabular-nums;
+  color: rgba(255, 255, 255, .62);
+}
 .ove-toast-action {
   flex: none; border: 0; border-radius: 7px; padding: 2px 8px;
   background: transparent; color: #6ee7a0;
@@ -358,6 +363,8 @@
 .ove-toast-action:hover:not(:disabled) { background: rgba(255, 255, 255, .14); }
 .ove-toast-action:disabled { opacity: .55; cursor: default; }
 .ove-toast-warning .ove-toast-action { color: #fcd34d; }
+/* Two receipts at once (a transfer and a deletion) stack instead of covering. */
+.ove-toast-below { top: 68px; }
 .ove-toast-close {
   flex: none; width: 22px; height: 22px; border: 0; border-radius: 50%;
   background: transparent; color: rgba(255, 255, 255, .66);

@@ -32,6 +32,14 @@ const EVENTS = [
   { type: 'turn/end', seq: 2, time: 3, data: { turn: 1, reason: { kind: 'completed' } } },
 ]
 
+/** The same conversation as DSH actually stores it: the seed phase closed inline. */
+const SEED_MARKED_EVENTS = [
+  ...EVENTS,
+  { type: 'session/end-seed', seq: 3, time: 4, data: {} },
+  { type: 'turn/start', seq: 4, time: 5, data: { turn: 2 } },
+  { type: 'turn/end', seq: 5, time: 6, data: { turn: 2, reason: { kind: 'completed' } } },
+]
+
 /** Lay out one source session exactly as the JSONL backend does. */
 const makeSession = async () => {
   const root = await mkdtemp(join(tmpdir(), 'ove-move-'))
@@ -47,7 +55,7 @@ const makeSession = async () => {
  * header file under a project directory (as the backend does) so a rollback can
  * locate and remove it, and `stat` reports the materialized copy.
  */
-const makePersistence = ({ root, transcript, events, writeEvents, failCreate = false, failAppend = false, indexCreated = true }) => {
+const makePersistence = ({ root, transcript, events, writeEvents, failCreate = false, failAppend = false, indexCreated = true, header = HEADER }) => {
   const state = { created: new Map(), openedWrite: false, closed: 0 }
   const persistence = {
     state,
@@ -55,7 +63,7 @@ const makePersistence = ({ root, transcript, events, writeEvents, failCreate = f
     async open(id, access) {
       if (access === 'write') state.openedWrite = true
       return {
-        header: HEADER,
+        header,
         read: async () => ({ events: access === 'write' ? writeEvents ?? events : events }),
         close: async () => { state.closed += 1 },
       }
@@ -73,7 +81,7 @@ const makePersistence = ({ root, transcript, events, writeEvents, failCreate = f
           location: { kind: 'jsonl', path: created.location },
         }
       }
-      return id === SESSION_ID ? { header: HEADER, location: { kind: 'jsonl', path: transcript } } : undefined
+      return id === SESSION_ID ? { header, location: { kind: 'jsonl', path: transcript } } : undefined
     },
     async list() {
       if (!indexCreated) return []
@@ -143,9 +151,9 @@ const makeRegistry = (source, target, archivedSessionIds = []) => {
   }
 }
 
-const depsFor = ({ root, transcript, events, registry, cache, failCreate, failAppend, writeEvents, agentHandles, indexCreated }) => ({
+const depsFor = ({ root, transcript, events, registry, cache, failCreate, failAppend, writeEvents, agentHandles, indexCreated, header }) => ({
   workspaceRegistry: registry,
-  sessionPersistence: makePersistence({ root, transcript, events, failCreate, failAppend, writeEvents, indexCreated }),
+  sessionPersistence: makePersistence({ root, transcript, events, failCreate, failAppend, writeEvents, indexCreated, header }),
   sessionProjectionCache: cache,
   sessions: { get: () => undefined },
   agents: { get: () => undefined },
@@ -192,10 +200,12 @@ test('a move keeps the session id and only changes its workspace', async () => {
   assert.deepEqual(registry.calls.unarchived, [SESSION_ID])
   assert.deepEqual(registry.calls.unpinned, [SESSION_ID])
 
-  // The cached projection follows the moved identity under the same id.
+  // The cached projection follows the moved identity under the same id, with the
+  // unseeded log's inherited cut left at zero so the cache accepts the identity.
   assert.equal(cold.length, 1)
   assert.equal(cold[0].meta.id, SESSION_ID)
   assert.equal(cold[0].meta.cwd, TARGET_PATH)
+  assert.equal(cold[0].inherited, 0)
 
   // The source storage is gone; the write lease was taken and released.
   await assert.rejects(stat(sessionDirectory), error => error.code === 'ENOENT')
@@ -300,6 +310,63 @@ test('a copy still creates a distinct session id', async () => {
   // A copy never touches the source.
   assert.deepEqual(source.calls, [])
   assert.match(await readFile(transcript, 'utf8'), /session-1234/)
+  await rm(root, { recursive: true, force: true })
+})
+
+test('a copy warms the projection with no inherited prefix for an unseeded log', async () => {
+  const { root, transcript } = await makeSession()
+  const source = makeWorkspace('ws-source', SOURCE_PATH)
+  const target = makeWorkspace('ws-target', TARGET_PATH)
+  const registry = makeRegistry(source, target)
+  const cold = []
+  const cache = { coldSnapshot: (meta, inherited, events) => { cold.push({ meta, inherited, events }) } }
+  // A plain DSH log closes its own seed phase with this marker. It is NOT an
+  // inherited prefix: the projection cache rejects an unseeded identity that
+  // carries one, and the copy would then show up without a title until opened.
+  const deps = depsFor({ root, transcript, events: SEED_MARKED_EVENTS, registry, cache })
+
+  const result = await transferSession(deps, {
+    sessionId: SESSION_ID,
+    workspaceId: target.id,
+    mode: 'copy',
+  })
+
+  assert.equal(result.ok, true, JSON.stringify(result))
+  assert.equal(cold.length, 1)
+  assert.equal(cold[0].inherited, 0)
+  assert.equal(cold[0].meta.isSeeded, false)
+  assert.equal(cold[0].meta.cwd, TARGET_PATH)
+  assert.equal(cold[0].events.length, SEED_MARKED_EVENTS.length)
+  await rm(root, { recursive: true, force: true })
+})
+
+test('a copy of a seeded log keeps the inherited prefix it really has', async () => {
+  const { root, transcript } = await makeSession()
+  const source = makeWorkspace('ws-source', SOURCE_PATH)
+  const target = makeWorkspace('ws-target', TARGET_PATH)
+  const registry = makeRegistry(source, target)
+  const cold = []
+  const cache = { coldSnapshot: (meta, inherited, events) => { cold.push({ meta, inherited, events }) } }
+  const deps = depsFor({
+    root,
+    transcript,
+    events: SEED_MARKED_EVENTS,
+    registry,
+    cache,
+    header: { ...HEADER, isSeeded: true },
+  })
+
+  const result = await transferSession(deps, {
+    sessionId: SESSION_ID,
+    workspaceId: target.id,
+    mode: 'copy',
+  })
+
+  assert.equal(result.ok, true, JSON.stringify(result))
+  assert.equal(cold.length, 1)
+  // The marker sits at seq 3, so the copy inherits those three events.
+  assert.equal(cold[0].inherited, 3)
+  assert.equal(cold[0].meta.isSeeded, true)
   await rm(root, { recursive: true, force: true })
 })
 

@@ -52,6 +52,14 @@
 删除当前选中的会话时，主面板会像官方「归档会话」一样立刻离开这个会话（清空选中、释放引用、回到新建会话页），
 而不是停在一个已经删除的对话上。
 
+**永久删除带 10 秒可撤销。** 确认后会话立刻从列表消失（工作区账目与投影缓存照旧清理），但它的存储
+目录不是被直接抹掉，而是移进 profile 目录下的回收区（`deleted-sessions/<token>`）。随后弹出深色通知：
+「永久删除 · 会话名」、「N 秒内可撤销」、「撤销」。10 秒内点「撤销」会把目录原样放回、刷新工作区
+表头索引、重新登记到原工作区（原本已归档的仍回到归档集合），并重新预热投影缓存——恢复出来的会话
+立刻就有标题，不会是「未命名」。倒计时结束或点通知右侧的「×」才真正删除；进程在窗口内退出也不会
+永久留下数据：Host 下次启动会清掉超过 1 小时的回收项。删除、撤销、丢弃三个路由都要求同源 + 同一个
+确认头，链接或表单无法触发。
+
 执行完成后面板关闭，并弹出与官方「已归档会话」同款的**浮动深色通知**（窗口顶部居中，6 秒自动消失，
 右侧可关闭），通知上带「撤销」：
 
@@ -87,6 +95,13 @@ DSH 中「会话属于哪个工作区」由会话记录里不可变的 `cwd` 决
 的幽灵条目。另外，从带 `session/end-seed` 的日志（分叉出来的会话）复制时，副本表头会沿用
 `isSeeded` 并把继承前缀长度一起写进持久化——缺少它的副本后端不会落盘，这也是之前
 「复制/移动后会话损坏」的根因。
+
+**复制/移动出来的会话不再「未命名」。** 投影缓存只接受与表头身份完全一致的记录，而一条普通
+（非分叉）日志自身也带着收尾用的 `session/end-seed` 标记。此前把它当成"继承前缀"传给
+`coldSnapshot`，缓存服务会以「unseeded … inherited event count must be 0」拒收整条记录（错误被
+吞掉），于是副本没有标题，侧边栏显示「未命名」，直到点开该会话才由冷读补写缓存。现在只有
+`isSeeded` 为真的日志才计算继承前缀，非分叉日志一律按 0 传递；写入后还会等缓存真的能读出标题
+再返回，保证紧随其后的会话列表刷新看到的就是原会话的标题。
 
 永久删除默认只接受已归档且未被宿主加载的本机会话，并通过持久化写入句柄独占校验。
 插件会跟踪 Host 的 Agent 生命周期句柄，先把会话停用再删除。句柄表保存在 Host 进程级，
@@ -254,7 +269,12 @@ v1.5.21（MIT License，Copyright (c) 2026 WSL043）。
 
 - `POST /plugins/original-version-enhancements/archives/search` — 归档内容搜索
 - `POST /plugins/original-version-enhancements/sessions/delete` — 永久删除
-  （需要 `x-dsh-session-delete-confirmation: delete-session` 确认头与同源校验）
+  （需要 `x-dsh-session-delete-confirmation: delete-session` 确认头与同源校验；正文带 `retain: true`
+  时把目录留在回收区，返回 `value.retained.token`）
+- `POST /plugins/original-version-enhancements/sessions/restore` — 撤销一次保留的删除（正文 `{token}`，
+  同一个确认头）
+- `POST /plugins/original-version-enhancements/sessions/purge` — 丢弃一条保留的删除（正文 `{token}`，
+  同一个确认头）
 - `POST /plugins/original-version-enhancements/sessions/transfer` — 移动 / 复制会话到其他工作区
   （需要 `x-dsh-session-transfer-confirmation: transfer-session` 确认头与同源校验）
 - `POST /plugins/original-version-enhancements/automation/catalog` — 任务目录、投递后清理标记与每个任务的记录条数

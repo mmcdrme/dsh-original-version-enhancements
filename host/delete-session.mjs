@@ -407,7 +407,7 @@ export async function stopLoadedSession(deps, sessionId) {
  * @param target - the session root and the exact session id.
  * @returns a tagged result understood by the settings page.
  */
-export async function deleteSessionSafely(deps, { sessionRoot, sessionId, force = false }) {
+export async function deleteSessionSafely(deps, { sessionRoot, sessionId, force = false, retain }) {
   const releaseReservation = deps.agentHandles?.reserve?.(sessionId)
   if (typeof deps.agentHandles?.reserve === 'function' && releaseReservation === undefined) {
     return failure('deletion-in-progress', '该会话正在删除中，请等待当前操作完成。')
@@ -415,7 +415,7 @@ export async function deleteSessionSafely(deps, { sessionRoot, sessionId, force 
 
   let result
   try {
-    result = await deleteSessionStorage(deps, { sessionRoot, sessionId, force })
+    result = await deleteSessionStorage(deps, { sessionRoot, sessionId, force, retain })
   } finally {
     releaseReservation?.()
   }
@@ -452,7 +452,7 @@ export async function deleteSessionWithoutReservation(deps, { sessionRoot, sessi
  * @param target - the session root, id and whether to bypass the load check.
  * @returns a tagged result understood by the settings page.
  */
-const deleteSessionStorage = async (deps, { sessionRoot, sessionId, force }) => {
+const deleteSessionStorage = async (deps, { sessionRoot, sessionId, force, retain }) => {
   const persistence = deps.sessionPersistence
   const usesHandles = persistence.supportsRawArtifacts === undefined
     && persistence.name === 'session-persistence-jsonl'
@@ -463,7 +463,7 @@ const deleteSessionStorage = async (deps, { sessionRoot, sessionId, force }) => 
     return failure('unsupported-backend', '当前会话存储不是可逐会话删除的 JSONL 后端。')
   }
 
-  const ownership = { usesHandles, handle: undefined, force }
+  const ownership = { usesHandles, handle: undefined, force, retain }
   try {
     return await deleteReservedSession(deps, { sessionRoot, sessionId }, ownership)
   } finally {
@@ -698,6 +698,24 @@ async function deleteReservedSession(deps, { sessionRoot, sessionId }, ownership
       detached = false
       await rm(quarantineRoot, { recursive: true, force: true })
       return failure('unsafe-location', '会话目录在删除期间发生了身份变化，未删除任何文件。')
+    }
+
+    // A deletion the human may still undo keeps the validated directory instead
+    // of unlinking it: the hook owns the move into the trash, so this module
+    // never has to know where the undo material lives.
+    if (typeof ownership.retain === 'function') {
+      const retained = await ownership.retain({
+        sessionId: sessionId,
+        header,
+        // The project directory the session belongs to, i.e. the folder the undo
+        // has to put it back into (`<sessionRoot>/<project>/<id>`).
+        projectDir: dirname(validated.resolvedDirectory),
+        name: basename(validated.resolvedDirectory),
+        directory: quarantinedDirectory,
+      })
+      detached = false
+      await rm(quarantineRoot, { recursive: true, force: true })
+      return { ok: true, value: { deleted: true, retained } }
     }
 
     const removeDirectory = deps.removeDirectory
@@ -959,7 +977,9 @@ export function createDeleteRequestHandler({ deleteSession, isTrustedRequest = s
     }
 
     try {
-      const result = await deleteSession(body.sessionId, { force })
+      // `retain` asks the deletion to keep the validated directory in the undo
+      // trash; the response then carries the token the receipt can undo with.
+      const result = await deleteSession(body.sessionId, { force, retain: body?.retain === true })
       sendJson(res, result.ok ? 200 : 409, result)
     } catch {
       sendJson(res, 500, failure('internal', '删除过程中发生未预期错误，未确认删除成功。'))

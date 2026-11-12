@@ -7,7 +7,7 @@
 // until its lifecycle handle is disposed.
 
 import assert from 'node:assert/strict'
-import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -147,6 +147,39 @@ test('a tracked live session is stopped and its storage removed', async () => {
   assert.equal(persistence.state.closed, true)
   await assert.rejects(readFile(transcript, 'utf8'))
   await rm(sessionDirectory, { recursive: true, force: true })
+  await rm(root, { recursive: true, force: true })
+})
+
+test('a retained deletion hands the validated directory to the undo hook', async () => {
+  const { root, sessionDirectory, transcript } = await makeSession()
+  const host = makeHost()
+  const persistence = makePersistence({ transcript })
+  const trash = join(root, 'trash')
+  const seen = []
+
+  const result = await deleteSessionSafely(depsFor(host, persistence), {
+    sessionRoot: root,
+    sessionId: SESSION_ID,
+    retain: async (info) => {
+      seen.push({ sessionId: info.sessionId, projectDir: info.projectDir, name: info.name, header: info.header })
+      await mkdir(trash, { recursive: true })
+      await rename(info.directory, join(trash, info.name))
+      return { token: 'token-1' }
+    },
+  })
+
+  assert.equal(result.ok, true, JSON.stringify(result))
+  assert.deepEqual(result.value, { deleted: true, retained: { token: 'token-1' } })
+  assert.equal(seen.length, 1)
+  assert.equal(seen[0].sessionId, SESSION_ID)
+  assert.equal(seen[0].projectDir, join(root, 'project'))
+  assert.equal(seen[0].id, undefined)
+  assert.equal(seen[0].name, SESSION_ID)
+  assert.equal(seen[0].header.id, SESSION_ID)
+  // Nothing was destroyed: the transcript moved into the undo trash instead of
+  // being unlinked, which is what makes "撤销" possible.
+  assert.match(await readFile(join(trash, SESSION_ID, 'session.jsonl'), 'utf8'), /session-1234/)
+  await assert.rejects(stat(sessionDirectory), error => error.code === 'ENOENT')
   await rm(root, { recursive: true, force: true })
 })
 

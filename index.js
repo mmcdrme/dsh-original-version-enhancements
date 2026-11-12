@@ -19,6 +19,12 @@ import {
   transferSession,
 } from './host/transfer.mjs'
 import {
+  purgeRetainedSession,
+  purgeStaleRetainedSessions,
+  restoreRetainedSession,
+  retainDeletedSession,
+} from './host/deleted-sessions.mjs'
+import {
   createAutomationSurface,
   profileDirectory,
   readAutomationState,
@@ -218,6 +224,11 @@ export function apply(ctx) {
   const deleteHandler = createDeleteRequestHandler({
     isTrustedRequest,
     deleteSession: async (sessionId, options) => {
+      // The archive sets the session was in before the delete: undoing the
+      // removal puts it back into the same state instead of re-filing it as a
+      // plain workspace conversation.
+      const archived = Array.isArray(ctx.workspaceRegistry?.archivedSessionIds)
+        && ctx.workspaceRegistry.archivedSessionIds.includes(sessionId)
       // deletion drops the session's Workspace accounting and projection-cache
       // record itself, so no ghost conversation survives the removed transcript.
       return await deleteSessionSafely({
@@ -226,7 +237,23 @@ export function apply(ctx) {
         agents: ctx.agents,
         agentHandles,
         sessionPersistence: persistence,
-      }, { sessionRoot, sessionId, force: options?.force === true })
+      }, {
+        sessionRoot,
+        sessionId,
+        force: options?.force === true,
+        retain: options?.retain === true
+          ? info => retainDeletedSession({
+            profileDir: profileDirectory(),
+            sessionId: info.sessionId,
+            projectDir: info.projectDir,
+            name: info.name,
+            sourceDirectory: info.directory,
+            header: info.header,
+            archived,
+            warn,
+          })
+          : undefined,
+      })
     },
   })
 
@@ -263,4 +290,65 @@ export function apply(ctx) {
     }),
     'original-version-enhancements: session transfer route',
   )
+
+  // The undo receipt of a permanent delete: `restore` puts the retained session
+  // back, `purge` drops it once the window has passed. Both take the same
+  // confirmation header the delete takes, so no link can trigger them.
+  const retainedHandler = action => async (req, res) => {
+    const send = (status, body) => {
+      res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
+      res.end(JSON.stringify(body))
+    }
+    if (req.method !== 'POST') return send(405, { ok: false, error: { code: 'method-not-allowed', message: '只允许使用 POST。' } })
+    if (!isTrustedRequest(req) || req.headers['x-dsh-session-delete-confirmation'] !== 'delete-session') {
+      return send(403, { ok: false, error: { code: 'forbidden', message: '请求未通过同源与确认校验。' } })
+    }
+    let body
+    try {
+      const chunks = []
+      for await (const chunk of req) chunks.push(Buffer.from(chunk))
+      body = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+    } catch {
+      return send(400, { ok: false, error: { code: 'invalid-json', message: '请求不是有效 JSON。' } })
+    }
+    const token = typeof body?.token === 'string' ? body.token : ''
+    if (token.length === 0 || token.length > 200) {
+      return send(400, { ok: false, error: { code: 'invalid-token', message: '撤销凭据无效。' } })
+    }
+    const result = action === 'restore'
+      ? await restoreRetainedSession({
+        profileDir: profileDirectory(),
+        workspaceRegistry: ctx.workspaceRegistry,
+        sessionPersistence: persistence,
+        sessionProjectionCache: projectionCache,
+        warn,
+      }, { token })
+      : await purgeRetainedSession({ profileDir: profileDirectory(), warn }, { token })
+    return send(result.ok ? 200 : 409, result)
+  }
+
+  ctx.effect(
+    () => ctx.webServer.register({
+      kind: 'exact',
+      path: `${ROUTE_ROOT}/sessions/restore`,
+      handler: retainedHandler('restore'),
+    }),
+    'original-version-enhancements: undo a retained deletion',
+  )
+
+  ctx.effect(
+    () => ctx.webServer.register({
+      kind: 'exact',
+      path: `${ROUTE_ROOT}/sessions/purge`,
+      handler: retainedHandler('purge'),
+    }),
+    'original-version-enhancements: drop a retained deletion',
+  )
+
+  // A tab closed during the undo window must not keep session data forever.
+  ctx.effect(() => {
+    let cancelled = false
+    purgeStaleRetainedSessions({ profileDir: profileDirectory(), warn }).catch(() => undefined)
+    return () => { cancelled = true }
+  }, 'original-version-enhancements: retained deletion sweep')
 }
