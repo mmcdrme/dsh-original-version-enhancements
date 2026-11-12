@@ -85,8 +85,9 @@ window.__ModuleLoader__.load({
      */
     const RECALL_KEY = 'original-version-enhancements.recall.v1';
     const HISTORY_KEY = 'original-version-enhancements.history.v1';
+    const HISTORY_SESSIONS_KEY = 'original-version-enhancements.history.sessions.v1';
     const HISTORY_LIMIT_MAX = 100;
-    const DEFAULT_RECALL = { prev: 'alt+p', next: 'alt+b', max: 20 };
+    const DEFAULT_RECALL = { prev: 'alt+p', next: 'alt+b', max: 100, perSession: false };
 
     const clampHistoryLimit = (value) => {
       const count = Math.round(Number(value));
@@ -192,6 +193,7 @@ window.__ModuleLoader__.load({
           prev,
           next,
           max: clampHistoryLimit(saved.max),
+          perSession: saved.perSession === true,
         };
       } catch {
         return { ...DEFAULT_RECALL };
@@ -260,6 +262,84 @@ window.__ModuleLoader__.load({
       const after = nextHistory(before, text, recallState.max);
       if (after.length === before.length && after.every((item, index) => item === before[index])) return;
       publishHistory(after);
+    };
+
+    /* Per-session histories: one list per Session id, used only while the
+       "independent recall" option is on. Switching the option clears both
+       stores, so the two shapes never have to be merged. */
+    const readSessionHistories = () => {
+      try {
+        const raw = JSON.parse(globalThis.localStorage?.getItem(HISTORY_SESSIONS_KEY) ?? '{}');
+        if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return {};
+        const kept = {};
+        for (const [id, value] of Object.entries(raw)) {
+          if (typeof id !== 'string' || id.length === 0 || !Array.isArray(value)) continue;
+          const list = value.filter(text => typeof text === 'string' && text.trim().length > 0);
+          if (list.length > 0) kept[id] = list;
+        }
+        return kept;
+      } catch {
+        return {};
+      }
+    };
+
+    let sessionHistorySnapshot = readSessionHistories();
+    const getSessionHistories = () => sessionHistorySnapshot;
+
+    const publishSessionHistories = (next) => {
+      sessionHistorySnapshot = next;
+      try {
+        globalThis.localStorage?.setItem(HISTORY_SESSIONS_KEY, JSON.stringify(next));
+      } catch { /* a blocked storage keeps the history for this page only */ }
+      for (const listener of historyListeners) listener();
+    };
+
+    /**
+     * The list one composer walks: the shared one, or the list recorded for
+     * its own Session when independent recall is on.
+     * @param perSession - whether recall is per conversation.
+     * @param sessionId - the composer's Session id.
+     * @param globalList - the shared history.
+     * @param sessionLists - the per-Session histories.
+     * @returns the list to walk; never null.
+     */
+    const scopedHistory = (perSession, sessionId, globalList, sessionLists) => {
+      if (perSession !== true) return Array.isArray(globalList) ? globalList : [];
+      if (typeof sessionId !== 'string' || sessionId.length === 0) return [];
+      const list = sessionLists === null || typeof sessionLists !== 'object' ? undefined : sessionLists[sessionId];
+      return Array.isArray(list) ? list : [];
+    };
+
+    /** The history a composer with this Session id walks. */
+    const historyForSession = (sessionId) => (
+      scopedHistory(recallState.perSession, sessionId, historySnapshot, sessionHistorySnapshot)
+    );
+
+    /** Record one accepted submission in the store the current mode uses. */
+    const rememberSentTextFor = (sessionId, text) => {
+      if (recallState.perSession !== true) {
+        rememberSentText(text);
+        return;
+      }
+      if (typeof sessionId !== 'string' || sessionId.length === 0) return;
+      const before = historyForSession(sessionId);
+      const after = nextHistory(before, text, recallState.max);
+      if (after.length === before.length && after.every((item, index) => item === before[index])) return;
+      publishSessionHistories({ ...sessionHistorySnapshot, [sessionId]: after });
+    };
+
+    /** How many messages the current mode holds (the page's counter). */
+    const sentHistoryCount = () => {
+      if (recallState.perSession !== true) return historySnapshot.length;
+      return Object.values(sessionHistorySnapshot).reduce((sum, list) => sum + (Array.isArray(list) ? list.length : 0), 0);
+    };
+
+    const useSentHistoryCount = () => React.useSyncExternalStore(subscribeHistory, sentHistoryCount, sentHistoryCount);
+
+    /** Drop every recorded message, in both shapes. */
+    const clearAllSentHistory = () => {
+      publishHistory([]);
+      publishSessionHistories({});
     };
 
     const clearSentHistory = () => publishHistory([]);
@@ -934,7 +1014,7 @@ window.__ModuleLoader__.load({
      * @param props - the Session's standard input props.
      * @returns null.
      */
-    function RecallBridge({ inputActions, useInput }) {
+    function RecallBridge({ inputActions, useInput, sessionId }) {
       const flags = useFlags();
       const recall = useRecall();
       const subscribe = typeof useInput === 'function' ? useInput : () => (state) => state;
@@ -945,12 +1025,16 @@ window.__ModuleLoader__.load({
       actionsRef.current = inputActions;
       const recallRef = React.useRef(recall);
       recallRef.current = recall;
+      const sessionRef = React.useRef(sessionId);
+      sessionRef.current = sessionId;
       /** The last non-blank draft, i.e. the text a submission would carry. */
       const lastText = React.useRef(null);
       /** When the composer was last in flight (`sending`/`submitting`). */
       const inFlightAt = React.useRef(0);
       /** -1 = not walking the history; 0 = the newest entry. */
       const cursor = React.useRef(-1);
+      /** The Session this bridge last tracked; a change starts a fresh walk. */
+      const seenSession = React.useRef(sessionId);
       /** What this bridge itself put into the composer, to tell edits apart. */
       const shown = React.useRef(null);
 
@@ -975,12 +1059,24 @@ window.__ModuleLoader__.load({
       // Host accepts. A refusal returns to `plain` with the draft intact, so a
       // later manual clear outside that window is not recorded as a message.
       React.useEffect(() => {
+        // Switching Session must not attribute the previous draft to the new
+        // one: the walk and the pending candidate belong to one Session.
+        if (seenSession.current !== sessionId) {
+          seenSession.current = sessionId;
+          lastText.current = null;
+          inFlightAt.current = 0;
+          cursor.current = -1;
+          shown.current = null;
+          return;
+        }
         const text = typeof draft === 'string' ? draft : '';
         if (phase !== 'plain') inFlightAt.current = Date.now();
         if (text.trim().length > 0) {
           lastText.current = text;
         } else if (lastText.current !== null) {
-          if (Date.now() - inFlightAt.current <= 3000) rememberSentText(lastText.current);
+          if (Date.now() - inFlightAt.current <= 3000) {
+            rememberSentTextFor(sessionRef.current, lastText.current);
+          }
           lastText.current = null;
         }
         // Any edit of a recalled draft ends the walk: the next stroke starts
@@ -989,7 +1085,7 @@ window.__ModuleLoader__.load({
           shown.current = null;
           cursor.current = -1;
         }
-      }, [draft, phase]);
+      }, [draft, phase, sessionId]);
 
       React.useEffect(() => {
         if (!flags.recall) return undefined;
@@ -1000,7 +1096,7 @@ window.__ModuleLoader__.load({
           // its Alt+P, and another plugin's editable must not be rewritten.
           if (target === null || target.isContentEditable !== true) return;
           const config = recallRef.current;
-          const stack = getHistory().slice(0, config.max);
+          const stack = historyForSession(sessionRef.current).slice(0, config.max);
           if (stack.length === 0) return;
           if (matchesCombo(config.prev, event)) {
             event.preventDefault();
@@ -1040,6 +1136,7 @@ window.__ModuleLoader__.load({
     function KeyRecorder({ value, label, disabled, onCapture }) {
       const [recording, setRecording] = React.useState(false);
       const [error, setError] = React.useState('');
+      const fieldRef = React.useRef(null);
 
       React.useEffect(() => {
         if (!recording) return undefined;
@@ -1064,11 +1161,24 @@ window.__ModuleLoader__.load({
           setError('');
           setRecording(false);
         };
+        // A click anywhere outside the field abandons the attempt: leaving the
+        // button armed while the human goes on to click something else made the
+        // next unrelated stroke silently become the binding.
+        const onPointerDown = (event) => {
+          const field = fieldRef.current;
+          if (field !== null && event.target instanceof Node && field.contains(event.target)) return;
+          setRecording(false);
+          setError('');
+        };
         window.addEventListener('keydown', onKeyDown, true);
-        return () => window.removeEventListener('keydown', onKeyDown, true);
+        document.addEventListener('pointerdown', onPointerDown, true);
+        return () => {
+          window.removeEventListener('keydown', onKeyDown, true);
+          document.removeEventListener('pointerdown', onPointerDown, true);
+        };
       }, [recording, onCapture, label]);
 
-      return h('div', { className: 'ove-key-field' },
+      return h('div', { className: 'ove-key-field', ref: fieldRef },
         h('button', {
           type: 'button',
           className: 'ove-key',
@@ -1092,7 +1202,9 @@ window.__ModuleLoader__.load({
       const tr = typeof t === 'function' ? t : (key) => key;
       const flags = useFlags();
       const recall = useRecall();
-      const history = useHistory();
+      const count = useSentHistoryCount();
+      /** The pending scope switch, which must confirm that history is dropped. */
+      const [scopeConfirm, setScopeConfirm] = React.useState(false);
 
       const toggle = (key) => setFlag(key, !flags[key]);
 
@@ -1103,7 +1215,30 @@ window.__ModuleLoader__.load({
         return '';
       };
 
-      const count = history.length;
+      const dialog = scopeConfirm
+        ? ReactDOM.createPortal(h('div', { className: 'ove-overlay ove-overlay-portal' },
+          h('div', { className: 'ove-dialog', role: 'dialog', 'aria-modal': 'true', 'aria-label': tr('recall.scope') },
+            h('h2', { className: 'ove-dialog-title' }, tr('recall.scopeConfirmTitle')),
+            h('p', { className: 'ove-dialog-desc' },
+              tr('recall.scopeConfirmDesc').replace('{n}', String(count))),
+            h('div', { className: 'ove-dialog-actions' },
+              h('button', {
+                type: 'button',
+                className: 'ove-btn',
+                onClick: () => setScopeConfirm(false),
+              }, tr('cancel')),
+              h('button', {
+                type: 'button',
+                className: 'ove-btn ove-btn-danger',
+                onClick: () => {
+                  setScopeConfirm(false);
+                  // The two shapes are never merged: switch first, then drop
+                  // both stores, and the next submission starts a fresh one.
+                  setRecall({ perSession: !recall.perSession });
+                  clearAllSentHistory();
+                },
+              }, tr('recall.scopeConfirmAction'))))), document.body)
+        : null;
 
       return h(React.Fragment, null,
         h('style', { key: 'styles', 'data-plugin-css': `${NS}-page` }, CSS),
@@ -1167,61 +1302,74 @@ window.__ModuleLoader__.load({
                   onClick: () => toggle('recall'),
                 }, h('span', { className: 'ove-switch-thumb' }))))),
 
-          h('div', { className: 'ove-group' },
-            h('h2', { className: 'ove-group-title' }, tr('recall.title')),
-            h('p', { className: 'ove-group-desc' }, tr('recall.desc')),
-            h('div', { className: 'ove-card' },
-              h('div', { className: 'ove-row' },
-                h('div', { className: 'ove-row-text' },
-                  h('div', { className: 'ove-row-title' }, tr('recall.prev')),
-                  h('div', { className: 'ove-row-desc' }, tr('recall.prev.desc'))),
-                h(KeyRecorder, {
-                  value: recall.prev,
-                  label: tr,
-                  disabled: !flags.recall,
-                  onCapture: capture('prev'),
-                })),
+          !flags.recall
+            ? null
+            : h('div', { className: 'ove-group' },
+              h('h2', { className: 'ove-group-title' }, tr('recall.title')),
+              h('p', { className: 'ove-group-desc' }, tr('recall.desc')),
+              h('div', { className: 'ove-card' },
+                h('div', { className: 'ove-row' },
+                  h('div', { className: 'ove-row-text' },
+                    h('div', { className: 'ove-row-title' }, tr('recall.prev')),
+                    h('div', { className: 'ove-row-desc' }, tr('recall.prev.desc'))),
+                  h(KeyRecorder, {
+                    value: recall.prev,
+                    label: tr,
+                    onCapture: capture('prev'),
+                  })),
 
-              h('div', { className: 'ove-row' },
-                h('div', { className: 'ove-row-text' },
-                  h('div', { className: 'ove-row-title' }, tr('recall.next')),
-                  h('div', { className: 'ove-row-desc' }, tr('recall.next.desc'))),
-                h(KeyRecorder, {
-                  value: recall.next,
-                  label: tr,
-                  disabled: !flags.recall,
-                  onCapture: capture('next'),
-                })),
+                h('div', { className: 'ove-row' },
+                  h('div', { className: 'ove-row-text' },
+                    h('div', { className: 'ove-row-title' }, tr('recall.next')),
+                    h('div', { className: 'ove-row-desc' }, tr('recall.next.desc'))),
+                  h(KeyRecorder, {
+                    value: recall.next,
+                    label: tr,
+                    onCapture: capture('next'),
+                  })),
 
-              h('div', { className: 'ove-row' },
-                h('div', { className: 'ove-row-text' },
-                  h('div', { className: 'ove-row-title' }, tr('recall.max')),
-                  h('div', { className: 'ove-row-desc' }, tr('recall.max.desc'))),
-                h('input', {
-                  type: 'number',
-                  className: 'ove-input ove-number',
-                  min: 1,
-                  max: HISTORY_LIMIT_MAX,
-                  step: 1,
-                  value: recall.max,
-                  disabled: !flags.recall,
-                  'aria-label': tr('recall.max'),
-                  onChange: (event) => setRecall({ max: event.target.value }),
-                })),
+                h('div', { className: 'ove-row' },
+                  h('div', { className: 'ove-row-text' },
+                    h('div', { className: 'ove-row-title' }, tr('recall.max')),
+                    h('div', { className: 'ove-row-desc' }, tr('recall.max.desc'))),
+                  h('input', {
+                    type: 'number',
+                    className: 'ove-input ove-number',
+                    min: 1,
+                    max: HISTORY_LIMIT_MAX,
+                    step: 1,
+                    value: recall.max,
+                    'aria-label': tr('recall.max'),
+                    onChange: (event) => setRecall({ max: event.target.value }),
+                  })),
 
-              h('div', { className: 'ove-row' },
-                h('div', { className: 'ove-row-text' },
-                  h('div', { className: 'ove-row-title' }, tr('recall.saved').replace('{n}', String(count))),
-                  h('div', { className: 'ove-row-desc' }, tr('recall.saved.desc'))),
-                h('button', {
-                  type: 'button',
-                  className: 'ove-btn ove-btn-quiet',
-                  disabled: count === 0,
-                  onClick: () => clearSentHistory(),
-                }, tr('recall.clear'))))),
+                h('div', { className: 'ove-row' },
+                  h('div', { className: 'ove-row-text' },
+                    h('div', { className: 'ove-row-title' }, tr('recall.scope')),
+                    h('div', { className: 'ove-row-desc' }, tr('recall.scope.desc'))),
+                  h('button', {
+                    type: 'button',
+                    className: 'ove-switch',
+                    role: 'switch',
+                    'aria-checked': recall.perSession,
+                    'aria-label': tr('recall.scope'),
+                    onClick: () => setScopeConfirm(true),
+                  }, h('span', { className: 'ove-switch-thumb' }))),
+
+                h('div', { className: 'ove-row' },
+                  h('div', { className: 'ove-row-text' },
+                    h('div', { className: 'ove-row-title' }, tr('recall.saved').replace('{n}', String(count))),
+                    h('div', { className: 'ove-row-desc' }, tr('recall.saved.desc'))),
+                  h('button', {
+                    type: 'button',
+                    className: 'ove-btn ove-btn-quiet',
+                    disabled: count === 0,
+                    onClick: () => clearAllSentHistory(),
+                  }, tr('recall.clear'))))),
 
           h('p', { className: 'ove-hint' }, tr('pageHint')),
           h('p', { className: 'ove-footnote' }, tr('footnote'))),
+        dialog,
       );
     }
 

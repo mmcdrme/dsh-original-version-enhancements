@@ -35,8 +35,8 @@ const stroke = (key, modifiers = {}, code = '') => ({
   metaKey: modifiers.meta === true,
 })
 
-test('the defaults are Alt+P upward, Alt+B downward and 20 entries', () => {
-  assert.deepEqual(keys.DEFAULT_RECALL, { prev: 'alt+p', next: 'alt+b', max: 20 })
+test('the defaults are Alt+P upward, Alt+B downward and 100 entries', () => {
+  assert.deepEqual(keys.DEFAULT_RECALL, { prev: 'alt+p', next: 'alt+b', max: 100, perSession: false })
   assert.equal(keys.HISTORY_LIMIT_MAX, 100)
 })
 
@@ -71,9 +71,9 @@ test('the history limit stays inside 1..100', () => {
   assert.equal(keys.clampHistoryLimit('0'), 1)
   assert.equal(keys.clampHistoryLimit(-5), 1)
   assert.equal(keys.clampHistoryLimit(500), 100)
-  assert.equal(keys.clampHistoryLimit('abc'), 20)
+  assert.equal(keys.clampHistoryLimit('abc'), 100)
   assert.equal(keys.clampHistoryLimit(3.4), 3)
-  assert.equal(keys.clampHistoryLimit(undefined), 20)
+  assert.equal(keys.clampHistoryLimit(undefined), 100)
 })
 
 test('a new submission is remembered newest first', () => {
@@ -93,4 +93,23 @@ test('the history is trimmed to the configured depth', () => {
   const full = ['c', 'b', 'a']
   assert.deepEqual(nextHistory(full, 'd', 2), ['d', 'c'])
   assert.deepEqual(nextHistory(full, 'd', 1), ['d'])
+})
+
+const { scopedHistory } = new Function(`${slice('    const scopedHistory = ', '    /** The history a composer')}
+return { scopedHistory }`)()
+
+test('independent recall reads the Session’s own list, shared recall reads the global one', () => {
+  const globalList = ['shared']
+  const perSession = { 'session-a': ['a1', 'a2'], 'session-b': ['b1'] }
+  assert.deepEqual(scopedHistory(false, 'session-a', globalList, perSession), ['shared'])
+  assert.deepEqual(scopedHistory(true, 'session-a', globalList, perSession), ['a1', 'a2'])
+  assert.deepEqual(scopedHistory(true, 'session-b', globalList, perSession), ['b1'])
+})
+
+test('an unknown or missing Session has no independent history', () => {
+  const perSession = { 'session-a': ['a1'] }
+  assert.deepEqual(scopedHistory(true, 'session-z', [], perSession), [])
+  assert.deepEqual(scopedHistory(true, '', [], perSession), [])
+  assert.deepEqual(scopedHistory(true, 'session-a', [], null), [])
+  assert.deepEqual(scopedHistory(false, 'session-a', undefined, perSession), [])
 })
