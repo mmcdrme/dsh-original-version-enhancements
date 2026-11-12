@@ -613,6 +613,7 @@
 .ove-session-sep { flex: 0 0 auto; margin: 0 1px; color: var(--dsw-alias-label-tertiary); }
 .ove-session-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ove-session-tag { flex: 0 0 auto; color: var(--dsw-alias-label-tertiary); }
+.ove-session-id { flex: 0 0 auto; margin-left: 6px; font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums; color: #2563eb; }
 /* Conversations are picked from a combobox instead of a native <select>, so the
    workspace half can be bold and the list can react while it is moved over. */
 .ove-combo { position: relative; }

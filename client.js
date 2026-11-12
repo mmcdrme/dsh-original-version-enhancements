@@ -1851,18 +1851,48 @@ window.__ModuleLoader__.load({
      * One conversation as "workspace/name", with the workspace half emphasised.
      * @param session - an entry carrying `workspace`, `label` and `archived`.
      * @param tr - translator, for the archived suffix.
+     * @param showId - append the short session id, for rows that share a name.
      * @returns the nodes to render inside a row or trigger.
      */
-    const sessionNodes = (session, tr) => [
+    const sessionNodes = (session, tr, showId = false) => [
       session.workspace
         ? h('span', { className: 'ove-session-ws', key: 'workspace' }, session.workspace)
         : null,
       session.workspace ? h('span', { className: 'ove-session-sep', key: 'separator' }, '/') : null,
       h('span', { className: 'ove-session-name', key: 'name' }, session.label),
+      showId
+        ? h('span', { className: 'ove-session-id', key: 'id' }, `#${sessionIdTail(session.id)}`)
+        : null,
       session.archived
         ? h('span', { className: 'ove-session-tag', key: 'tag' }, `（${tr('auto.archived')}）`)
         : null,
     ];
+
+    /**
+     * The distinguishable part of a session id: enough to tell two rows with
+     * the same workspace and name apart without printing the whole uuid.
+     * @param id - the session id.
+     * @returns the first eight uuid characters.
+     */
+    const sessionIdTail = (id) => String(id).replace(/^session-/u, '').slice(0, 8);
+
+    /**
+     * Ids whose workspace + name pair repeats inside one list.
+     * @param list - session entries carrying `id`, `workspace` and `label`.
+     * @returns the ids that need the short-id suffix.
+     */
+    const duplicateIdsOf = (list) => {
+      const counts = new Map();
+      for (const session of list) {
+        const key = `${session.workspace ?? ''}\u0000${session.label}`;
+        counts.set(key, (counts.get(key) ?? 0) + 1);
+      }
+      const ids = new Set();
+      for (const session of list) {
+        if ((counts.get(`${session.workspace ?? ''}\u0000${session.label}`) ?? 0) > 1) ids.add(session.id);
+      }
+      return ids;
+    };
 
     /**
      * The same pair as one plain string, for titles and failure messages.
@@ -1913,10 +1943,14 @@ window.__ModuleLoader__.load({
       const [box, setBox] = React.useState(null);
       const buttonRef = React.useRef(null);
       const listRef = React.useRef(null);
+      // Workspaces this opening already expanded, so a manual collapse is not
+      // fought by the next hover.
+      const expandedRef = React.useRef(new Set());
 
       const selectedIndex = options.findIndex((option) => option.id === value);
       const selected = selectedIndex >= 0 ? options[selectedIndex] : null;
       const active = open && cursor >= 0 && cursor < options.length ? options[cursor] : null;
+      const duplicates = React.useMemo(() => duplicateIdsOf(options), [options]);
 
       const close = React.useCallback(() => {
         setOpen(false);
@@ -1947,6 +1981,7 @@ window.__ModuleLoader__.load({
           close();
           return;
         }
+        expandedRef.current = new Set();
         place();
         setCursor(selectedIndex);
         setOpen(true);
@@ -1982,17 +2017,67 @@ window.__ModuleLoader__.load({
         return () => document.removeEventListener('mousedown', onPointer, true);
       }, [open, close]);
 
-      // The workspace list is the map: outline the conversation the pointer or
-      // the keyboard is on, but only while that row is actually visible there.
+      // The workspace list is the map. Moving through the options outlines the
+      // conversation there: its row when visible, the "expand the rest" row
+      // when it sits behind that, and — for a collapsed workspace — the row
+      // appears only after the workspace is opened.
       React.useEffect(() => {
         if (active === null) return undefined;
-        const escape = typeof CSS !== 'undefined' && typeof CSS.escape === 'function'
-          ? CSS.escape(active.id)
-          : active.id;
-        const node = document.querySelector(`[data-row-key="session:${escape}"]`);
-        if (!(node instanceof HTMLElement) || !rowIsVisible(node)) return undefined;
-        node.classList.add('ove-sidebar-focus');
-        return () => node.classList.remove('ove-sidebar-focus');
+        const escape = (value) => (typeof CSS !== 'undefined' && typeof CSS.escape === 'function'
+          ? CSS.escape(value)
+          : value);
+        const workspaceId = typeof active.workspaceId === 'string' ? active.workspaceId : '';
+        const rowOf = () => document.querySelector(`[data-row-key="session:${escape(active.id)}"]`);
+        const overflowOf = () => (workspaceId.length === 0
+          ? null
+          : document.querySelector(`[data-row-key="overflow:${escape(workspaceId)}"]`));
+        let marked = null;
+        let cancelled = false;
+        let timer = 0;
+        const clear = () => {
+          if (marked !== null) marked.classList.remove('ove-sidebar-focus');
+          marked = null;
+        };
+        const mark = (node) => {
+          if (!(node instanceof HTMLElement)) return false;
+          clear();
+          node.classList.add('ove-sidebar-focus');
+          marked = node;
+          return true;
+        };
+        // Prefer the conversation's own row; behind the overflow row, point at
+        // the control that would reveal it.
+        const settle = () => {
+          const row = rowOf();
+          if (row instanceof HTMLElement && rowIsVisible(row)) return mark(row);
+          const overflow = overflowOf();
+          if (overflow instanceof HTMLElement && rowIsVisible(overflow)) return mark(overflow);
+          return false;
+        };
+        if (!settle() && workspaceId.length > 0) {
+          const header = document.querySelector(`[data-row-key="workspace:${escape(workspaceId)}"]`);
+          const collapsed = header instanceof HTMLElement
+            && header.getAttribute('aria-expanded') === 'false'
+            && rowIsVisible(header);
+          if (collapsed && !expandedRef.current.has(workspaceId)) {
+            expandedRef.current.add(workspaceId);
+            header.click();
+            let tries = 0;
+            timer = window.setInterval(() => {
+              tries += 1;
+              if (cancelled) {
+                window.clearInterval(timer);
+                return;
+              }
+              if (settle() || tries > 15) window.clearInterval(timer);
+            }, 50);
+          }
+        }
+        return () => {
+          cancelled = true;
+          window.clearInterval(timer);
+          clear();
+        };
       }, [active]);
 
       React.useEffect(() => {
@@ -2065,7 +2150,7 @@ window.__ModuleLoader__.load({
         },
         h('span', { className: 'ove-combo-value' }, selected === null
           ? tr('auto.pickSession')
-          : sessionNodes(selected, tr)),
+          : sessionNodes(selected, tr, duplicates.has(selected.id))),
         h('span', { className: 'ove-combo-caret', 'aria-hidden': 'true' }, '▾')),
         open && box !== null
           ? ReactDOM.createPortal(h('div', {
@@ -2092,7 +2177,7 @@ window.__ModuleLoader__.load({
               onMouseEnter: () => setCursor(index),
               onMouseDown: (event) => event.preventDefault(),
               onClick: () => pick(option),
-            }, sessionNodes(option, tr)))), document.body)
+            }, sessionNodes(option, tr, duplicates.has(option.id))))), document.body)
           : null);
     }
 
@@ -2565,12 +2650,13 @@ window.__ModuleLoader__.load({
           const record = recordOf(id);
           return Date.parse(record.updatedAt ?? record.createdAt ?? '') || 0;
         };
-        // The workspace title is what tells two conversations with one name
-        // apart, so every candidate carries the workspace that owns it.
-        const ownerOf = (id) => {
-          const owner = items.find((item) => Array.isArray(item.sessionIds) && item.sessionIds.includes(id));
-          return owner === undefined ? '' : String(owner.title || owner.path || '').trim();
-        };
+        // The workspace title tells two conversations with one name apart, and
+        // its id is how the workspace row is reached in the sidebar, so both
+        // travel with every candidate.
+        const ownerOf = (id) => items.find((item) => Array.isArray(item.sessionIds) && item.sessionIds.includes(id));
+        const workspaceTitleOf = (owner) => (owner === undefined
+          ? ''
+          : String(owner.title || owner.path || '').trim());
         // Every sidebar conversation, tagged with its workspace. A conversation
         // still carrying its workspace's name is an untitled placeholder.
         const candidates = [];
@@ -2584,14 +2670,21 @@ window.__ModuleLoader__.load({
             const title = titleOf(id);
             if (title.length === 0) continue;
             if (workspaceTitle.length > 0 && title === workspaceTitle) continue;
-            candidates.push({ id, title, workspace: workspaceTitle, stamp: stampOf(id) });
+            candidates.push({ id, title, workspace: workspaceTitle, workspaceId: String(workspace.workspaceId ?? ''), stamp: stampOf(id) });
           }
         }
         for (const id of Object.keys(byId)) {
           if (seen.has(id) || archived.has(id)) continue;
           const title = titleOf(id);
           if (title.length === 0) continue;
-          candidates.push({ id, title, workspace: ownerOf(id), stamp: stampOf(id) });
+          const owner = ownerOf(id);
+          candidates.push({
+            id,
+            title,
+            workspace: workspaceTitleOf(owner),
+            workspaceId: owner === undefined ? '' : String(owner.workspaceId ?? ''),
+            stamp: stampOf(id),
+          });
         }
         // Duplicate names are kept: the workspace half tells them apart, and
         // hiding one would hide the conversation the human wants to pick.
@@ -2612,7 +2705,8 @@ window.__ModuleLoader__.load({
         const items = Array.isArray(workspaces?.items) ? workspaces.items : [];
         const owner = items.find((item) => Array.isArray(item.sessionIds) && item.sessionIds.includes(current));
         const workspace = owner === undefined ? '' : String(owner.title || owner.path || '').trim();
-        return [{ id: current, title, workspace, label: title, archived: true, stamp: 0 }, ...sessionOptions];
+        const workspaceId = owner === undefined ? '' : String(owner.workspaceId ?? '');
+        return [{ id: current, title, workspace, workspaceId, label: title, archived: true, stamp: 0 }, ...sessionOptions];
       }, [sessionOptions, draft?.sessionId, sessions, workspaces]);
 
       /** One conversation by id, qualified with its workspace when known. */
@@ -2627,6 +2721,7 @@ window.__ModuleLoader__.load({
           id,
           label: sessionTitle(id),
           workspace: owner === undefined ? '' : String(owner.title || owner.path || '').trim(),
+          workspaceId: owner === undefined ? '' : String(owner.workspaceId ?? ''),
           archived: false,
         };
       };
@@ -2643,6 +2738,9 @@ window.__ModuleLoader__.load({
         }
         return sessionOptions.filter((session) => !bound.has(session.id));
       }, [sessionOptions, bindTasks]);
+
+      /** Rows in the bind picker that need their short id to stay distinct. */
+      const bindDuplicates = React.useMemo(() => duplicateIdsOf(bindCandidates), [bindCandidates]);
 
       const workspaceOptions = React.useMemo(() => {
         const items = Array.isArray(workspaces?.items) ? workspaces.items : [];
@@ -3351,7 +3449,7 @@ window.__ModuleLoader__.load({
                     return next;
                   }),
                 }),
-                h('span', { className: 'ove-session-label' }, sessionNodes(session, tr))))),
+                h('span', { className: 'ove-session-label' }, sessionNodes(session, tr, bindDuplicates.has(session.id)))))),
               h('div', { className: 'ove-dialog-actions' },
                 h('button', {
                   type: 'button',
