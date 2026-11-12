@@ -619,6 +619,19 @@
 .ove-session-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ove-session-tag { flex: 0 0 auto; color: var(--dsw-alias-label-tertiary); }
 .ove-session-id { flex: 0 0 auto; margin-left: 6px; font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums; color: #2563eb; }
+/* A weekly rule may repeat on several days, so the weekday picker is a group of
+   toggles rather than a single-select. */
+.ove-weekdays { display: flex; flex-wrap: wrap; gap: 4px; }
+.ove-weekday {
+  min-width: 34px; padding: 2px 6px; border-radius: 7px; cursor: pointer;
+  border: .5px solid var(--dsw-alias-border-l2); background: transparent;
+  color: var(--dsw-alias-label-secondary); font: inherit; font-size: 12px; line-height: 18px;
+}
+.ove-weekday[data-on="true"] {
+  border-color: #2563eb; color: #2563eb;
+  background: color-mix(in srgb, #2563eb 12%, transparent);
+}
+.ove-weekday:focus-visible { outline: 2px solid #2563eb; outline-offset: 1px; }
 /* Conversations are picked from a combobox instead of a native <select>, so the
    workspace half can be bold and the list can react while it is moved over. */
 .ove-combo { position: relative; }

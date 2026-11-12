@@ -2015,6 +2015,55 @@ window.__ModuleLoader__.load({
       return Number.isFinite(day) && day >= 1 && day <= 31 ? day : 1;
     };
 
+    /** Weekday codes a "workdays" rule must contain — exactly, not as a substring. */
+    const WORKDAYS = ['MO', 'TU', 'WE', 'TH', 'FR'];
+
+    /**
+     * The `BYDAY` codes of a rule, upper-cased.
+     *
+     * A substring test matched `…,FR,SA` as well, so a six-day weekly rule was
+     * presented (and saved) as Monday-to-Friday: the comparison has to be on the
+     * parsed set.
+     * @param rule - the RRULE text.
+     * @returns the day codes in the rule.
+     */
+    const byDayOf = (rule) => {
+      const match = /BYDAY=([^;\s]+)/i.exec(typeof rule === 'string' ? rule : '');
+      if (match === null) return [];
+      return match[1].split(',').map(code => code.trim().toUpperCase()).filter(code => code.length > 0);
+    };
+
+    /**
+     * Whether a rule repeats on exactly the five workdays.
+     * @param rule - the RRULE text.
+     * @returns true when the set is exactly MO,TU,WE,TH,FR.
+     */
+    const isWorkdayRule = (rule) => {
+      const days = byDayOf(rule);
+      if (days.length !== WORKDAYS.length) return false;
+      const unique = new Set(days);
+      return unique.size === WORKDAYS.length && WORKDAYS.every(code => unique.has(code));
+    };
+
+    /**
+     * The `DTSTART` a rule carries, as an editor date and clock.
+     *
+     * Editing a derived rule used to rebuild `DTSTART` from "now + 30 minutes",
+     * so merely opening and saving a workday or monthly task moved it to a new
+     * time of day. The stored start is the only value that round-trips.
+     * @param rule - the RRULE text.
+     * @returns `{date, time}` in editor form, or undefined when the rule has none.
+     */
+    const ruleStartOf = (rule) => {
+      const match = /DTSTART(?:;TZID=[^:\n]+)?:(\d{8})T(\d{4,6})/i.exec(typeof rule === 'string' ? rule : '');
+      if (match === null) return undefined;
+      const [, date, clock] = match;
+      return {
+        date: `${date.slice(0, 4)}-${date.slice(4, 6)}-${date.slice(6, 8)}`,
+        time: `${clock.slice(0, 2)}:${clock.slice(2, 4)}:${clock.slice(4, 6) ?? '00'}`,
+      };
+    };
+
     /**
      * Which repeat choice in the editor describes one stored task.
      *
@@ -2036,7 +2085,7 @@ window.__ModuleLoader__.load({
       if (kind === 'weekly') return 'weekly';
       if (kind === 'cron') return 'cron';
       if (kind === 'rrule') {
-        if (/FREQ=WEEKLY/i.test(rule) && /BYDAY=MO,TU,WE,TH,FR/i.test(rule)) return 'weekdays';
+        if (/FREQ=WEEKLY/i.test(rule) && isWorkdayRule(rule)) return 'weekdays';
         if (/FREQ=MONTHLY/i.test(rule) && /BYMONTHDAY=/i.test(rule)) return 'monthly';
         return 'rrule';
       }
@@ -2062,15 +2111,28 @@ window.__ModuleLoader__.load({
         if (atValid) return String(Math.max(1, Math.round((at.getTime() - Date.now()) / 60000)));
         return '30';
       };
-      // A short one-shot delay is stored in seconds, so editing it back shows
-      // the same unit instead of rounding down to a minute.
-      const delayInSeconds = typeof task?.afterSeconds === 'number' && task.afterSeconds > 0 && task.afterSeconds < 60;
+      // A delay that is not a whole number of minutes keeps its seconds:
+      // rounding 90 s up to 2 min silently changed when the task ran.
+      const exactSeconds = typeof task?.afterSeconds === 'number' && task.afterSeconds > 0
+        && task.afterSeconds % 60 !== 0;
+      const delayInSeconds = exactSeconds;
       const everySeconds = typeof task?.everySeconds === 'number' && task.everySeconds > 0 ? task.everySeconds : 1800;
       const intervalOf = () => {
         if (kind === 'delay') return delayInSeconds ? String(Math.round(task.afterSeconds)) : delayMinutes();
         if (kind === 'hourly') return String(Math.max(1, Math.round(everySeconds / 3600)));
         return String(Math.max(1, Math.round(everySeconds / 60)));
       };
+      // Every stored weekday travels with the draft: a weekly task on Mon+Thu used
+      // to be edited — and saved — as Monday only.
+      const days = Array.isArray(task?.weekdays)
+        ? [...new Set(task.weekdays.filter(day => Number.isInteger(day) && day >= 0 && day <= 6))].sort((a, b) => a - b)
+        : [];
+      const weekdays = days.length > 0 ? days : [1];
+      // A rule-derived editor keeps the rule's own DTSTART. Rebuilding it from
+      // "now + 30 minutes" moved every workday/monthly task on save.
+      const ruleStart = kind === 'weekdays' || kind === 'monthly' || kind === 'rrule'
+        ? ruleStartOf(task?.rrule)
+        : undefined;
       const draft = {
         id: task?.id ?? '',
         title: task?.title ?? '',
@@ -2078,11 +2140,12 @@ window.__ModuleLoader__.load({
         kind,
         interval: intervalOf(),
         delayUnit: delayInSeconds ? 'sec' : 'min',
-        date: atValid && kind === 'once' ? dateOf(at) : dateOf(soon),
+        date: atValid && kind === 'once' ? dateOf(at) : (ruleStart?.date ?? dateOf(soon)),
         time: atValid && kind === 'once'
           ? clockOf(at)
-          : (typeof task?.time === 'string' ? withSeconds(task.time) : clockOf(soon)),
-        weekday: Array.isArray(task?.weekdays) && task.weekdays.length > 0 ? task.weekdays[0] : 1,
+          : (ruleStart?.time ?? (typeof task?.time === 'string' ? withSeconds(task.time) : clockOf(soon))),
+        weekday: weekdays[0],
+        weekdays,
         monthDay: `${monthDayOf(task?.rrule)}`,
         rrule: task?.rrule ?? `DTSTART;TZID=${timeZone()}:${dateOf(soon).replace(/-/g, '')}T${rruleClock(clockOf(soon))}\nRRULE:FREQ=WEEKLY;BYDAY=MO`,
         cron: typeof task?.expression === 'string' && task.expression.length > 0 ? task.expression : '0 9 * * *',
@@ -2106,6 +2169,50 @@ window.__ModuleLoader__.load({
     };
 
     /**
+     * Fields that always describe the task, independent of the repeat kind.
+     */
+    const DRAFT_IDENTITY_FIELDS = [
+      'title', 'prompt', 'kind', 'targetKind', 'sessionId', 'cwd', 'agentPreset',
+    ];
+
+    /**
+     * The timing fields one repeat kind actually edits. Comparing the whole
+     * draft would make the comparison depend on "now" (a delay draft carries an
+     * untouched date/time that `draftOf` recomputes), which would block the
+     * harmless revision adoption this check exists to allow.
+     */
+    const DRAFT_TIMING_FIELDS = {
+      delay: ['interval', 'delayUnit'],
+      minutely: ['interval'],
+      hourly: ['interval'],
+      daily: ['time'],
+      weekly: ['weekdays', 'time'],
+      weekdays: ['date', 'time'],
+      monthly: ['date', 'time', 'monthDay'],
+      once: ['date', 'time'],
+      rrule: ['rrule'],
+      cron: ['cron'],
+    };
+
+    /**
+     * Whether two drafts describe the same stored task.
+     *
+     * Adopting a newer revision is only safe when the row still holds exactly
+     * what the drawer is showing: a title or timing edit made elsewhere must
+     * reach the save as a conflict instead of being silently overwritten.
+     * @param left - the open draft.
+     * @param right - a draft rebuilt from the current row.
+     * @returns true when every edited field matches.
+     */
+    const sameDraftContent = (left, right) => {
+      if (left?.kind !== right?.kind) return false;
+      const fields = [...DRAFT_IDENTITY_FIELDS, ...(DRAFT_TIMING_FIELDS[left.kind] ?? [])];
+      return fields.every(field => (
+        JSON.stringify(left?.[field] ?? null) === JSON.stringify(right?.[field] ?? null)
+      ));
+    };
+
+    /**
      * Turn an editor draft into a Host timing request.
      * @param draft - editor draft.
      * @returns the timing request, or undefined when the draft is invalid.
@@ -2126,8 +2233,14 @@ window.__ModuleLoader__.load({
           return valid ? { kind: 'every', every_seconds: Math.round(count * 3600) } : undefined;
         case 'daily':
           return { kind: 'daily', daily: { time: withSeconds(draft.time), time_zone: zone } };
-        case 'weekly':
-          return { kind: 'weekly', weekly: { time: withSeconds(draft.time), time_zone: zone, weekdays: [draft.weekday] } };
+        case 'weekly': {
+          // Every selected day is kept; an empty selection falls back to Monday
+          // instead of saving a rule that repeats on no day at all.
+          const days = Array.isArray(draft.weekdays) && draft.weekdays.length > 0
+            ? [...new Set(draft.weekdays.filter(day => Number.isInteger(day) && day >= 0 && day <= 6))].sort((a, b) => a - b)
+            : [Number.isInteger(draft.weekday) ? draft.weekday : 1];
+          return { kind: 'weekly', weekly: { time: withSeconds(draft.time), time_zone: zone, weekdays: days.length > 0 ? days : [1] } };
+        }
         case 'weekdays':
           return { kind: 'rrule', rrule: `${stamp}\nRRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR` };
         case 'monthly': {
@@ -2232,9 +2345,13 @@ window.__ModuleLoader__.load({
      * @param session - an entry carrying `workspace` and `label`.
      * @returns "workspace/name", or just the name when the workspace is unknown.
      */
-    const sessionPathText = (session) => (session.workspace.length > 0
-      ? `${session.workspace}/${session.label}`
-      : session.label);
+    const sessionPathText = (session) => {
+      const workspace = typeof session?.workspace === 'string' ? session.workspace : '';
+      const label = String(session?.label ?? '');
+      // A candidate without a workspace (its id has no owner yet) used to throw
+      // here, taking the whole combobox down with it.
+      return workspace.length > 0 ? `${workspace}/${label}` : label;
+    };
 
     /**
      * Whether a sidebar row is actually on screen: laid out, and intersecting
@@ -2579,7 +2696,7 @@ window.__ModuleLoader__.load({
           : sessionNodes(selected, tr, duplicates.has(selected.id))),
         h('span', { className: 'ove-combo-caret', 'aria-hidden': 'true' }, '▾')),
         open && box !== null
-          ? ReactDOM.createPortal(h('div', {
+          ? overlayPortal(h('div', {
             ref: listRef,
             id: listId,
             className: 'ove-combo-list',
@@ -2612,7 +2729,7 @@ window.__ModuleLoader__.load({
                 onMouseDown: (event) => event.preventDefault(),
                 onClick: () => pick(option),
               }, sessionNodes(option, tr, showId));
-            })), document.body)
+            })))
           : null);
     }
 
@@ -2805,12 +2922,15 @@ window.__ModuleLoader__.load({
       // A delivery bumps the task's revision without touching anything the
       // drawer edits, and the panel re-reads the list every 20 s. Adopting the
       // new revision while the draft is untouched keeps that from turning into a
-      // bogus conflict (and the human's unsaved text into a dead end).
+      // bogus conflict (and the human's unsaved text into a dead end). An edit
+      // made elsewhere is NOT adopted: the draft keeps its old revision so the
+      // save reports the conflict instead of overwriting it.
       React.useEffect(() => {
         if (draft === null || draft.id === '' || draftDirty) return;
         const row = rows.find((task) => task.id === draft.id);
         if (row === undefined) return;
         if (typeof row.updatedAt !== 'string' || row.updatedAt === draft.updatedAt) return;
+        if (!sameDraftContent(draft, draftOf(row))) return;
         setDraft((current) => (current === null || current.id !== draft.id ? current : { ...current, updatedAt: row.updatedAt }));
       }, [rows, draft, draftDirty]);
 
@@ -3428,14 +3548,23 @@ window.__ModuleLoader__.load({
             : null,
           draft.kind === 'weekly'
             ? h('div', { className: 'ove-inline' },
-              h('label', { className: 'ove-field' },
+              h('div', { className: 'ove-field' },
                 h('span', { className: 'ove-label' }, tr('auto.weekday')),
-                h('select', {
-                  className: 'ove-select',
-                  value: String(draft.weekday),
-                  onChange: (event) => updateDraft({ weekday: Number(event.target.value) }),
-                },
-                WEEKDAY_KEYS.map((key, index) => h('option', { key, value: String(index) }, tr(`auto.weekday.${key}`))))),
+                h('div', { className: 'ove-weekdays', role: 'group', 'aria-label': tr('auto.weekday') },
+                  WEEKDAY_KEYS.map((key, index) => h('button', {
+                    key,
+                    type: 'button',
+                    className: 'ove-weekday',
+                    'aria-pressed': draft.weekdays.includes(index),
+                    'data-on': draft.weekdays.includes(index),
+                    onClick: () => updateDraft({
+                      // A weekly rule can name several days; toggling one must not
+                      // drop the others.
+                      weekdays: draft.weekdays.includes(index)
+                        ? draft.weekdays.filter(day => day !== index)
+                        : [...draft.weekdays, index].sort((a, b) => a - b),
+                    }),
+                  }, tr(`auto.weekday.${key}`))))),
               h('label', { className: 'ove-field' },
                 h('span', { className: 'ove-label' }, tr('auto.time')),
                 h('input', {

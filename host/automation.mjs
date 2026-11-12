@@ -86,9 +86,15 @@ const stringKeyed = (value) => {
  * @returns the mutable state object.
  */
 export function readAutomationState(file, warn) {
+  // A document that parses but is not an object (`null`, `[]`, a string) is as
+  // unusable as a truncated one; both have to fall back to the previous
+  // generation instead of silently resetting the panel's index.
   const parse = (path) => {
     const parsed = JSON.parse(fs.readFileSync(path, 'utf8'))
-    return parsed !== null && typeof parsed === 'object' ? parsed : undefined
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error('sidecar is not a JSON object')
+    }
+    return parsed
   }
   let parsed
   try {
@@ -100,7 +106,7 @@ export function readAutomationState(file, warn) {
       warn(`automation: could not read ${file}: ${String(error)}`)
       try {
         parsed = parse(`${file}.bak`)
-        if (parsed !== undefined) warn(`automation: recovered the sidecar from ${file}.bak`)
+        warn(`automation: recovered the sidecar from ${file}.bak`)
       } catch { /* no usable backup either */ }
     }
   }
@@ -140,13 +146,24 @@ export function readAutomationState(file, warn) {
  * @returns whether the new state reached the disk.
  */
 export function writeAutomationState(file, state, warn) {
+  const usable = (path) => {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(path, 'utf8'))
+      return parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)
+    } catch {
+      return false
+    }
+  }
   try {
     fs.mkdirSync(path.dirname(file), { recursive: true })
-    if (fs.existsSync(file)) {
-      try { fs.copyFileSync(file, `${file}.bak`) } catch { /* the new state is still written */ }
-    }
     const temporary = `${file}.tmp`
     fs.writeFileSync(temporary, JSON.stringify(state), 'utf8')
+    // Only a usable generation may replace the backup: copying a corrupt main
+    // over the last good `.bak` would destroy the only recoverable state (the
+    // read path may have just recovered from it).
+    if (fs.existsSync(file) && usable(file)) {
+      try { fs.copyFileSync(file, `${file}.bak`) } catch { /* the new state is still written */ }
+    }
     fs.renameSync(temporary, file)
     return true
   } catch (error) {
@@ -583,6 +600,14 @@ export async function reconcileAutomation({ service, state, save, warn = () => {
   // Copies removed by hand (or by the Host) must not keep a Conversation marked
   // as already bound, so drop every id the catalog no longer lists.
   for (const sourceId of copySources) {
+    // The index belongs to the task that created the copies. Once that task is
+    // gone the panel can never offer "already bound" for it again, so the entry
+    // is dropped even when its copies are still alive.
+    if (!byId.has(sourceId)) {
+      delete copies[sourceId]
+      changed = true
+      continue
+    }
     const kept = copies[sourceId].filter(id => byId.has(id))
     if (kept.length === copies[sourceId].length) continue
     if (kept.length > 0) copies[sourceId] = kept
@@ -713,7 +738,10 @@ export function createAutomationSurface(options) {
   if (state.copies === undefined) state.copies = {}
   // Run-record counts per task, keyed by the part of the row that can change
   // them. The panel polls the catalog every 20 s; without this, every poll cost
-  // one `history()` call per task.
+  // one `history()` call per task. The entry also expires: a task's revision and
+  // last delivery say nothing about its history being trimmed, so a bounded age
+  // keeps the displayed count from going stale forever.
+  const RECORD_COUNT_TTL_MS = 60 * 1000
   const recordCounts = new Map()
   let running = false
 
@@ -778,10 +806,12 @@ export function createAutomationSurface(options) {
         seen.add(task.id)
         const stamp = `${task.updatedAt ?? ''}|${task.lastDelivery?.messageId ?? ''}|${task.lastDelivery?.deliveredAt ?? ''}`
         const cached = recordCounts.get(task.id)
-        let count = cached?.stamp === stamp ? cached.count : undefined
+        const fresh = cached !== undefined && cached.stamp === stamp
+          && Date.now() - cached.at < RECORD_COUNT_TTL_MS
+        let count = fresh ? cached.count : undefined
         if (count === undefined) {
           count = (await recordsOf(service, task.id, task.prompt)).records.length
-          recordCounts.set(task.id, { stamp, count })
+          recordCounts.set(task.id, { stamp, count, at: Date.now() })
         }
         records[task.id] = count
       }

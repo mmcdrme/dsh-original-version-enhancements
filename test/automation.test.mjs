@@ -283,6 +283,25 @@ test('the panel catalog hides an ephemeral clone', async () => {
   assert.equal(result.body.value.records['clone-1'], undefined)
 })
 
+test('a copy index is dropped once its source task is gone', async () => {
+  // The copies may still exist as ordinary tasks, but the index only serves the
+  // source task's "already bound" dialog — keeping it would grow the sidecar
+  // forever and name a task that cannot be opened.
+  const copy = { ...baseTask(), id: 'task-copy', title: 'Copy of the check' }
+  const service = makeService([copy])
+  const state = {
+    version: 2,
+    autoClean: {},
+    ephemeral: {},
+    copies: { 'task-gone': ['task-copy'] },
+  }
+  const surface = makeSurface(service, state)
+
+  await surface.reconcile()
+
+  assert.deepEqual(state.copies, {})
+})
+
 test('reconcile reclaims a stale ephemeral clone but leaves a fresh one alone', async () => {
   const stale = baseTask()
   stale.id = 'clone-stale'
