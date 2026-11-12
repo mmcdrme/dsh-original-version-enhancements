@@ -416,6 +416,33 @@ test('readAutomationState tolerates a sidecar written by the previous build', as
   assert.deepEqual(state.copies, {})
 })
 
+test('a sidecar write is atomic and keeps the previous generation', async () => {
+  const { mkdtemp, readdir, readFile, writeFile } = await import('node:fs/promises')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const { readAutomationState, writeAutomationState } = await import(moduleUrl)
+
+  const directory = await mkdtemp(join(tmpdir(), 'ove-automation-'))
+  const file = join(directory, 'state.json')
+  await writeFile(file, JSON.stringify({ version: 1, autoClean: { 'task-1': true }, copies: { 'task-1': ['session-a'] } }))
+
+  const next = { version: 1, autoClean: { 'task-2': true }, ephemeral: {}, copies: { 'task-1': ['session-a'] } }
+  assert.equal(writeAutomationState(file, next, () => {}), true)
+  assert.deepEqual(readAutomationState(file, () => {}).autoClean, { 'task-2': true })
+  // No half-written temporary file is left behind, and the prior generation is
+  // recoverable when the current one is truncated.
+  const files = await readdir(directory)
+  assert.equal(files.some(name => name.endsWith('.tmp')), false)
+  assert.equal(files.includes('state.json.bak'), true)
+  await writeFile(file, '{"version":1,"autoClean":{"task-2":tru', 'utf8')
+  const warnings = []
+  const recovered = readAutomationState(file, message => warnings.push(message))
+  assert.deepEqual(recovered.autoClean, { 'task-1': true })
+  assert.deepEqual(recovered.copies, { 'task-1': ['session-a'] })
+  assert.match(warnings.join('\n'), /recovered the sidecar from/)
+  assert.match(await readFile(`${file}.bak`, 'utf8'), /task-1/)
+})
+
 test('editing an ended one-shot by title sends no rule change and no resume', async () => {
   // The Host treats `active: true` as a resume and a changed rule as a re-arm:
   // both fail on an ended one-shot, and the second silently resurrects an ended

@@ -86,47 +86,72 @@ const stringKeyed = (value) => {
  * @returns the mutable state object.
  */
 export function readAutomationState(file, warn) {
-  try {
-    const parsed = JSON.parse(fs.readFileSync(file, 'utf8'))
-    if (parsed !== null && typeof parsed === 'object') {
-      const autoClean = {}
-      for (const [id, value] of Object.entries(stringKeyed(parsed.autoClean))) {
-        autoClean[id] = value === true
-      }
-      const ephemeral = {}
-      for (const [id, value] of Object.entries(stringKeyed(parsed.ephemeral))) {
-        if (value === null || typeof value !== 'object') continue
-        ephemeral[id] = {
-          sourceId: typeof value.sourceId === 'string' ? value.sourceId : '',
-          createdAt: typeof value.createdAt === 'string' ? value.createdAt : '',
-        }
-      }
-      const copies = {}
-      for (const [id, value] of Object.entries(stringKeyed(parsed.copies))) {
-        if (!Array.isArray(value)) continue
-        const ids = value.filter(entry => typeof entry === 'string' && entry.length > 0)
-        if (ids.length > 0) copies[id] = ids
-      }
-      return { version: STATE_VERSION, autoClean, ephemeral, copies }
-    }
-  } catch (error) {
-    if (error?.code !== 'ENOENT') warn(`automation: could not read ${file}: ${String(error)}`)
+  const parse = (path) => {
+    const parsed = JSON.parse(fs.readFileSync(path, 'utf8'))
+    return parsed !== null && typeof parsed === 'object' ? parsed : undefined
   }
-  return { version: STATE_VERSION, autoClean: {}, ephemeral: {}, copies: {} }
+  let parsed
+  try {
+    parsed = parse(file)
+  } catch (error) {
+    if (error?.code !== 'ENOENT') {
+      // A truncated or corrupted sidecar must not silently reset the panel's
+      // bookkeeping: the previous generation is kept as `.bak` on every write.
+      warn(`automation: could not read ${file}: ${String(error)}`)
+      try {
+        parsed = parse(`${file}.bak`)
+        if (parsed !== undefined) warn(`automation: recovered the sidecar from ${file}.bak`)
+      } catch { /* no usable backup either */ }
+    }
+  }
+  if (parsed === undefined) return { version: STATE_VERSION, autoClean: {}, ephemeral: {}, copies: {} }
+
+  const autoClean = {}
+  for (const [id, value] of Object.entries(stringKeyed(parsed.autoClean))) {
+    autoClean[id] = value === true
+  }
+  const ephemeral = {}
+  for (const [id, value] of Object.entries(stringKeyed(parsed.ephemeral))) {
+    if (value === null || typeof value !== 'object') continue
+    ephemeral[id] = {
+      sourceId: typeof value.sourceId === 'string' ? value.sourceId : '',
+      createdAt: typeof value.createdAt === 'string' ? value.createdAt : '',
+    }
+  }
+  const copies = {}
+  for (const [id, value] of Object.entries(stringKeyed(parsed.copies))) {
+    if (!Array.isArray(value)) continue
+    const ids = value.filter(entry => typeof entry === 'string' && entry.length > 0)
+    if (ids.length > 0) copies[id] = ids
+  }
+  return { version: STATE_VERSION, autoClean, ephemeral, copies }
 }
 
 /**
  * Persist the auto-clean sidecar; a failure is reported, never thrown.
+ *
+ * The write is atomic (temporary file + rename) and keeps the previous
+ * generation as `.bak`: this file is the durable index of which tasks clean up
+ * after delivery and which conversations a bulk binding already created, so a
+ * half-written file would silently disable both.
  * @param file - absolute sidecar path.
  * @param state - the state object to store.
  * @param warn - diagnostic sink.
+ * @returns whether the new state reached the disk.
  */
 export function writeAutomationState(file, state, warn) {
   try {
     fs.mkdirSync(path.dirname(file), { recursive: true })
-    fs.writeFileSync(file, JSON.stringify(state), 'utf8')
+    if (fs.existsSync(file)) {
+      try { fs.copyFileSync(file, `${file}.bak`) } catch { /* the new state is still written */ }
+    }
+    const temporary = `${file}.tmp`
+    fs.writeFileSync(temporary, JSON.stringify(state), 'utf8')
+    fs.renameSync(temporary, file)
+    return true
   } catch (error) {
     warn(`automation: could not write ${file}: ${String(error)}`)
+    return false
   }
 }
 

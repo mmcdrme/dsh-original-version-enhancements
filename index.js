@@ -229,6 +229,10 @@ export function apply(ctx) {
       // plain workspace conversation.
       const archived = Array.isArray(ctx.workspaceRegistry?.archivedSessionIds)
         && ctx.workspaceRegistry.archivedSessionIds.includes(sessionId)
+      // A pinned conversation must come back pinned: the delete unpins it, so the
+      // undo has to know whether it was pinned before.
+      const pinned = Array.isArray(ctx.workspaceRegistry?.pinnedSessionIds)
+        && ctx.workspaceRegistry.pinnedSessionIds.includes(sessionId)
       // deletion drops the session's Workspace accounting and projection-cache
       // record itself, so no ghost conversation survives the removed transcript.
       return await deleteSessionSafely({
@@ -250,6 +254,7 @@ export function apply(ctx) {
             sourceDirectory: info.directory,
             header: info.header,
             archived,
+            pinned,
             warn,
           })
           : undefined,
@@ -305,8 +310,18 @@ export function apply(ctx) {
     }
     let body
     try {
+      // Same bound every other JSON route enforces: the confirmation header
+      // proves intent, not a right to grow the Host's heap.
       const chunks = []
-      for await (const chunk of req) chunks.push(Buffer.from(chunk))
+      let size = 0
+      for await (const chunk of req) {
+        const buffer = Buffer.from(chunk)
+        size += buffer.length
+        if (size > 8 * 1024) {
+          return send(413, { ok: false, error: { code: 'request-too-large', message: '请求过大。' } })
+        }
+        chunks.push(buffer)
+      }
       body = JSON.parse(Buffer.concat(chunks).toString('utf8'))
     } catch {
       return send(400, { ok: false, error: { code: 'invalid-json', message: '请求不是有效 JSON。' } })
@@ -315,16 +330,24 @@ export function apply(ctx) {
     if (token.length === 0 || token.length > 200) {
       return send(400, { ok: false, error: { code: 'invalid-token', message: '撤销凭据无效。' } })
     }
-    const result = action === 'restore'
-      ? await restoreRetainedSession({
-        profileDir: profileDirectory(),
-        workspaceRegistry: ctx.workspaceRegistry,
-        sessionPersistence: persistence,
-        sessionProjectionCache: projectionCache,
-        warn,
-      }, { token })
-      : await purgeRetainedSession({ profileDir: profileDirectory(), warn }, { token })
-    return send(result.ok ? 200 : 409, result)
+    try {
+      const result = action === 'restore'
+        ? await restoreRetainedSession({
+          profileDir: profileDirectory(),
+          workspaceRegistry: ctx.workspaceRegistry,
+          sessionPersistence: persistence,
+          sessionProjectionCache: projectionCache,
+          agentHandles,
+          warn,
+        }, { token })
+        : await purgeRetainedSession({ profileDir: profileDirectory(), warn }, { token })
+      return send(result.ok ? 200 : 409, result)
+    } catch (error) {
+      // A restore that throws must still answer the request; leaving it open
+      // strands the receipt's undo button until the browser times out.
+      warn(`retained ${action} failed: ${String(error?.stack ?? error)}`)
+      return send(500, { ok: false, error: { code: 'internal', message: '处理撤销请求时发生未预期错误。' } })
+    }
   }
 
   ctx.effect(

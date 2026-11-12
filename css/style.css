@@ -363,8 +363,6 @@
 .ove-toast-action:hover:not(:disabled) { background: rgba(255, 255, 255, .14); }
 .ove-toast-action:disabled { opacity: .55; cursor: default; }
 .ove-toast-warning .ove-toast-action { color: #fcd34d; }
-/* Two receipts at once (a transfer and a deletion) stack instead of covering. */
-.ove-toast-below { top: 68px; }
 .ove-toast-close {
   flex: none; width: 22px; height: 22px; border: 0; border-radius: 50%;
   background: transparent; color: rgba(255, 255, 255, .66);

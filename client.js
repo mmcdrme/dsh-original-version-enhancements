@@ -93,17 +93,49 @@ window.__ModuleLoader__.load({
     /* ------------------------------------------------------------------ */
 
     /**
-     * The floating receipt a finished deletion leaves behind. It carries the
-     * token the Host kept the (already removed) session under, so the same
-     * toast can put it back until the window closes.
+     * The floating receipts a finished deletion leaves behind. Each one carries
+     * the token the Host kept the (already removed) session under, so the same
+     * toast can put it back until its window closes. They are kept in a small
+     * queue: deleting twice in a row must not silently drop the first undo.
      */
-    let deleteNoticeState = null;
+    const MAX_DELETE_NOTICES = 3;
+    let deleteNotices = [];
     let deleteNoticeSeq = 0;
     const deleteNoticeListeners = new Set();
 
-    const publishDeleteNotice = (notice) => {
-      deleteNoticeState = notice;
+    const emitDeleteNotices = () => {
       for (const listener of deleteNoticeListeners) listener();
+    };
+
+    /** Drop one receipt's retained copy, if it still owns one. */
+    const abandonDeleteNotice = (notice) => {
+      if (typeof notice?.token === 'string' && notice.token.length > 0) void requestPurge(notice.token);
+    };
+
+    const pushDeleteNotice = (notice) => {
+      deleteNoticeSeq += 1;
+      const next = [...deleteNotices, { ...notice, seq: deleteNoticeSeq }];
+      // The oldest receipt has been on screen the longest; its retained copy is
+      // dropped rather than left for the Host's hourly sweep.
+      while (next.length > MAX_DELETE_NOTICES) {
+        abandonDeleteNotice(next.shift());
+      }
+      deleteNotices = next;
+      emitDeleteNotices();
+      return deleteNoticeSeq;
+    };
+
+    const dismissDeleteNotice = (seq) => {
+      const next = deleteNotices.filter((notice) => notice.seq !== seq);
+      if (next.length === deleteNotices.length) return;
+      deleteNotices = next;
+      emitDeleteNotices();
+    };
+
+    const clearDeleteNotices = () => {
+      if (deleteNotices.length === 0) return;
+      deleteNotices = [];
+      emitDeleteNotices();
     };
 
     const subscribeDeleteNotice = (listener) => {
@@ -111,7 +143,8 @@ window.__ModuleLoader__.load({
       return () => { deleteNoticeListeners.delete(listener); };
     };
 
-    const getDeleteNotice = () => deleteNoticeState;
+    const getDeleteNotices = () => deleteNotices;
+
 
     /* ------------------------------------------------------------------ */
     /* Pending session transfer, shared by the two menu rows and its panel */
@@ -895,9 +928,7 @@ window.__ModuleLoader__.load({
           // The receipt carries the undo; a Host that did not retain the storage
           // (an older composition) leaves the token empty and the toast is a
           // plain confirmation.
-          deleteNoticeSeq += 1;
-          publishDeleteNotice({
-            seq: deleteNoticeSeq,
+          pushDeleteNotice({
             text: `${tr('delete')} · ${pending.title}`,
             tone: 'success',
             token: result.token ?? '',
@@ -1494,14 +1525,38 @@ window.__ModuleLoader__.load({
      */
     function SessionDeleteToast({ t, ctx }) {
       const tr = typeof t === 'function' ? t : (key) => key;
-      const notice = React.useSyncExternalStore(subscribeDeleteNotice, getDeleteNotice, getDeleteNotice);
-      // A transfer receipt and a deletion receipt can be on screen together; the
-      // deletion one steps below so neither hides the other's undo.
+      const notices = React.useSyncExternalStore(subscribeDeleteNotice, getDeleteNotices, getDeleteNotices);
+      // A transfer receipt and deletion receipts can be on screen together; the
+      // deletion ones step below so neither hides the other's undo.
       const transferNotice = React.useSyncExternalStore(subscribeTransfer, getTransfer, getTransfer).notice;
+      const shifted = transferNotice !== null && transferNotice !== undefined;
+
+      if (notices.length === 0) return null;
+
+      return overlayPortal(h(React.Fragment, null,
+        h('style', { key: 'styles', 'data-plugin-css': `${NS}-delete-toast` }, CSS),
+        notices.map((notice, index) => h(DeleteNoticeToast, {
+          key: notice.seq,
+          notice,
+          index,
+          shifted,
+          t,
+          ctx,
+        }))));
+    }
+
+    /**
+     * One deletion receipt: its own countdown, its own undo. A separate
+     * component so two deletions in a row each keep a working timer.
+     * @param props - the receipt, its stack position, translator and context.
+     * @returns the toast.
+     */
+    function DeleteNoticeToast({ notice, index, shifted, t, ctx }) {
+      const tr = typeof t === 'function' ? t : (key) => key;
       const [busy, setBusy] = React.useState(false);
-      const [remaining, setRemaining] = React.useState(0);
-      const token = typeof notice?.token === 'string' ? notice.token : '';
-      const seconds = typeof notice?.seconds === 'number' ? notice.seconds : 10;
+      const [remaining, setRemaining] = React.useState(typeof notice.seconds === 'number' ? notice.seconds : 10);
+      const token = typeof notice.token === 'string' ? notice.token : '';
+      const seconds = typeof notice.seconds === 'number' ? notice.seconds : 10;
 
       React.useEffect(() => {
         if (token.length === 0) return undefined;
@@ -1511,77 +1566,62 @@ window.__ModuleLoader__.load({
         }, 1000);
         const timer = window.setTimeout(() => {
           void requestPurge(token);
-          publishDeleteNotice(null);
+          dismissDeleteNotice(notice.seq);
         }, seconds * 1000);
         return () => {
           window.clearInterval(tick);
           window.clearTimeout(timer);
         };
-      }, [notice?.seq, token, seconds]);
+      }, [notice.seq, token, seconds]);
 
       // A receipt without an undo (the outcome of an undo, or a failure) is a
       // plain notice and clears itself.
       React.useEffect(() => {
-        if (notice === null || token.length > 0) return undefined;
-        const timer = window.setTimeout(() => publishDeleteNotice(null), 4000);
+        if (token.length > 0) return undefined;
+        const timer = window.setTimeout(() => dismissDeleteNotice(notice.seq), 4000);
         return () => window.clearTimeout(timer);
-      }, [notice?.seq, token]);
-
-      if (notice === null) return null;
+      }, [notice.seq, token]);
 
       const undo = async () => {
         if (busy || token.length === 0) return;
         setBusy(true);
         const outcome = await requestRestore(ctx, token);
         setBusy(false);
-        deleteNoticeSeq += 1;
-        if (outcome.ok) {
-          publishDeleteNotice({
-            seq: deleteNoticeSeq,
-            text: tr('deleteUndone'),
-            tone: 'success',
-            token: '',
-            seconds: 0,
-          });
-        } else {
-          publishDeleteNotice({
-            seq: deleteNoticeSeq,
-            text: `${tr('deleteUndoFailed')}${outcome.error}`,
-            tone: 'warning',
-            token: '',
-            seconds: 0,
-          });
-        }
+        dismissDeleteNotice(notice.seq);
+        pushDeleteNotice({
+          text: outcome.ok ? tr('deleteUndone') : `${tr('deleteUndoFailed')}${outcome.error}`,
+          tone: outcome.ok ? 'success' : 'warning',
+          token: '',
+          seconds: 0,
+        });
       };
 
-      return overlayPortal(h(React.Fragment, null,
-        h('style', { key: 'styles', 'data-plugin-css': `${NS}-delete-toast` }, CSS),
-        h('div', {
-          key: notice.seq,
-          className: `ove-toast ove-toast-${notice.tone === 'warning' ? 'warning' : 'success'}`
-            + (transferNotice !== null && transferNotice !== undefined ? ' ove-toast-below' : ''),
-          role: 'status',
-        },
-          h('span', { className: 'ove-toast-text' }, notice.text),
-          token.length > 0 && h('span', { className: 'ove-toast-count' },
-            tr('deleteUndoSeconds').replace('{n}', String(remaining))),
-          token.length > 0 && h('button', {
-            type: 'button',
-            className: 'ove-toast-action',
-            disabled: busy,
-            onClick: () => { void undo(); },
-          }, busy ? tr('restoring') : tr('deleteUndo')),
-          h('button', {
-            type: 'button',
-            className: 'ove-toast-close',
-            'aria-label': tr('transferClose'),
-            // Closing the receipt means "do not undo this": the retained copy is
-            // dropped now instead of waiting for the Host's sweep.
-            onClick: () => {
-              if (token.length > 0) void requestPurge(token);
-              publishDeleteNotice(null);
-            },
-          }, '×'))));
+      return h('div', {
+        className: `ove-toast ove-toast-${notice.tone === 'warning' ? 'warning' : 'success'}`,
+        // Stack: the transfer receipt owns the top slot, deletions queue under it.
+        style: { top: `${24 + (shifted ? 44 : 0) + index * 52}px` },
+        role: 'status',
+      },
+        h('span', { className: 'ove-toast-text' }, notice.text),
+        token.length > 0 && h('span', { className: 'ove-toast-count' },
+          tr('deleteUndoSeconds').replace('{n}', String(remaining))),
+        token.length > 0 && h('button', {
+          type: 'button',
+          className: 'ove-toast-action',
+          disabled: busy,
+          onClick: () => { void undo(); },
+        }, busy ? tr('restoring') : tr('deleteUndo')),
+        h('button', {
+          type: 'button',
+          className: 'ove-toast-close',
+          'aria-label': tr('transferClose'),
+          // Closing the receipt means "do not undo this": the retained copy is
+          // dropped now instead of waiting for the Host's sweep.
+          onClick: () => {
+            if (token.length > 0) void requestPurge(token);
+            dismissDeleteNotice(notice.seq);
+          },
+        }, '×'));
     }
 
     /* ------------------------------------------------------------------ */
@@ -1683,9 +1723,7 @@ window.__ModuleLoader__.load({
           publishDelete({ target: null, busy: false, error: '', code: '' });
           // Same receipt the archive page publishes: deleting from the sidebar
           // menu is undoable too.
-          deleteNoticeSeq += 1;
-          publishDeleteNotice({
-            seq: deleteNoticeSeq,
+          pushDeleteNotice({
             text: `${tr('delete')} · ${target.title}`,
             tone: 'success',
             token: result.token ?? '',
@@ -2264,10 +2302,14 @@ window.__ModuleLoader__.load({
        * this component opened are touched, and only while they still hold the
        * state it left them in, so a collapse the human made meanwhile stands.
        */
-      const restoreExpanded = React.useCallback(() => {
+      const restoreExpanded = React.useCallback((keep = '') => {
         const expanded = expandedRef.current;
         expandedRef.current = new Map();
         for (const [workspaceId, wasExpanded] of expanded) {
+          // `keep` is the workspace the human just clicked: its own toggle owns
+          // the state, so taking it back here would move the row under the
+          // pointer a second time.
+          if (workspaceId === keep) continue;
           const header = document.querySelector(`[data-row-key="workspace:${cssEscape(workspaceId)}"]`);
           if (!(header instanceof HTMLElement)) continue;
           if ((header.getAttribute('aria-expanded') === 'true') === wasExpanded) continue;
@@ -4053,7 +4095,7 @@ window.__ModuleLoader__.load({
               publishTransfer({ target: null, picks: [], busy: false, error: '', done: '', notice: null });
               // An unclaimed receipt still resolves: the Host keeps its own copy
               // until the sweep, so dropping the notice cannot lose data.
-              publishDeleteNotice(null);
+              clearDeleteNotices();
             }
           };
           const unsubscribe = subscribeFlags(sync);
@@ -4063,7 +4105,7 @@ window.__ModuleLoader__.load({
             for (const dispose of disposers) dispose();
             disposers = [];
             publishDelete({ target: null, busy: false, error: '', code: '' });
-            publishDeleteNotice(null);
+            clearDeleteNotices();
           };
         }, 'original-version-enhancements: chat manager surfaces');
 

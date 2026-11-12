@@ -4,7 +4,7 @@
 // services standing in for the Host.
 
 import assert from 'node:assert/strict'
-import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -15,6 +15,7 @@ const {
   purgeStaleRetainedSessions,
   readRetainedState,
   restoreRetainedSession,
+  retainedStateFile,
   retainDeletedSession,
 } = await import(moduleUrl)
 
@@ -137,6 +138,116 @@ test('purging a retained deletion destroys the storage it kept', async () => {
   const restore = await restoreRetainedSession({ profileDir }, { token: retained.token })
   assert.equal(restore.ok, false)
   assert.equal(restore.error.code, 'undo-expired')
+  await rm(work, { recursive: true, force: true })
+})
+
+test('a retain whose index write fails puts the directory back and reports it', async () => {
+  const { work, profileDir, projectDir, sessionDirectory } = await makeRemovedSession()
+  // A directory where the index file belongs makes the write fail after the move.
+  await mkdir(retainedStateFile(profileDir), { recursive: true })
+
+  await assert.rejects(retainDeletedSession({
+    profileDir,
+    sessionId: SESSION_ID,
+    projectDir,
+    name: SESSION_ID,
+    sourceDirectory: sessionDirectory,
+    header: HEADER,
+  }), error => error.retained === 'rolled-back')
+
+  // The session is back where the deletion took it from, and no unindexed
+  // directory is left in the trash for a sweep that could never find it.
+  assert.match(await readFile(join(projectDir, SESSION_ID, 'session.jsonl'), 'utf8'), /session-1234/)
+  const trash = join(profileDir, 'deleted-sessions')
+  const leftovers = await readdir(trash).catch(() => [])
+  assert.deepEqual(leftovers, [])
+  await rm(work, { recursive: true, force: true })
+})
+
+test('an index entry without its paths is dropped instead of breaking the undo', async () => {
+  const { work, profileDir } = await makeRemovedSession()
+  const file = retainedStateFile(profileDir)
+  await mkdir(join(profileDir), { recursive: true })
+  await writeFile(file, JSON.stringify({
+    version: 1,
+    entries: {
+      broken: { token: 'broken', sessionId: SESSION_ID, directory: join(profileDir, 'x') },
+      ok: { token: 'ok', sessionId: SESSION_ID, projectDir: '/tmp/x', name: SESSION_ID, directory: '/tmp/x/y' },
+    },
+  }), 'utf8')
+  const warnings = []
+  const state = await readRetainedState(profileDir, message => warnings.push(message))
+  assert.deepEqual(Object.keys(state.entries), ['ok'])
+  assert.match(warnings.join('\n'), /dropping unreadable entry broken/)
+
+  // The broken token is unknown rather than a `path.join(undefined)` TypeError.
+  const result = await restoreRetainedSession({ profileDir }, { token: 'broken' })
+  assert.equal(result.ok, false)
+  assert.equal(result.error.code, 'undo-expired')
+  await rm(work, { recursive: true, force: true })
+})
+
+test('an undo takes the deletion reservation and restores the pin', async () => {
+  const { work, profileDir, projectDir, sessionDirectory } = await makeRemovedSession()
+  const retained = await retainDeletedSession({
+    profileDir,
+    sessionId: SESSION_ID,
+    projectDir,
+    name: SESSION_ID,
+    sourceDirectory: sessionDirectory,
+    header: HEADER,
+    pinned: true,
+  })
+
+  const calls = []
+  let release
+  const agentHandles = {
+    reserve: (id) => {
+      calls.push(['reserve', id])
+      release = () => calls.push(['release', id])
+      return release
+    },
+  }
+  const deps = {
+    profileDir,
+    agentHandles,
+    workspaceRegistry: {
+      indexHeader: async () => undefined,
+      resolveByPath: async () => ({
+        id: 'ws-1',
+        attachSession: async () => undefined,
+      }),
+      pinSession: async id => { calls.push(['pin', id]) },
+    },
+    sessionPersistence: { open: async () => undefined },
+  }
+  const result = await restoreRetainedSession(deps, { token: retained.token })
+  assert.equal(result.ok, true, JSON.stringify(result))
+  assert.equal(result.value.pinned, true)
+  assert.deepEqual(calls, [['reserve', SESSION_ID], ['pin', SESSION_ID], ['release', SESSION_ID]])
+
+  // A second try with the id already reserved is refused before touching files.
+  await mkdir(projectDir, { recursive: true })
+  const held = await retainDeletedSession({
+    profileDir,
+    sessionId: SESSION_ID,
+    projectDir,
+    name: `${SESSION_ID}-held`,
+    sourceDirectory: await (async () => {
+      const directory = join(projectDir, `${SESSION_ID}-held`)
+      await mkdir(directory, { recursive: true })
+      await writeFile(join(directory, 'session.jsonl'), `${JSON.stringify(HEADER)}\n`)
+      return directory
+    })(),
+    header: HEADER,
+  })
+  const busy = await restoreRetainedSession({
+    profileDir,
+    agentHandles: { reserve: () => undefined },
+    workspaceRegistry: {},
+  }, { token: held.token })
+  assert.equal(busy.ok, false)
+  assert.equal(busy.error.code, 'deletion-in-progress')
   await rm(work, { recursive: true, force: true })
 })
 

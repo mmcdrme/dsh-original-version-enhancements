@@ -7,9 +7,9 @@
 // until its lifecycle handle is disposed.
 
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import test from 'node:test'
 
 const moduleUrl = new URL('../host/delete-session.mjs', import.meta.url)
@@ -180,6 +180,40 @@ test('a retained deletion hands the validated directory to the undo hook', async
   // being unlinked, which is what makes "撤销" possible.
   assert.match(await readFile(join(trash, SESSION_ID, 'session.jsonl'), 'utf8'), /session-1234/)
   await assert.rejects(stat(sessionDirectory), error => error.code === 'ENOENT')
+  await rm(root, { recursive: true, force: true })
+})
+
+test('a retain that fails is reported as partial, never as a finished delete', async () => {
+  const { root, sessionDirectory, transcript } = await makeSession()
+  const host = makeHost()
+  const persistence = makePersistence({ transcript })
+  const stagingOf = async () => {
+    const found = []
+    for (const entry of await readdir(dirname(root), { withFileTypes: true })) {
+      if (!entry.isDirectory() || !entry.name.startsWith('.dsh-session-delete-')) continue
+      const inner = await readdir(join(dirname(root), entry.name)).catch(() => [])
+      if (inner.includes(SESSION_ID)) found.push(entry.name)
+    }
+    return found
+  }
+  const before = new Set(await stagingOf())
+
+  const result = await deleteSessionSafely(depsFor(host, persistence), {
+    sessionRoot: root,
+    sessionId: SESSION_ID,
+    retain: async () => { throw new Error('the trash index is not writable') },
+  })
+
+  // The directory left the persistence root but never reached the undo trash, so
+  // the deletion is not confirmed: the human must not be told it succeeded.
+  assert.equal(result.ok, false, JSON.stringify(result))
+  assert.equal(result.error.code, 'storage-partial')
+  assert.match(result.error.message, /撤销回收区/)
+  await assert.rejects(stat(sessionDirectory), error => error.code === 'ENOENT')
+  // The quarantine still holds the only copy of the log; it lives next to the
+  // session root, which is where the delete path stages it.
+  const staged = (await stagingOf()).filter(name => !before.has(name))
+  assert.equal(staged.length, 1)
   await rm(root, { recursive: true, force: true })
 })
 

@@ -704,15 +704,24 @@ async function deleteReservedSession(deps, { sessionRoot, sessionId }, ownership
     // of unlinking it: the hook owns the move into the trash, so this module
     // never has to know where the undo material lives.
     if (typeof ownership.retain === 'function') {
-      const retained = await ownership.retain({
-        sessionId: sessionId,
-        header,
-        // The project directory the session belongs to, i.e. the folder the undo
-        // has to put it back into (`<sessionRoot>/<project>/<id>`).
-        projectDir: dirname(validated.resolvedDirectory),
-        name: basename(validated.resolvedDirectory),
-        directory: quarantinedDirectory,
-      })
+      let retained
+      try {
+        retained = await ownership.retain({
+          sessionId: sessionId,
+          header,
+          // The project directory the session belongs to, i.e. the folder the undo
+          // has to put it back into (`<sessionRoot>/<project>/<id>`).
+          projectDir: dirname(validated.resolvedDirectory),
+          name: basename(validated.resolvedDirectory),
+          directory: quarantinedDirectory,
+        })
+      } catch (error) {
+        // Remembered so the catch below can tell "the undo copy could not be
+        // filed" apart from an ordinary removal failure: this one must never be
+        // reported as a successful deletion.
+        ownership.retainError = error
+        throw error
+      }
       detached = false
       await rm(quarantineRoot, { recursive: true, force: true })
       return { ok: true, value: { deleted: true, retained } }
@@ -727,6 +736,22 @@ async function deleteReservedSession(deps, { sessionRoot, sessionId }, ownership
     await rm(quarantineRoot, { recursive: true, force: true })
     return { ok: true, value: { deleted: true } }
   } catch (error) {
+    if (ownership.retainError !== undefined) {
+      // The session is out of the persistence root, but it did not make it into
+      // the undo trash: say exactly where it is instead of confirming a delete
+      // the human can never undo.
+      const trashed = typeof ownership.retainError.trashDirectory === 'string'
+        ? ownership.retainError.trashDirectory
+        : ''
+      const staged = quarantinedDirectory !== undefined
+        && await pathExists(quarantinedDirectory).catch(() => false)
+      const location = trashed.length > 0
+        ? `，会话目录现在位于 ${trashed}`
+        : staged
+          ? `，会话目录仍暂存于 ${quarantineRoot}`
+          : ''
+      return failure('storage-partial', `会话已从 DSH 摘载，但没能登记到撤销回收区，未确认删除成功${location}。`)
+    }
     if (detached && quarantinedDirectory !== undefined) {
       let remains = true
       try {
