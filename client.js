@@ -3426,6 +3426,190 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * Workspace chooser with the same combobox face as the conversation
+     * picker. A native `<select>` cannot report which option the pointer is on,
+     * so the sidebar row it belongs to could never be pointed at; a real list
+     * moves the highlight while the pointer travels.
+     * @param props - choices, the current path, a translator, a change callback,
+     * and a highlight callback (a path, or null to clear).
+     * @returns the combobox.
+     */
+    function WorkspacePicker({ options, value, onChange, onHighlight, tr }) {
+      const [open, setOpen] = React.useState(false);
+      const [cursor, setCursor] = React.useState(-1);
+      const [box, setBox] = React.useState(null);
+      const buttonRef = React.useRef(null);
+      const listRef = React.useRef(null);
+      const listId = React.useId();
+
+      const selectedIndex = options.findIndex((option) => option.value === value);
+      const selected = selectedIndex >= 0 ? options[selectedIndex] : null;
+      const active = open && cursor >= 0 && cursor < options.length ? options[cursor] : null;
+      const optionId = (index) => `${listId}-option-${index}`;
+
+      const close = React.useCallback(() => {
+        setOpen(false);
+        setCursor(-1);
+        setBox(null);
+        onHighlight(null);
+      }, [onHighlight]);
+
+      const place = React.useCallback(() => {
+        const button = buttonRef.current;
+        if (button === null) return;
+        const rect = button.getBoundingClientRect();
+        const gap = 6;
+        const below = window.innerHeight - rect.bottom - gap - 8;
+        const above = rect.top - gap - 8;
+        const flip = below < 150 && above > below;
+        const height = Math.max(96, Math.min(260, flip ? above : below));
+        setBox({
+          left: Math.round(rect.left),
+          width: Math.max(180, Math.round(rect.width)),
+          top: Math.round(flip ? rect.bottom - height - gap : rect.bottom + gap),
+          maxHeight: Math.round(height),
+        });
+      }, []);
+
+      const toggle = () => {
+        if (open) {
+          close();
+          return;
+        }
+        place();
+        setCursor(selectedIndex);
+        setOpen(true);
+        onHighlight(value);
+      };
+
+      // Outside pointer presses, scrolling anywhere else, and resizing all
+      // dismiss the list instead of leaving it stranded over the page.
+      React.useEffect(() => {
+        if (!open) return undefined;
+        const onPointer = (event) => {
+          const target = event.target;
+          if (!(target instanceof Node)) return;
+          if (buttonRef.current?.contains(target) === true) return;
+          if (listRef.current?.contains(target) === true) return;
+          close();
+        };
+        const onScroll = (event) => {
+          if (listRef.current !== null && event.target instanceof Node && listRef.current.contains(event.target)) return;
+          close();
+        };
+        const onResize = () => close();
+        document.addEventListener('mousedown', onPointer, true);
+        window.addEventListener('scroll', onScroll, true);
+        window.addEventListener('resize', onResize);
+        return () => {
+          document.removeEventListener('mousedown', onPointer, true);
+          window.removeEventListener('scroll', onScroll, true);
+          window.removeEventListener('resize', onResize);
+        };
+      }, [open, close]);
+
+      // The row the caret or the pointer is on is the row the sidebar marks.
+      React.useEffect(() => {
+        if (!open || active === null) return;
+        onHighlight(active.value);
+      }, [open, active, onHighlight]);
+
+      const pick = (option) => {
+        close();
+        if (option.value !== value) onChange(option.value);
+      };
+
+      const move = (step) => {
+        if (options.length === 0) return;
+        const start = cursor < 0 ? (step > 0 ? -1 : 0) : cursor;
+        setCursor(Math.max(0, Math.min(options.length - 1, start + step)));
+      };
+
+      const onKeyDown = (event) => {
+        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+          event.preventDefault();
+          if (!open) {
+            toggle();
+            return;
+          }
+          move(event.key === 'ArrowDown' ? 1 : -1);
+          return;
+        }
+        if (!open) return;
+        if (event.key === 'Home') {
+          event.preventDefault();
+          setCursor(0);
+          return;
+        }
+        if (event.key === 'End') {
+          event.preventDefault();
+          setCursor(options.length - 1);
+          return;
+        }
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          const option = options[cursor];
+          if (option !== undefined) pick(option);
+          return;
+        }
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          close();
+          return;
+        }
+        if (event.key === 'Tab') close();
+      };
+
+      const label = selected === null ? (value.length > 0 ? value : tr('auto.workspaceDefault')) : selected.label;
+
+      return h('div', { className: 'ove-combo' },
+        h('button', {
+          ref: buttonRef,
+          type: 'button',
+          className: 'ove-select ove-combo-btn',
+          role: 'combobox',
+          'aria-haspopup': 'listbox',
+          'aria-expanded': open,
+          'aria-controls': open ? listId : undefined,
+          'aria-activedescendant': open && cursor >= 0 ? optionId(cursor) : undefined,
+          'aria-label': tr('auto.workspace'),
+          title: selected === null ? value : selected.path,
+          onClick: toggle,
+          onKeyDown,
+        },
+        h('span', { className: 'ove-combo-value' }, label),
+        h('span', { className: 'ove-combo-caret', 'aria-hidden': 'true' }, '▾')),
+        open && box !== null
+          ? overlayPortal(h('div', {
+            ref: listRef,
+            id: listId,
+            className: 'ove-combo-list',
+            role: 'listbox',
+            'aria-label': tr('auto.workspace'),
+            style: {
+              left: `${box.left}px`,
+              top: `${box.top}px`,
+              width: `${box.width}px`,
+              maxHeight: `${box.maxHeight}px`,
+            },
+          },
+          options.map((option, index) => h('div', {
+            key: option.value.length > 0 ? option.value : 'default',
+            id: optionId(index),
+            'data-index': index,
+            className: 'ove-combo-option',
+            role: 'option',
+            'aria-selected': option.value === value,
+            'data-active': index === cursor,
+            title: option.path,
+            onMouseEnter: () => setCursor(index),
+            onMouseDown: (event) => event.preventDefault(),
+            onClick: () => pick(option),
+          }, option.label))))
+          : null);
+    }
+
+    /**
      * Automation task management beside the stock Automation tasks page:
      * the same list, tabs and search, plus in-place creation, bulk deletion,
      * multi-conversation binding and the auto-clean flag.
@@ -4018,6 +4202,22 @@ window.__ModuleLoader__.load({
       }, [workspaces]);
 
       /**
+       * The combobox entries: the "follow the default" choice first, then every
+       * real Workspace in sidebar order.
+       */
+      const workspaceChoices = React.useMemo(() => [
+        { value: '', label: tr('auto.workspaceDefault'), path: '' },
+        ...workspaceOptions.map((workspace) => ({
+          value: workspace.path,
+          // The auto-created Workspace keeps a fixed stored title and is shown
+          // under the localized name everywhere else, so the list agrees with
+          // the sidebar row it highlights.
+          label: workspace.title === 'default-workspace' ? tr('auto.defaultWorkspace') : workspace.title,
+          path: workspace.path,
+        })),
+      ], [workspaceOptions, tr]);
+
+      /**
        * Workspace and conversation a task delivers into, for the row title.
        * @param task - one automation row.
        * @returns the display names, either possibly empty.
@@ -4046,6 +4246,12 @@ window.__ModuleLoader__.load({
         if (draft === null) clearWorkspaceMark();
       }, [draft, clearWorkspaceMark]);
       React.useEffect(() => () => clearWorkspaceMark(), [clearWorkspaceMark]);
+
+      /** The picker's highlight channel: a path, or null when the list closes. */
+      const highlightWorkspaceChoice = React.useCallback((cwd) => {
+        if (cwd === null) clearWorkspaceMark();
+        else markWorkspace(cwd);
+      }, [clearWorkspaceMark, markWorkspace]);
 
       const taskContext = (task) => {
         const sessionId = task?.target?.kind === 'session' ? task.target.sessionId : '';
@@ -4180,28 +4386,17 @@ window.__ModuleLoader__.load({
                 tr,
                 onChange: (sessionId) => updateDraft({ sessionId }),
               }))
-            : h('label', { className: 'ove-field' },
+            : h('div', { className: 'ove-field' },
               h('span', { className: 'ove-label' }, tr('auto.workspace')),
-              h('select', {
-                className: 'ove-select',
+              h(WorkspacePicker, {
+                options: workspaceChoices,
                 value: draft.cwd,
-                // Point at the Workspace this binding means while the human is
-                // choosing one; the sidebar answers in yellow.
-                onFocus: () => markWorkspace(draft.cwd),
-                onPointerEnter: () => markWorkspace(draft.cwd),
-                onPointerLeave: () => clearWorkspaceMark(),
-                onBlur: () => clearWorkspaceMark(),
-                onChange: (event) => {
-                  updateDraft({ cwd: event.target.value });
-                  markWorkspace(event.target.value);
-                },
-              },
-              h('option', { value: '' }, tr('auto.workspaceDefault')),
-              workspaceOptions.map((workspace) => h('option', {
-                key: workspace.id,
-                value: workspace.path,
-                title: workspace.path,
-              }, workspace.title)))),
+                tr,
+                // The option under the pointer (or caret) is the Workspace the
+                // sidebar answers for; closing the list clears the mark.
+                onHighlight: highlightWorkspaceChoice,
+                onChange: (cwd) => updateDraft({ cwd }),
+              })),
           h('label', { className: 'ove-field' },
             h('span', { className: 'ove-label' }, tr('auto.repeat')),
             h('select', {
