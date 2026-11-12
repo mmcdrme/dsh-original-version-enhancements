@@ -3001,6 +3001,38 @@ window.__ModuleLoader__.load({
       : String(value).replace(/["\\]/gu, '\\$&'));
 
     /**
+     * The sidebar row a task's workspace binding points at.
+     *
+     * The composer chooses a workspace by path (`''` means "follow the
+     * default"). The sidebar keys its groups as `workspace:<id>`, with the
+     * ungrouped bucket keyed as `workspace:` and the automatic default
+     * workspace stored under the fixed title `default-workspace`.
+     * @param cwd - the bound workspace path, or an empty string for the default.
+     * @param items - the Workspace list from the client projection.
+     * @returns the `data-row-key` of the row to highlight.
+     */
+    const workspaceRowKeyFor = (cwd, items) => {
+      const list = Array.isArray(items) ? items : [];
+      // The projection calls the identity `workspaceId`; older shapes used
+      // `id`, and the sidebar keys its rows on the same value.
+      const idOf = (item) => String(item?.workspaceId ?? item?.id ?? '');
+      const wanted = typeof cwd === 'string' ? cwd.trim() : '';
+      if (wanted.length === 0) {
+        const fallback = list.find((item) => {
+          const title = String(item?.title ?? '');
+          const path = String(item?.path ?? '');
+          return title === 'default-workspace' || /(^|[\\/])default-workspace$/.test(path);
+        });
+        // Without a default Workspace the new conversation lands in the
+        // ungrouped bucket, so that row is the honest target.
+        return fallback === undefined ? 'workspace:' : `workspace:${idOf(fallback)}`;
+      }
+      const owner = list.find((item) => typeof item?.path === 'string'
+        && item.path.toLowerCase() === wanted.toLowerCase());
+      return owner === undefined ? 'workspace:' : `workspace:${idOf(owner)}`;
+    };
+
+    /**
      * The same pair as one plain string, for titles and failure messages.
      * @param session - an entry carrying `workspace` and `label`.
      * @returns "workspace/name", or just the name when the workspace is unknown.
@@ -3974,7 +4006,9 @@ window.__ModuleLoader__.load({
         const items = Array.isArray(workspaces?.items) ? workspaces.items : [];
         return items
           .map((item) => ({
-            id: item.id,
+            // The projection names the identity `workspaceId`; the option key
+            // has to be unique even when that shape changes.
+            id: String(item.workspaceId ?? item.id ?? ''),
             title: String(item.title || item.path || item.directory || item.id),
             path: typeof item.path === 'string'
               ? item.path
@@ -3988,6 +4022,31 @@ window.__ModuleLoader__.load({
        * @param task - one automation row.
        * @returns the display names, either possibly empty.
        */
+      // The workspace a task is bound to, mirrored in the sidebar: yellow marks
+      // a group row, while the conversation picker keeps blue and green. The
+      // ungrouped bucket and the automatic default Workspace are first-class
+      // targets, not edge cases the lookup skips.
+      const workspaceMarkRef = React.useRef(null);
+      const clearWorkspaceMark = React.useCallback(() => {
+        const marked = workspaceMarkRef.current;
+        if (marked !== null) marked.classList.remove('ove-sidebar-focus-workspace');
+        workspaceMarkRef.current = null;
+      }, []);
+      const markWorkspace = React.useCallback((cwd) => {
+        clearWorkspaceMark();
+        const key = workspaceRowKeyFor(cwd, workspaces?.items);
+        const row = document.querySelector(`[data-row-key="${cssEscape(key)}"]`);
+        if (!(row instanceof HTMLElement)) return;
+        row.classList.add('ove-sidebar-focus-workspace');
+        workspaceMarkRef.current = row;
+      }, [clearWorkspaceMark, workspaces]);
+      // A drawer that closes while the select still owns the mark must not
+      // leave a yellow row behind in the sidebar.
+      React.useEffect(() => {
+        if (draft === null) clearWorkspaceMark();
+      }, [draft, clearWorkspaceMark]);
+      React.useEffect(() => () => clearWorkspaceMark(), [clearWorkspaceMark]);
+
       const taskContext = (task) => {
         const sessionId = task?.target?.kind === 'session' ? task.target.sessionId : '';
         const session = sessionId.length > 0 ? sessionTitle(sessionId) : '';
@@ -4126,7 +4185,16 @@ window.__ModuleLoader__.load({
               h('select', {
                 className: 'ove-select',
                 value: draft.cwd,
-                onChange: (event) => updateDraft({ cwd: event.target.value }),
+                // Point at the Workspace this binding means while the human is
+                // choosing one; the sidebar answers in yellow.
+                onFocus: () => markWorkspace(draft.cwd),
+                onPointerEnter: () => markWorkspace(draft.cwd),
+                onPointerLeave: () => clearWorkspaceMark(),
+                onBlur: () => clearWorkspaceMark(),
+                onChange: (event) => {
+                  updateDraft({ cwd: event.target.value });
+                  markWorkspace(event.target.value);
+                },
               },
               h('option', { value: '' }, tr('auto.workspaceDefault')),
               workspaceOptions.map((workspace) => h('option', {

@@ -686,6 +686,15 @@
   outline-color: #16a34a;
   background: color-mix(in srgb, #16a34a 12%, transparent);
 }
+/* A Workspace binding points at a group row instead of a conversation, so it
+   answers in yellow: blue would read as "this conversation", green as "open
+   the rest". The ungrouped bucket uses the same mark. */
+.ove-sidebar-focus-workspace {
+  outline: 2px solid #eab308;
+  outline-offset: -2px;
+  border-radius: 6px;
+  background: color-mix(in srgb, #eab308 12%, transparent);
+}
 .ove-notice {
   margin: 0 0 8px; padding: 6px 10px; border-radius: 8px;
   font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-secondary);
