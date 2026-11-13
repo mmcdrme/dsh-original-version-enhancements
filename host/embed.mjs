@@ -18,7 +18,7 @@ const EMBED_CSS = [
   'html,body{background:transparent !important}',
   '[data-slot="sidebar"],[data-side="sidebar"],[data-rightbar-col],[data-rightbar],[data-shell-bottom]{display:none !important}',
   'div:has(> [data-slot="sidebar"]){display:none !important}',
-  '#root > div{grid-template-columns:0 minmax(0,1fr) 0 !important}',
+  '#root > div,[data-slot="root"] > div{grid-template-columns:0 minmax(0,1fr) 0 !important}',
   '[data-shell-overlay]{position:absolute !important}',
 ].join('')
 

@@ -29,6 +29,7 @@ namespace OveWindow
         public int Width = 1100;
         public int Height = 800;
         public int Opacity = 100;
+        public bool Mute = true;
         public string DataDir = "";
     }
 
@@ -98,6 +99,7 @@ namespace OveWindow
                     case "--width": int.TryParse(value, out options.Width); break;
                     case "--height": int.TryParse(value, out options.Height); break;
                     case "--opacity": int.TryParse(value, out options.Opacity); break;
+                    case "--mute": options.Mute = value != "0"; break;
                     case "--data-dir": options.DataDir = value; break;
                 }
             }
@@ -184,6 +186,9 @@ namespace OveWindow
             }
 
             var core = view.CoreWebView2;
+            // A detached conversation must not chime on its own: notification
+            // and error sounds belong to the main window, if anywhere.
+            core.IsMuted = options.Mute;
             core.Settings.IsStatusBarEnabled = false;
             core.Settings.AreBrowserAcceleratorKeysEnabled = true;
             core.Settings.IsZoomControlEnabled = false;

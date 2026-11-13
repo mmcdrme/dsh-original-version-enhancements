@@ -54,7 +54,7 @@ const clampSize = (value, fallback, min) => {
  * @param input - window identity and geometry.
  * @returns the argument vector, without the executable.
  */
-export function windowArguments({ bootUrl, appUrl, title, width, height, opacity, dataDir }) {
+export function windowArguments({ bootUrl, appUrl, title, width, height, opacity, mute, dataDir }) {
   return [
     '--url', bootUrl,
     '--app-url', appUrl,
@@ -62,6 +62,7 @@ export function windowArguments({ bootUrl, appUrl, title, width, height, opacity
     '--width', String(width),
     '--height', String(height),
     '--opacity', String(opacity),
+    '--mute', mute === false ? '0' : '1',
     '--data-dir', dataDir,
   ]
 }
@@ -138,13 +139,14 @@ export function createNativeWindows({ origin, authenticatedUrl, isTrustedRequest
     const width = clampSize(options.width, 1100, 560)
     const height = clampSize(options.height, 800, 420)
     const opacity = clampSize(options.opacity, 100, 30)
+    const mute = options.mute !== false
     // Each window needs its own WebView2 profile: the Host grants one browser
     // session a single live connection, so a shared cookie jar would leave the
     // second window waiting on the welcome screen forever.
     const dataDir = join(DATA_DIRECTORY, `window-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`)
     let child
     try {
-      child = spawn(EXECUTABLE, windowArguments({ bootUrl, appUrl, title, width, height, opacity, dataDir }), {
+      child = spawn(EXECUTABLE, windowArguments({ bootUrl, appUrl, title, width, height, opacity, mute, dataDir }), {
         stdio: 'ignore',
         windowsHide: false,
       })

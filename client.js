@@ -468,11 +468,12 @@ window.__ModuleLoader__.load({
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({
             sessionId,
-            // The native window shows the whole client, sidebar included, so
-            // it needs the room the in-app panel never took.
-            width: size[0] + 300,
-            height: size[1] + 100,
+            // The window is the conversation alone; the preset size is the
+            // reading width, plus the frame the title bar takes.
+            width: size[0],
+            height: size[1] + 32,
             opacity: appearance?.opacity ?? 100,
+            mute: appearance?.mute !== false,
           }),
         });
         const data = await response.json().catch(() => ({}));
@@ -525,7 +526,7 @@ window.__ModuleLoader__.load({
     /** Opacity and backdrop live here; the page edits them, every window reads. */
     const WINDOW_KEY = 'original-version-enhancements.window.v1';
     const WINDOW_SIZE_IDS = ['compact', 'standard', 'wide'];
-    const DEFAULT_WINDOW = { opacity: 100, size: 'standard' };
+    const DEFAULT_WINDOW = { opacity: 100, size: 'standard', mute: true };
 
     const readWindow = () => {
       try {
@@ -535,6 +536,7 @@ window.__ModuleLoader__.load({
         return {
           opacity: Number.isFinite(opacity) ? Math.min(100, Math.max(30, Math.round(opacity))) : DEFAULT_WINDOW.opacity,
           size: WINDOW_SIZE_IDS.includes(saved.size) ? saved.size : DEFAULT_WINDOW.size,
+          mute: saved.mute !== false,
         };
       } catch {
         return { ...DEFAULT_WINDOW };
@@ -557,6 +559,7 @@ window.__ModuleLoader__.load({
       windowState = {
         opacity: Number.isFinite(opacity) ? Math.min(100, Math.max(30, Math.round(opacity))) : DEFAULT_WINDOW.opacity,
         size: WINDOW_SIZE_IDS.includes(next.size) ? next.size : windowState.size,
+        mute: next.mute !== false,
       };
       try {
         globalThis.localStorage?.setItem(WINDOW_KEY, JSON.stringify(windowState));
@@ -1806,7 +1809,20 @@ window.__ModuleLoader__.load({
                       className: `ove-size${appearance.size === id ? ' is-on' : ''}`,
                       'aria-pressed': appearance.size === id,
                       onClick: () => setWindow({ size: id }),
-                    }, tr(`window.size.${id}`))))))),
+                    }, tr(`window.size.${id}`)))))),
+
+                h('div', { className: 'ove-row' },
+                  h('div', { className: 'ove-row-text' },
+                    h('div', { className: 'ove-row-title' }, tr('window.mute')),
+                    h('div', { className: 'ove-row-desc' }, tr('window.mute.desc'))),
+                  h('button', {
+                    type: 'button',
+                    className: 'ove-switch',
+                    role: 'switch',
+                    'aria-checked': appearance.mute,
+                    'aria-label': tr('window.mute'),
+                    onClick: () => setWindow({ mute: !appearance.mute }),
+                  }, h('span', { className: 'ove-switch-thumb' })))),
 
           h('p', { className: 'ove-hint' }, tr('pageHint')),
           h('p', { className: 'ove-footnote' }, tr('footnote'))),
@@ -2563,25 +2579,44 @@ window.__ModuleLoader__.load({
         };
       }, []);
 
-      // A detached conversation cannot be opened here: bring its window forward
-      // instead, so the click still does something useful.
+      // A detached conversation cannot be opened here. One click explains why;
+      // a double click is the shortcut that takes it back, so the blocked row
+      // is never a dead end.
       React.useEffect(() => {
-        const blocked = (event) => {
+        let hint = 0;
+        const rowIdOf = (event) => {
           const target = event.target instanceof Element ? event.target : null;
           const row = target === null ? null : target.closest('[data-row-key^="session:"]');
-          if (row === null) return;
+          if (row === null) return '';
           const id = String(row.getAttribute('data-row-key') ?? '').slice('session:'.length);
           // This window *is* that conversation: its own row must stay usable.
-          if (!detachedSet.has(id) || id === NATIVE_SESSION) return;
+          if (!detachedSet.has(id) || id === NATIVE_SESSION) return '';
+          return id;
+        };
+        const onClick = (event) => {
+          const id = rowIdOf(event);
+          if (id.length === 0) return;
           event.preventDefault();
           event.stopPropagation();
-          flashDetachedNote(tr('detachedBlocked'));
+          // Wait a moment: a double click must not also flash the hint.
+          window.clearTimeout(hint);
+          hint = window.setTimeout(() => flashDetachedNote(tr('detachedBlocked')), 260);
         };
-        document.addEventListener('click', blocked, true);
-        document.addEventListener('dblclick', blocked, true);
+        const onDoubleClick = (event) => {
+          const id = rowIdOf(event);
+          if (id.length === 0) return;
+          event.preventDefault();
+          event.stopPropagation();
+          window.clearTimeout(hint);
+          releaseDetached(id);
+          flashDetachedNote(tr('detachedRestored'));
+        };
+        document.addEventListener('click', onClick, true);
+        document.addEventListener('dblclick', onDoubleClick, true);
         return () => {
-          document.removeEventListener('click', blocked, true);
-          document.removeEventListener('dblclick', blocked, true);
+          window.clearTimeout(hint);
+          document.removeEventListener('click', onClick, true);
+          document.removeEventListener('dblclick', onDoubleClick, true);
         };
       }, [tr]);
 

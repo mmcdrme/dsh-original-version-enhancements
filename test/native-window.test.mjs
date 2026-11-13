@@ -16,6 +16,7 @@ test('the companion window receives its URL, session page and geometry', () => {
     width: 902,
     height: 672,
     opacity: 80,
+    mute: true,
     dataDir: 'C:/tmp/wv2',
   })
   assert.deepEqual(args, [
@@ -25,12 +26,14 @@ test('the companion window receives its URL, session page and geometry', () => {
     '--width', '902',
     '--height', '672',
     '--opacity', '80',
+    '--mute', '1',
     '--data-dir', 'C:/tmp/wv2',
   ])
 })
 
 test('a missing title falls back to the window label', () => {
   const args = windowArguments({ bootUrl: 'u', appUrl: 'a', title: '', width: 1, height: 1, opacity: 100, dataDir: 'd' })
+  assert.equal(args[args.indexOf('--mute') + 1], '1')
   assert.equal(args[args.indexOf('--title') + 1], '独立会话窗口')
 })
 
