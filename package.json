@@ -2,7 +2,7 @@
   "name": "@local/dsh-original-version-enhancements",
   "version": "1.20.0",
   "private": true,
-  "description": "原版功能增强：四档工作详情切换、已归档会话管理（搜索/恢复/确认删除），以及自动化任务增强面板（批量删除、多会话绑定、投递后自动清理）。",
+  "description": "原版功能增强：四档工作详情切换、已归档会话管理（搜索/恢复/确认删除）、自动化任务增强、发送历史回溯，以及可拖动/缩放/最小化并支持透明度设置的独立会话窗口。",
   "type": "module",
   "scripts": {
     "test": "node --test test/*.test.mjs"
