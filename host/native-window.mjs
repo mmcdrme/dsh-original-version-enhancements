@@ -9,6 +9,8 @@
 
 import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
+import { readdir, rm } from 'node:fs/promises'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 /** Request bodies are tiny; anything larger is a mistake. */
@@ -17,6 +19,8 @@ const MAX_REQUEST_BYTES = 64 * 1024
 const EXECUTABLE = fileURLToPath(new URL('../native/OveWindow.exe', import.meta.url))
 /** WebView2 profile fallback: some sandboxes deny %LOCALAPPDATA% to children. */
 const DATA_DIRECTORY = fileURLToPath(new URL('../.webview-data', import.meta.url))
+/** The sidebar-free conversation page each window hosts. */
+const WINDOW_PAGE = '/plugins/original-version-enhancements/window'
 const sendJson = (res, status, body) => {
   res.writeHead(status, {
     'content-type': 'application/json; charset=utf-8',
@@ -50,10 +54,10 @@ const clampSize = (value, fallback, min) => {
  * @param input - window identity and geometry.
  * @returns the argument vector, without the executable.
  */
-export function windowArguments({ bootUrl, session, title, width, height, opacity, dataDir }) {
+export function windowArguments({ bootUrl, appUrl, title, width, height, opacity, dataDir }) {
   return [
     '--url', bootUrl,
-    '--session', session,
+    '--app-url', appUrl,
     '--title', typeof title === 'string' && title.length > 0 ? title : '独立会话窗口',
     '--width', String(width),
     '--height', String(height),
@@ -73,6 +77,29 @@ export function windowArguments({ bootUrl, session, title, width, height, opacit
 export function createNativeWindows({ origin, authenticatedUrl, isTrustedRequest, warn = console.warn }) {
   /** sessionId -> { child, openedAt, ready, title } */
   const windows = new Map()
+
+  /**
+   * A window's WebView2 profile is only that window's: drop it when the window
+   * closes. Chromium releases its files a moment after the process exits, so
+   * the removal is retried instead of abandoned on the first lock.
+   */
+  const dropProfile = (directory) => {
+    const attempt = (remaining) => {
+      rm(directory, { recursive: true, force: true }).catch(() => {
+        if (remaining > 0) setTimeout(() => attempt(remaining - 1), 1500)
+      })
+    }
+    attempt(2)
+  }
+
+  // Profiles left behind by an earlier Host generation are useless now.
+  void readdir(DATA_DIRECTORY).then((names) => {
+    for (const name of names) {
+      if (!name.startsWith('window-')) continue
+      const stamp = Number(name.slice('window-'.length).split('-')[0])
+      if (!Number.isFinite(stamp) || Date.now() - stamp > 24 * 60 * 60 * 1000) dropProfile(join(DATA_DIRECTORY, name))
+    }
+  }).catch(() => { /* no profiles yet */ })
   const supported = process.platform === 'win32' && existsSync(EXECUTABLE)
 
   const forget = (sessionId, child) => {
@@ -86,6 +113,7 @@ export function createNativeWindows({ origin, authenticatedUrl, isTrustedRequest
     if (entry === undefined) return
     windows.delete(sessionId)
     try { entry.child.kill() } catch { /* already gone */ }
+    dropProfile(entry.dataDir)
   }
 
   const closeAll = () => {
@@ -101,16 +129,22 @@ export function createNativeWindows({ origin, authenticatedUrl, isTrustedRequest
   const open = (sessionId, options = {}) => {
     if (!supported) return { ok: false, error: 'unsupported' }
     if (typeof authenticatedUrl !== 'function') return { ok: false, error: 'unsupported' }
-    closeAll()
+    // One window per conversation; several conversations may be open at once.
+    if (windows.has(sessionId)) return { ok: true, reused: true }
     const base = String(typeof origin === 'function' ? origin() : origin)
     const bootUrl = authenticatedUrl(new URL('/', base).href)
+    const appUrl = `${base.replace(/\/+$/u, '')}${WINDOW_PAGE}?session=${encodeURIComponent(sessionId)}`
     const title = typeof options.title === 'string' ? options.title : '独立会话窗口'
     const width = clampSize(options.width, 1100, 560)
     const height = clampSize(options.height, 800, 420)
     const opacity = clampSize(options.opacity, 100, 30)
+    // Each window needs its own WebView2 profile: the Host grants one browser
+    // session a single live connection, so a shared cookie jar would leave the
+    // second window waiting on the welcome screen forever.
+    const dataDir = join(DATA_DIRECTORY, `window-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`)
     let child
     try {
-      child = spawn(EXECUTABLE, windowArguments({ bootUrl, session: sessionId, title, width, height, opacity, dataDir: DATA_DIRECTORY }), {
+      child = spawn(EXECUTABLE, windowArguments({ bootUrl, appUrl, title, width, height, opacity, dataDir }), {
         stdio: 'ignore',
         windowsHide: false,
       })
@@ -122,8 +156,11 @@ export function createNativeWindows({ origin, authenticatedUrl, isTrustedRequest
       warn(`original-version-enhancements: the window host failed: ${error instanceof Error ? error.message : String(error)}`)
       forget(sessionId, child)
     })
-    child.once('exit', () => { forget(sessionId, child) })
-    windows.set(sessionId, { child, openedAt: Date.now(), ready: false, title })
+    child.once('exit', () => {
+      forget(sessionId, child)
+      dropProfile(dataDir)
+    })
+    windows.set(sessionId, { child, openedAt: Date.now(), ready: false, title, dataDir })
     return { ok: true }
   }
 

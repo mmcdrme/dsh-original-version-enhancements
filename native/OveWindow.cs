@@ -24,7 +24,7 @@ namespace OveWindow
     internal sealed class Options
     {
         public string BootUrl = "";
-        public string Session = "";
+        public string AppUrl = "";
         public string Title = "独立会话窗口";
         public int Width = 1100;
         public int Height = 800;
@@ -93,7 +93,7 @@ namespace OveWindow
                 switch (name)
                 {
                     case "--url": options.BootUrl = value; break;
-                    case "--session": options.Session = value; break;
+                    case "--app-url": options.AppUrl = value; break;
                     case "--title": options.Title = value; break;
                     case "--width": int.TryParse(value, out options.Width); break;
                     case "--height": int.TryParse(value, out options.Height); break;
@@ -117,6 +117,7 @@ namespace OveWindow
         private readonly Options options;
         private readonly WebView2 view;
         private static string explicitDataDir = "";
+        private bool switched;
 
         public Window(Options options)
         {
@@ -130,6 +131,13 @@ namespace OveWindow
             BackColor = Color.FromArgb(249, 250, 251);
             Icon = SystemIcons.Application;
             if (options.Opacity < 100) Opacity = options.Opacity / 100.0;
+            try
+            {
+                Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
+            }
+            catch
+            {
+            }
 
             view = new WebView2
             {
@@ -185,26 +193,19 @@ namespace OveWindow
                 if (title.Length > 0 && title != "DeepSeek Harness") Text = title;
             };
 
-            // The window was opened for one conversation: leave a one-shot
-            // cookie the client reads on boot, then let the normal app load.
-            if (options.Session.Length > 0)
-            {
-                try
-                {
-                    var target = new Uri(options.BootUrl);
-                    var cookie = core.CookieManager.CreateCookie("ove-window-session", options.Session, target.Host, "/");
-                    cookie.IsSecure = target.Scheme == "https";
-                    cookie.IsHttpOnly = false;
-                    core.CookieManager.AddOrUpdateCookie(cookie);
-                }
-                catch
-                {
-                    // A failed cookie only costs the initial selection.
-                }
-            }
-
+            core.NavigationCompleted += OnNavigationCompleted;
             Stage("载入会话…");
             core.Navigate(options.BootUrl);
+        }
+
+        private void OnNavigationCompleted(object sender, CoreWebView2NavigationCompletedEventArgs args)
+        {
+            if (switched || options.AppUrl.Length == 0) return;
+            // The authenticated URL answered and minted the session cookie, so
+            // the conversation page (sidebar-free) can be opened in place.
+            switched = true;
+            Stage("载入会话…");
+            view.CoreWebView2.Navigate(options.AppUrl);
         }
 
         private void Stage(string message)

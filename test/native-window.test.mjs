@@ -11,7 +11,7 @@ import { createNativeWindows, windowArguments } from '../host/native-window.mjs'
 test('the companion window receives its URL, session page and geometry', () => {
   const args = windowArguments({
     bootUrl: 'http://127.0.0.1:4850/?token=abc',
-    session: 'session-s1',
+    appUrl: 'http://127.0.0.1:4850/plugins/original-version-enhancements/window?session=session-s1',
     title: '会话一',
     width: 902,
     height: 672,
@@ -20,7 +20,7 @@ test('the companion window receives its URL, session page and geometry', () => {
   })
   assert.deepEqual(args, [
     '--url', 'http://127.0.0.1:4850/?token=abc',
-    '--session', 'session-s1',
+    '--app-url', 'http://127.0.0.1:4850/plugins/original-version-enhancements/window?session=session-s1',
     '--title', '会话一',
     '--width', '902',
     '--height', '672',
@@ -30,7 +30,7 @@ test('the companion window receives its URL, session page and geometry', () => {
 })
 
 test('a missing title falls back to the window label', () => {
-  const args = windowArguments({ bootUrl: 'u', session: 's', title: '', width: 1, height: 1, opacity: 100, dataDir: 'd' })
+  const args = windowArguments({ bootUrl: 'u', appUrl: 'a', title: '', width: 1, height: 1, opacity: 100, dataDir: 'd' })
   assert.equal(args[args.indexOf('--title') + 1], '独立会话窗口')
 })
 
