@@ -387,6 +387,20 @@ window.__ModuleLoader__.load({
       }
     };
 
+    /**
+     * Whether the detached window has confirmed it actually shows the
+     * conversation. A window that boots but stays on the wrong session has no
+     * content, so the opener must not treat it as success.
+     */
+    const readDetachedReady = (sessionId) => {
+      try {
+        const raw = JSON.parse(globalThis.localStorage?.getItem(detachedKeyOf(sessionId)) ?? 'null');
+        return raw?.ready === true;
+      } catch {
+        return false;
+      }
+    };
+
     let detachedSet = new Set();
     const detachedListeners = new Set();
 
@@ -428,11 +442,12 @@ window.__ModuleLoader__.load({
     const useDetached = () => React.useSyncExternalStore(subscribeDetached, getDetached, getDetached);
 
     /** Claim the mark for one conversation (called by its own window). */
-    const writeDetached = (sessionId, openedAt) => {
+    const writeDetached = (sessionId, openedAt, ready = false) => {
       try {
         globalThis.localStorage?.setItem(detachedKeyOf(sessionId), JSON.stringify({
           heartbeat: Date.now(),
           openedAt: typeof openedAt === 'number' ? openedAt : Date.now(),
+          ready: ready === true,
         }));
       } catch { /* the mark is best-effort */ }
       refreshDetached();
@@ -528,7 +543,7 @@ window.__ModuleLoader__.load({
     const waitForDetachedBeat = (sessionId, timeoutMs) => new Promise((resolve) => {
       const started = Date.now();
       const tick = () => {
-        if (readDetachedBeat(sessionId) > 0) {
+        if (readDetachedReady(sessionId)) {
           resolve(true);
           return;
         }
@@ -557,7 +572,14 @@ window.__ModuleLoader__.load({
     const detachSession = async (ctx, sessionId) => {
       if (typeof sessionId !== 'string' || sessionId.length === 0) return false;
       if (readDetachedBeat(sessionId) > 0) return true;
-      const url = `${location.origin}${location.pathname}?ove-detached=${encodeURIComponent(sessionId)}`;
+      // Keep the page's own query and hash: they may carry what the client
+      // needs to boot (a token, a route, a review flag). Only our marker is added.
+      let url = `${location.origin}${location.pathname}?ove-detached=${encodeURIComponent(sessionId)}`;
+      try {
+        const parsed = new URL(location.href);
+        parsed.searchParams.set('ove-detached', sessionId);
+        url = parsed.toString();
+      } catch { /* the plain form above still works */ }
       let handle = null;
       try {
         handle = globalThis.open(url, `ove-detached-${sessionId}`, 'popup=yes,width=1120,height=860');
@@ -568,7 +590,7 @@ window.__ModuleLoader__.load({
       if (handle !== null && handle !== undefined) {
         try { handle.focus(); } catch { /* focus is best-effort */ }
         detachedHandles.set(sessionId, handle);
-        opened = await waitForDetachedBeat(sessionId, 4500);
+        opened = await waitForDetachedBeat(sessionId, 12000);
         if (!opened) {
           // The proxy existed but no window ever loaded: close it and fall
           // through to the in-app window.
@@ -578,8 +600,10 @@ window.__ModuleLoader__.load({
         }
       }
       if (!opened) {
+        // A window that never showed the conversation is no window: the
+        // in-app frame is the next attempt, and it marks itself ready.
         openDetachedPanel(sessionId);
-        writeDetached(sessionId, Date.now());
+        writeDetached(sessionId, Date.now(), true);
       }
       const current = ctx?.uiWorkspace?.mainReference?.sessionId ?? '';
       if (current === sessionId) leaveRemovedSession(ctx, sessionId);
@@ -1971,7 +1995,9 @@ window.__ModuleLoader__.load({
       // While this window exists it owns the mark; closing it releases the
       // conversation back to the main view.
       React.useEffect(() => {
-        const beat = () => writeDetached(sessionId, Date.now());
+        // The in-app window owns a real frame, so it is ready the moment it
+        // mounts; its iframe independently confirms the same conversation.
+        const beat = () => writeDetached(sessionId, Date.now(), true);
         beat();
         const timer = window.setInterval(beat, 2000);
         return () => { window.clearInterval(timer); };
@@ -2015,6 +2041,14 @@ window.__ModuleLoader__.load({
         },
       },
       h('span', { className: 'ove-detached-title' }, tr('detachedWindowTitle')),
+      // A manual escape hatch: if a webview refuses to frame the client, a
+      // real user click on a link is the most likely path to a working window.
+      h('a', {
+        className: 'ove-detached-open',
+        href: `${location.origin}${location.pathname}?ove-detached=${encodeURIComponent(sessionId)}`,
+        target: '_blank',
+        rel: 'noopener',
+      }, tr('detachedOpenTab')),
       h('button', {
         type: 'button',
         className: 'ove-detached-close',
@@ -2061,8 +2095,11 @@ window.__ModuleLoader__.load({
       React.useEffect(() => {
         if (detachedId.length === 0) return undefined;
         const openedAt = Date.now();
-        writeDetached(detachedId, openedAt);
-        const heartbeat = window.setInterval(() => writeDetached(detachedId, openedAt), 2000);
+        // `ready` is what the opener waits for: a window that only booted is
+        // not enough, it must be showing this conversation.
+        let ready = false;
+        writeDetached(detachedId, openedAt, false);
+        const heartbeat = window.setInterval(() => writeDetached(detachedId, openedAt, ready), 2000);
         let tries = 0;
         let settled = 0;
         const select = window.setInterval(() => {
@@ -2070,10 +2107,12 @@ window.__ModuleLoader__.load({
           const current = ctx?.uiWorkspace?.mainReference?.sessionId ?? '';
           if (current === detachedId) {
             // Startup restoration may still move the main view; wait until the
-            // selection has survived two ticks before dropping the boot hint.
+            // selection has survived two ticks before calling the window ready.
             settled += 1;
             if (settled < 2) return;
             window.clearInterval(select);
+            ready = true;
+            writeDetached(detachedId, openedAt, true);
             try { history.replaceState(null, '', location.pathname); } catch { /* cosmetic */ }
             return;
           }
