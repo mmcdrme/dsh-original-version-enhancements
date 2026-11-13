@@ -695,6 +695,26 @@
   border-radius: 6px;
   background: color-mix(in srgb, #eab308 12%, transparent);
 }
+/* A conversation that lives in its own window keeps its row and its name. The
+   frame is drawn by a pseudo-element inset 4px inside the row, so it can never
+   collide with the picker's 2px blue ring (which sits on the row's own edge)
+   and it reads lighter than that ring. */
+.ove-sidebar-detached { position: relative; }
+.ove-sidebar-detached::after {
+  content: "";
+  position: absolute;
+  inset: 4px;
+  border: 2px solid #7dd3fc;
+  border-radius: 8px;
+  pointer-events: none;
+}
+.ove-detached-toast {
+  position: fixed; left: 50%; bottom: 32px; transform: translateX(-50%);
+  z-index: 2147483001; max-width: min(520px, calc(100vw - 48px)); box-sizing: border-box;
+  padding: 8px 14px; border-radius: 10px; background: #1f2124; color: #fff;
+  font-size: 13px; line-height: 20px; box-shadow: 0 10px 30px rgba(0, 0, 0, .35);
+  pointer-events: none;
+}
 .ove-notice {
   margin: 0 0 8px; padding: 6px 10px; border-radius: 8px;
   font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-secondary);

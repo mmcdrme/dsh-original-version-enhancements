@@ -345,6 +345,154 @@ window.__ModuleLoader__.load({
     const clearSentHistory = () => publishHistory([]);
 
     /* ------------------------------------------------------------------ */
+    /* Conversations opened in their own window                            */
+    /* ------------------------------------------------------------------ */
+
+    /**
+     * A conversation can leave the main window for a window of its own. The
+     * mark lives in localStorage, one key per conversation, so:
+     *   - every window (main or detached) sees the same set,
+     *   - the detached window keeps its own key alive with a heartbeat,
+     *   - a closed window's key goes stale within a few seconds and the main
+     *     window takes the conversation back without any user action.
+     */
+    const DETACHED_KEY = 'original-version-enhancements.detached.';
+    /** How long a heartbeat may lag before its window is presumed gone. */
+    const DETACHED_STALE_MS = 8000;
+
+    /** The localStorage key that marks one conversation as detached. */
+    const detachedKeyOf = (sessionId) => `${DETACHED_KEY}${sessionId}`;
+
+    /** The conversation id carried by a detached key, or an empty string. */
+    const detachedSessionOf = (key) => (
+      typeof key === 'string' && key.startsWith(DETACHED_KEY) ? key.slice(DETACHED_KEY.length) : ''
+    );
+
+    /** Whether a heartbeat is recent enough that its window still exists. */
+    const detachedAlive = (heartbeat, now) => (
+      typeof heartbeat === 'number' && Number.isFinite(heartbeat) && heartbeat > 0
+      && now - heartbeat <= DETACHED_STALE_MS
+    );
+
+    /** Window handles this page opened, so "bring back" can close them. */
+    const detachedHandles = new Map();
+
+    const readDetachedBeat = (sessionId) => {
+      try {
+        const raw = JSON.parse(globalThis.localStorage?.getItem(detachedKeyOf(sessionId)) ?? 'null');
+        return typeof raw?.heartbeat === 'number' ? raw.heartbeat : 0;
+      } catch {
+        return 0;
+      }
+    };
+
+    let detachedSet = new Set();
+    const detachedListeners = new Set();
+
+    const publishDetached = (next) => {
+      const same = next.size === detachedSet.size && [...next].every(id => detachedSet.has(id));
+      if (same) return false;
+      detachedSet = next;
+      for (const listener of detachedListeners) listener();
+      return true;
+    };
+
+    /** Rebuild the live set from storage, dropping keys whose window is gone. */
+    const refreshDetached = () => {
+      const next = new Set();
+      try {
+        const storage = globalThis.localStorage;
+        if (storage === null || storage === undefined) return publishDetached(next);
+        const now = Date.now();
+        for (let index = 0; index < storage.length; index += 1) {
+          const key = storage.key(index);
+          const id = detachedSessionOf(key);
+          if (id.length === 0) continue;
+          if (!detachedAlive(readDetachedBeat(id), now)) {
+            // The window that owned this mark was closed without cleaning up.
+            try { storage.removeItem(key); } catch { /* keep going */ }
+            continue;
+          }
+          next.add(id);
+        }
+      } catch { /* a blocked storage leaves the set empty */ }
+      return publishDetached(next);
+    };
+
+    const subscribeDetached = (listener) => {
+      detachedListeners.add(listener);
+      return () => { detachedListeners.delete(listener); };
+    };
+    const getDetached = () => detachedSet;
+    const useDetached = () => React.useSyncExternalStore(subscribeDetached, getDetached, getDetached);
+
+    /** Claim the mark for one conversation (called by its own window). */
+    const writeDetached = (sessionId, openedAt) => {
+      try {
+        globalThis.localStorage?.setItem(detachedKeyOf(sessionId), JSON.stringify({
+          heartbeat: Date.now(),
+          openedAt: typeof openedAt === 'number' ? openedAt : Date.now(),
+        }));
+      } catch { /* the mark is best-effort */ }
+      refreshDetached();
+    };
+
+    /** Release one conversation, closing the window this page opened for it. */
+    const releaseDetached = (sessionId) => {
+      try {
+        globalThis.localStorage?.removeItem(detachedKeyOf(sessionId));
+      } catch { /* already gone */ }
+      const handle = detachedHandles.get(sessionId);
+      detachedHandles.delete(sessionId);
+      if (handle !== null && handle !== undefined) {
+        try { handle.close(); } catch { /* the browser may refuse */ }
+      }
+      refreshDetached();
+    };
+
+    /** A short floating note for actions that have nowhere else to report. */
+    const flashDetachedNote = (text) => {
+      if (typeof document === 'undefined' || text.length === 0) return;
+      const node = document.createElement('div');
+      node.className = 'ove-detached-toast';
+      node.setAttribute('role', 'status');
+      node.textContent = text;
+      document.body.appendChild(node);
+      window.setTimeout(() => node.remove(), 2600);
+    };
+
+    /**
+     * Open one conversation in its own window and mark it.
+     * @param ctx - the Client plugin context.
+     * @param sessionId - the conversation to detach.
+     * @param labels - localized strings for the blocked/failed cases.
+     * @returns true when a window was opened.
+     */
+    const detachSession = (ctx, sessionId, labels) => {
+      if (typeof sessionId !== 'string' || sessionId.length === 0) return false;
+      const url = `${location.origin}${location.pathname}?ove-detached=${encodeURIComponent(sessionId)}`;
+      let handle = null;
+      try {
+        handle = globalThis.open(url, `ove-detached-${sessionId}`, 'popup=yes,width=1120,height=860');
+      } catch {
+        handle = null;
+      }
+      if (handle === null || handle === undefined) {
+        // A blocked popup must not lock the conversation out of the main window.
+        flashDetachedNote(labels?.blocked ?? '');
+        return false;
+      }
+      try { handle.focus(); } catch { /* focus is best-effort */ }
+      detachedHandles.set(sessionId, handle);
+      writeDetached(sessionId, Date.now());
+      // The main view cannot keep showing a conversation it no longer opens:
+      // leave it the way a deleted conversation is left.
+      const current = ctx?.uiWorkspace?.mainReference?.sessionId ?? '';
+      if (current === sessionId) leaveRemovedSession(ctx, sessionId);
+      return true;
+    };
+
+    /* ------------------------------------------------------------------ */
     /* Pending permanent-deletion target, shared by the page and the menu  */
     /* ------------------------------------------------------------------ */
 
@@ -1633,6 +1781,186 @@ window.__ModuleLoader__.load({
         className: 'ove-menu-item',
         onClick: select,
       }, h(TrashIcon), h('span', null, label));
+    }
+
+    /* ------------------------------------------------------------------ */
+    /* Detached conversations: menu row and the cross-window bridge        */
+    /* ------------------------------------------------------------------ */
+
+    /** A window with an arrow leaving it. */
+    function DetachIcon() {
+      return h('svg', {
+        viewBox: '0 0 16 16',
+        width: 14,
+        height: 14,
+        fill: 'none',
+        stroke: 'currentColor',
+        strokeWidth: 1.4,
+        strokeLinecap: 'round',
+        strokeLinejoin: 'round',
+        'aria-hidden': 'true',
+        focusable: 'false',
+        style: { display: 'block', pointerEvents: 'none' },
+      },
+      h('path', { d: 'M6.5 3.2H3.6a1.1 1.1 0 0 0-1.1 1.1v8.1a1.1 1.1 0 0 0 1.1 1.1h8.1a1.1 1.1 0 0 0 1.1-1.1V9.5' }),
+      h('path', { d: 'M9.6 2.4h4v4' }),
+      h('path', { d: 'M13.4 2.6 7.6 8.4' }));
+    }
+
+    /**
+     * One session-menu row: send the conversation to its own window, or take it
+     * back. The row keeps its name in the workspace either way; only the frame
+     * around it changes.
+     * @param props - session identity, menu state, translator and plugin context.
+     * @returns the menu row.
+     */
+    function DetachedSessionMenuItem({ sessionId, displayTitle, useMenuOpenState, t, ctx }) {
+      const tr = typeof t === 'function' ? t : (key) => key;
+      const [, closeMenu] = useMenuOpenState();
+      const detached = useDetached();
+      const open = typeof sessionId === 'string' && detached.has(sessionId);
+      const label = open ? tr('menuDetachedBack') : tr('menuDetachedOpen');
+
+      const select = () => {
+        closeMenu(false);
+        if (open) {
+          releaseDetached(sessionId);
+          return;
+        }
+        detachSession(ctx, sessionId, { blocked: tr('detachedBlockedPopup') });
+      };
+
+      if (uiPrimitives?.MenuItemButton) {
+        return h(uiPrimitives.MenuItemButton, {
+          icon: h(DetachIcon, null),
+          onSelect: select,
+        }, label);
+      }
+
+      return h('button', {
+        type: 'button',
+        role: 'menuitem',
+        className: 'ove-menu-item',
+        onClick: select,
+      }, h(DetachIcon, null), h('span', null, label));
+    }
+
+    /**
+     * Runs in every window and keeps detached conversations coherent:
+     * decorates their sidebar rows, stops the main window from opening one, and
+     * in the detached window itself selects the conversation and keeps its mark
+     * alive until the main window takes it back.
+     * @param props - plugin context and translator.
+     * @returns null.
+     */
+    function DetachedSessionsBridge({ ctx, t }) {
+      const tr = typeof t === 'function' ? t : (key) => key;
+      const [detachedId] = React.useState(() => {
+        try {
+          return new URLSearchParams(window.location.search).get('ove-detached') ?? '';
+        } catch {
+          return '';
+        }
+      });
+
+      // The window that shows one detached conversation: select it, keep the
+      // heartbeat going, and close when the mark is taken back.
+      React.useEffect(() => {
+        if (detachedId.length === 0) return undefined;
+        const openedAt = Date.now();
+        writeDetached(detachedId, openedAt);
+        const heartbeat = window.setInterval(() => writeDetached(detachedId, openedAt), 2000);
+        let tries = 0;
+        let settled = 0;
+        const select = window.setInterval(() => {
+          tries += 1;
+          const current = ctx?.uiWorkspace?.mainReference?.sessionId ?? '';
+          if (current === detachedId) {
+            // Startup restoration may still move the main view; wait until the
+            // selection has survived two ticks before dropping the boot hint.
+            settled += 1;
+            if (settled < 2) return;
+            window.clearInterval(select);
+            try { history.replaceState(null, '', location.pathname); } catch { /* cosmetic */ }
+            return;
+          }
+          settled = 0;
+          try {
+            ctx?.uiWorkspace?.openSession?.(detachedId);
+          } catch { /* the catalog may still be loading */ }
+          if (tries > 60) window.clearInterval(select);
+        }, 500);
+        const onStorage = (event) => {
+          const key = detachedKeyOf(detachedId);
+          if (event.key !== null && event.key !== key) return;
+          if (event.key === key && event.newValue !== null) return;
+          // Taken back by the main window: this standalone view is done.
+          try { window.close(); } catch { /* the browser may refuse */ }
+        };
+        window.addEventListener('storage', onStorage);
+        return () => {
+          window.clearInterval(heartbeat);
+          window.clearInterval(select);
+          window.removeEventListener('storage', onStorage);
+        };
+      }, [detachedId, ctx]);
+
+      // Every window: paint the frame on the rows the marks name, and drop
+      // marks whose window is gone so the conversation becomes reachable again.
+      React.useEffect(() => {
+        const decorate = () => {
+          refreshDetached();
+          const rows = document.querySelectorAll('[data-row-key^="session:"]');
+          for (const row of rows) {
+            const id = String(row.getAttribute('data-row-key') ?? '').slice('session:'.length);
+            const on = detachedSet.has(id);
+            if (row.classList.contains('ove-sidebar-detached') !== on) {
+              row.classList.toggle('ove-sidebar-detached', on);
+            }
+            if (on) row.setAttribute('data-detached', 'true');
+            else row.removeAttribute('data-detached');
+          }
+        };
+        decorate();
+        const timer = window.setInterval(decorate, 800);
+        const onStorage = (event) => {
+          if (event.key !== null && !String(event.key).startsWith(DETACHED_KEY)) return;
+          decorate();
+        };
+        window.addEventListener('storage', onStorage);
+        return () => {
+          window.clearInterval(timer);
+          window.removeEventListener('storage', onStorage);
+        };
+      }, []);
+
+      // A detached conversation cannot be opened here: bring its window forward
+      // instead, so the click still does something useful.
+      React.useEffect(() => {
+        const blocked = (event) => {
+          const target = event.target instanceof Element ? event.target : null;
+          const row = target === null ? null : target.closest('[data-row-key^="session:"]');
+          if (row === null) return;
+          const id = String(row.getAttribute('data-row-key') ?? '').slice('session:'.length);
+          if (!detachedSet.has(id)) return;
+          event.preventDefault();
+          event.stopPropagation();
+          const handle = detachedHandles.get(id);
+          try { handle?.focus(); } catch { /* the window may be gone */ }
+          flashDetachedNote(tr('detachedBlocked'));
+        };
+        document.addEventListener('click', blocked, true);
+        document.addEventListener('dblclick', blocked, true);
+        return () => {
+          document.removeEventListener('click', blocked, true);
+          document.removeEventListener('dblclick', blocked, true);
+        };
+      }, [tr]);
+
+      // This surface renders no markup, but the row frame and the toast live in
+      // the shared stylesheet: without a slot that paints it, a page with no
+      // other plugin surface would have no rule to apply.
+      return h('style', { key: 'styles', 'data-plugin-css': `${NS}-detached` }, CSS);
     }
 
     /* ------------------------------------------------------------------ */
@@ -5176,6 +5504,21 @@ window.__ModuleLoader__.load({
                   order: 500,
                   inject: () => ({ t: translator, ctx }),
                 }, SessionDeleteMenuItem)),
+                // Its own window is a session-management action too, so it
+                // appears and disappears with the chat-manager switch.
+                ctx.slots.inject('sidebar.workspaces.session.menu.item', () => ctx.slots.register({
+                  name: 'sidebar.workspaces.session.menu.item',
+                  id: 'original-version-enhancements.detached',
+                  order: 495,
+                  inject: () => ({ t: translator, ctx }),
+                }, DetachedSessionMenuItem)),
+                // The bridge lives on the shell: it must exist in the detached
+                // window as well, where no other plugin surface is guaranteed.
+                ctx.slots.inject('shell.overlay', () => ctx.slots.register({
+                  name: 'shell.overlay',
+                  id: 'original-version-enhancements.detached-bridge',
+                  inject: () => ({ t: translator, ctx }),
+                }, DetachedSessionsBridge)),
                 ctx.slots.inject('shell.overlay', () => ctx.slots.register({
                   name: 'shell.overlay',
                   id: 'original-version-enhancements.transfer-dialog',
