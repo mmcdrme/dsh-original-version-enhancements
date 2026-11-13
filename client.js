@@ -457,6 +457,10 @@ window.__ModuleLoader__.load({
 
     /** Open one conversation in the companion window; false means unsupported. */
     const openNativeWindow = async (sessionId, appearance) => {
+      // A platform without the companion window must not cost a 12-second wait
+      // before the in-app fallback: ask first.
+      const state = await pullHostWindows();
+      if (state === undefined || state.supported !== true) return false;
       const size = WINDOW_SIZES[appearance?.size] ?? WINDOW_SIZES.standard;
       try {
         const response = await fetch(`${ROUTE_ROOT}/window/native/open`, {
