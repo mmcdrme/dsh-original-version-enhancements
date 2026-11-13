@@ -5,12 +5,15 @@
 // completely independent of the main window: it has its own taskbar entry, its
 // own minimise/restore, and keeps running while the main window is minimised.
 //
-// It first opens the Host's authenticated URL (which mints the browser cookie),
-// then switches to the plugin's embedded conversation page for one session.
+// It opens the Host's authenticated URL (which mints the browser cookie) and
+// plants a one-shot `ove-window-session` cookie first, so the web client booting
+// inside selects the conversation the window was opened for. The page is the
+// ordinary client, so the sidebar keeps working here.
 
 using System;
 using System.Drawing;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
 using System.Windows.Forms;
 using Microsoft.Web.WebView2.Core;
@@ -21,7 +24,7 @@ namespace OveWindow
     internal sealed class Options
     {
         public string BootUrl = "";
-        public string AppUrl = "";
+        public string Session = "";
         public string Title = "独立会话窗口";
         public int Width = 1100;
         public int Height = 800;
@@ -31,9 +34,19 @@ namespace OveWindow
 
     internal static class Program
     {
+        // Per-monitor V2 keeps WebView2 on the device pixel grid; without it
+        // Windows bitmap-scales the whole window and text turns blurry.
+        [DllImport("user32.dll")]
+        internal static extern bool SetProcessDpiAwarenessContext(IntPtr value);
+
+        [DllImport("user32.dll")]
+        internal static extern bool SetProcessDPIAware();
+
+
         [STAThread]
         private static void Main(string[] args)
         {
+            EnableDpiAwareness();
             Options options;
             try
             {
@@ -57,6 +70,18 @@ namespace OveWindow
             }
         }
 
+        private static void EnableDpiAwareness()
+        {
+            try
+            {
+                if (SetProcessDpiAwarenessContext(new IntPtr(-4))) return;
+            }
+            catch
+            {
+            }
+            try { SetProcessDPIAware(); } catch { }
+        }
+
         private static Options Parse(string[] args)
         {
             var options = new Options();
@@ -68,7 +93,7 @@ namespace OveWindow
                 switch (name)
                 {
                     case "--url": options.BootUrl = value; break;
-                    case "--app-url": options.AppUrl = value; break;
+                    case "--session": options.Session = value; break;
                     case "--title": options.Title = value; break;
                     case "--width": int.TryParse(value, out options.Width); break;
                     case "--height": int.TryParse(value, out options.Height); break;
@@ -91,7 +116,7 @@ namespace OveWindow
 
         private readonly Options options;
         private readonly WebView2 view;
-        private bool switched;
+        private static string explicitDataDir = "";
 
         public Window(Options options)
         {
@@ -99,13 +124,11 @@ namespace OveWindow
             Text = options.Title;
             Width = options.Width;
             Height = options.Height;
-            MinimumSize = new Size(480, 360);
+            MinimumSize = new Size(520, 380);
             StartPosition = FormStartPosition.CenterScreen;
+            AutoScaleMode = AutoScaleMode.Dpi;
             BackColor = Color.FromArgb(249, 250, 251);
             Icon = SystemIcons.Application;
-            // Layered-window alpha is only applied when the user asked for it;
-            // a translucent window over a child Chromium surface is a trade the
-            // settings page controls.
             if (options.Opacity < 100) Opacity = options.Opacity / 100.0;
 
             view = new WebView2
@@ -116,15 +139,89 @@ namespace OveWindow
             Controls.Add(view);
         }
 
-        private static string ExplicitDataDir = "";
+        protected override async void OnLoad(EventArgs e)
+        {
+            base.OnLoad(e);
+            Stage("启动中…");
+            // WinForms here runs at 96 DPI while the window is per-monitor
+            // aware, so the requested size is DIPs: grow it to device pixels or
+            // the window would look shrunken on a scaled display.
+            try
+            {
+                using (var graphics = CreateGraphics())
+                {
+                    var scale = graphics.DpiX / 96f;
+                    if (scale > 1.05f)
+                    {
+                        Width = (int)Math.Round(options.Width * scale);
+                        Height = (int)Math.Round(options.Height * scale);
+                        MinimumSize = new Size((int)Math.Round(520 * scale), (int)Math.Round(380 * scale));
+                    }
+                }
+            }
+            catch
+            {
+            }
+            try
+            {
+                explicitDataDir = options.DataDir;
+                var dataFolder = PrepareDataFolder();
+                var environment = await CoreWebView2Environment.CreateAsync(null, dataFolder);
+                await view.EnsureCoreWebView2Async(environment);
+            }
+            catch (Exception error)
+            {
+                Stage("WebView2 启动失败: " + error.Message);
+                return;
+            }
+
+            var core = view.CoreWebView2;
+            core.Settings.IsStatusBarEnabled = false;
+            core.Settings.AreBrowserAcceleratorKeysEnabled = true;
+            core.Settings.IsZoomControlEnabled = false;
+            core.DocumentTitleChanged += (sender, args) =>
+            {
+                var title = TitleSuffix.Replace(core.DocumentTitle ?? "", "").Trim();
+                if (title.Length > 0 && title != "DeepSeek Harness") Text = title;
+            };
+
+            // The window was opened for one conversation: leave a one-shot
+            // cookie the client reads on boot, then let the normal app load.
+            if (options.Session.Length > 0)
+            {
+                try
+                {
+                    var target = new Uri(options.BootUrl);
+                    var cookie = core.CookieManager.CreateCookie("ove-window-session", options.Session, target.Host, "/");
+                    cookie.IsSecure = target.Scheme == "https";
+                    cookie.IsHttpOnly = false;
+                    core.CookieManager.AddOrUpdateCookie(cookie);
+                }
+                catch
+                {
+                    // A failed cookie only costs the initial selection.
+                }
+            }
+
+            Stage("载入会话…");
+            core.Navigate(options.BootUrl);
+        }
+
+        private void Stage(string message)
+        {
+            try { Text = message; } catch { }
+        }
 
         private static string PrepareDataFolder()
         {
             var candidates = new System.Collections.Generic.List<string>();
-            candidates.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "dsh-ove-window", "webview2"));
-            if (ExplicitDataDir.Length > 0) candidates.Add(ExplicitDataDir);
+            candidates.Add(Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "dsh-ove-window",
+                "webview2"));
+            if (explicitDataDir.Length > 0) candidates.Add(explicitDataDir);
             candidates.Add(Path.Combine(Path.GetTempPath(), "dsh-ove-window", "webview2"));
-            Exception last = null;
+
             var report = new System.Text.StringBuilder();
             foreach (var candidate in candidates)
             {
@@ -138,78 +235,10 @@ namespace OveWindow
                 }
                 catch (Exception error)
                 {
-                    last = error;
-                    report.Append(candidate).Append(" => ").Append(error.GetType().Name).Append(": ").Append(error.Message).Append("\n");
+                    report.Append(candidate).Append(" => ").Append(error.GetType().Name).Append(": ").Append(error.Message).Append('\n');
                 }
             }
             throw new IOException(report.ToString());
-        }
-
-        private void Stage(string message)
-        {
-            try { Text = message; } catch { }
-        }
-
-        private static void Log(string message)
-        {
-            try
-            {
-                var folder = Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                    "dsh-ove-window");
-                Directory.CreateDirectory(folder);
-                File.AppendAllText(Path.Combine(folder, "window.log"), DateTime.Now.ToString("HH:mm:ss.fff") + " " + message + Environment.NewLine);
-            }
-            catch
-            {
-            }
-        }
-
-        protected override async void OnLoad(EventArgs e)
-        {
-            base.OnLoad(e);
-            Stage("启动中…");
-            Log("load boot=" + options.BootUrl + " app=" + options.AppUrl);
-            try
-            {
-                ExplicitDataDir = options.DataDir;
-            var dataFolder = PrepareDataFolder();
-                var environment = await CoreWebView2Environment.CreateAsync(null, dataFolder);
-                await view.EnsureCoreWebView2Async(environment);
-                Stage("WebView2 已就绪");
-                Log("webview ready");
-            }
-            catch (Exception error)
-            {
-                Stage("WebView2 启动失败: " + error.Message);
-                return;
-            }
-
-            var core = view.CoreWebView2;
-            core.Settings.IsStatusBarEnabled = false;
-            core.Settings.AreBrowserAcceleratorKeysEnabled = true;
-            core.DocumentTitleChanged += (sender, args) =>
-            {
-                var title = TitleSuffix.Replace(core.DocumentTitle ?? "", "").Trim();
-                if (title.Length > 0 && title != "DeepSeek Harness") Text = title;
-            };
-            core.NavigationCompleted += OnNavigationCompleted;
-            core.NavigationStarting += (sender, args) => Log("starting " + args.Uri);
-            Log("navigate boot");
-            core.Navigate(options.BootUrl);
-        }
-
-        private void OnNavigationCompleted(object sender, CoreWebView2NavigationCompletedEventArgs args)
-        {
-            Stage("导航完成 success=" + args.IsSuccess + " status=" + args.HttpStatusCode + " error=" + args.WebErrorStatus + " " + view.CoreWebView2.Source);
-            Log("completed success=" + args.IsSuccess + " status=" + args.HttpStatusCode + " error=" + args.WebErrorStatus + " url=" + view.CoreWebView2.Source);
-            if (switched || options.AppUrl.Length == 0) return;
-            // The authenticated URL answered and minted the session cookie, so
-            // the embedded conversation page can now be opened in place.
-            switched = true;
-            Stage("打开会话页…");
-            Log("navigate app " + options.AppUrl);
-            view.CoreWebView2.Navigate(options.AppUrl);
         }
     }
 }

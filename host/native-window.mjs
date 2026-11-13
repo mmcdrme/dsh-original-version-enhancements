@@ -17,9 +17,6 @@ const MAX_REQUEST_BYTES = 64 * 1024
 const EXECUTABLE = fileURLToPath(new URL('../native/OveWindow.exe', import.meta.url))
 /** WebView2 profile fallback: some sandboxes deny %LOCALAPPDATA% to children. */
 const DATA_DIRECTORY = fileURLToPath(new URL('../.webview-data', import.meta.url))
-/** The page the window shows: the plugin's embedded conversation document. */
-const WINDOW_PAGE = '/plugins/original-version-enhancements/window'
-
 const sendJson = (res, status, body) => {
   res.writeHead(status, {
     'content-type': 'application/json; charset=utf-8',
@@ -53,10 +50,10 @@ const clampSize = (value, fallback, min) => {
  * @param input - window identity and geometry.
  * @returns the argument vector, without the executable.
  */
-export function windowArguments({ bootUrl, appUrl, title, width, height, opacity, dataDir }) {
+export function windowArguments({ bootUrl, session, title, width, height, opacity, dataDir }) {
   return [
     '--url', bootUrl,
-    '--app-url', appUrl,
+    '--session', session,
     '--title', typeof title === 'string' && title.length > 0 ? title : '独立会话窗口',
     '--width', String(width),
     '--height', String(height),
@@ -107,14 +104,13 @@ export function createNativeWindows({ origin, authenticatedUrl, isTrustedRequest
     closeAll()
     const base = String(typeof origin === 'function' ? origin() : origin)
     const bootUrl = authenticatedUrl(new URL('/', base).href)
-    const appUrl = `${base.replace(/\/+$/u, '')}${WINDOW_PAGE}?session=${encodeURIComponent(sessionId)}`
     const title = typeof options.title === 'string' ? options.title : '独立会话窗口'
     const width = clampSize(options.width, 1100, 560)
     const height = clampSize(options.height, 800, 420)
     const opacity = clampSize(options.opacity, 100, 30)
     let child
     try {
-      child = spawn(EXECUTABLE, windowArguments({ bootUrl, appUrl, title, width, height, opacity, dataDir: DATA_DIRECTORY }), {
+      child = spawn(EXECUTABLE, windowArguments({ bootUrl, session: sessionId, title, width, height, opacity, dataDir: DATA_DIRECTORY }), {
         stdio: 'ignore',
         windowsHide: false,
       })

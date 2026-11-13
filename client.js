@@ -468,8 +468,10 @@ window.__ModuleLoader__.load({
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({
             sessionId,
-            width: size[0] + 2,
-            height: size[1] + 32,
+            // The native window shows the whole client, sidebar included, so
+            // it needs the room the in-app panel never took.
+            width: size[0] + 300,
+            height: size[1] + 100,
             opacity: appearance?.opacity ?? 100,
           }),
         });
@@ -568,6 +570,20 @@ window.__ModuleLoader__.load({
         return globalThis.__OVE_EMBED__ === true;
       } catch {
         return false;
+      }
+    })();
+
+    /**
+     * The conversation the native window was opened for. The companion host
+     * plants a one-shot cookie before the client boots; reading it here is what
+     * makes the window land on the right conversation instead of the last one.
+     */
+    const NATIVE_SESSION = (() => {
+      try {
+        const match = /(?:^|;\s*)ove-window-session=([^;]*)/u.exec(document.cookie);
+        return match === null ? '' : decodeURIComponent(match[1]);
+      } catch {
+        return '';
       }
     })();
 
@@ -2420,6 +2436,36 @@ window.__ModuleLoader__.load({
       const detached = useDetached();
       const panels = usePanels();
 
+      // The native window is a full client opened for one conversation: select
+      // it, drop the one-shot cookie, and tell the Host the window is ready.
+      React.useEffect(() => {
+        if (NATIVE_SESSION.length === 0) return undefined;
+        try { document.cookie = 'ove-window-session=; Max-Age=0; path=/'; } catch { /* cosmetic */ }
+        let ready = false;
+        let settled = 0;
+        const timer = window.setInterval(() => {
+          const current = ctx?.uiWorkspace?.mainReference?.sessionId ?? '';
+          if (current === NATIVE_SESSION) {
+            settled += 1;
+            if (settled >= 2 && !ready) {
+              ready = true;
+              window.clearInterval(timer);
+              void fetch(`${ROUTE_ROOT}/window/native/ready`, {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ sessionId: NATIVE_SESSION }),
+              }).catch(() => { /* the Host may be restarting */ });
+            }
+            return;
+          }
+          settled = 0;
+          try {
+            ctx?.uiWorkspace?.openSession?.(NATIVE_SESSION);
+          } catch { /* the catalogue may still be loading */ }
+        }, 400);
+        return () => { window.clearInterval(timer); };
+      }, [ctx]);
+
       // The Host owns the independent OS windows, so its report is the only
       // place their liveness can come from: mirror it while this page lives.
       React.useEffect(() => {
@@ -2525,7 +2571,8 @@ window.__ModuleLoader__.load({
           const row = target === null ? null : target.closest('[data-row-key^="session:"]');
           if (row === null) return;
           const id = String(row.getAttribute('data-row-key') ?? '').slice('session:'.length);
-          if (!detachedSet.has(id)) return;
+          // This window *is* that conversation: its own row must stay usable.
+          if (!detachedSet.has(id) || id === NATIVE_SESSION) return;
           event.preventDefault();
           event.stopPropagation();
           flashDetachedNote(tr('detachedBlocked'));
