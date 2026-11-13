@@ -33,6 +33,7 @@ import {
 import { createLangHandler } from './host/lang.mjs'
 import { createStyleHandler } from './host/css.mjs'
 import { createEmbedHandler } from './host/embed.mjs'
+import { createNativeWindows } from './host/native-window.mjs'
 import path from 'node:path'
 
 const ROUTE_ROOT = '/plugins/original-version-enhancements'
@@ -136,6 +137,30 @@ export function apply(ctx) {
     }),
     'original-version-enhancements: embedded client route',
   )
+
+  // A real, independent OS window: the companion executable hosts the embedded
+  // page in WebView2 and this Host owns its lifetime, so the main window learns
+  // which conversations are detached even across processes.
+  const connection = optional(ctx, 'connection')
+  const nativeWindows = createNativeWindows({
+    origin: () => ctx.webServer.getOrigin(),
+    authenticatedUrl: typeof connection?.authenticatedUrl === 'function'
+      ? connection.authenticatedUrl.bind(connection)
+      : undefined,
+    isTrustedRequest,
+    warn: message => ctx.logger?.warn(message),
+  })
+  for (const [name, handler] of Object.entries(nativeWindows.handlers)) {
+    ctx.effect(
+      () => ctx.webServer.register({
+        kind: 'exact',
+        path: `${ROUTE_ROOT}/window/native/${name}`,
+        handler,
+      }),
+      `original-version-enhancements: native window ${name} route`,
+    )
+  }
+  ctx.effect(() => () => nativeWindows.closeAll(), 'original-version-enhancements: native window lifetime')
 
   // Automation task enhancements. The shipped Automation tasks page owns
   // creation, editing, filters and records; these routes add bulk deletion,

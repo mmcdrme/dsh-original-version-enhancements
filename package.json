@@ -1,8 +1,8 @@
 {
   "name": "@local/dsh-original-version-enhancements",
-  "version": "1.20.0",
+  "version": "1.21.0",
   "private": true,
-  "description": "原版功能增强：四档工作详情切换、已归档会话管理（搜索/恢复/确认删除）、自动化任务增强、发送历史回溯，以及可拖动/缩放/最小化并支持透明度设置的独立会话窗口。",
+  "description": "原版功能增强：四档工作详情切换、已归档会话管理（搜索/恢复/确认删除）、自动化任务增强、发送历史回溯，以及由自带 exe（WebView2）承载、可最小化与调透明度的独立会话窗口。",
   "type": "module",
   "scripts": {
     "test": "node --test test/*.test.mjs"
@@ -18,6 +18,11 @@
     "client.js",
     "cordis.patch.yml",
     "host/*.mjs",
+    "native/OveWindow.exe",
+    "native/Microsoft.Web.WebView2.Core.dll",
+    "native/Microsoft.Web.WebView2.WinForms.dll",
+    "native/WebView2Loader.dll",
+    "native/OveWindow.cs",
     "css/*.css",
     "locale/*.json",
     "icon.svg",

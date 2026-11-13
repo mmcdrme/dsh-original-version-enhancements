@@ -387,6 +387,13 @@ window.__ModuleLoader__.load({
       }
     };
 
+    /**
+     * Conversations whose independent OS window the Host reports open. The
+     * window is a separate process, so its liveness cannot live in this page's
+     * storage: the Host owns it and this map mirrors its `/window/native/state`.
+     */
+    let hostWindows = new Map();
+
     let detachedSet = new Set();
     const detachedListeners = new Set();
 
@@ -417,6 +424,7 @@ window.__ModuleLoader__.load({
           next.add(id);
         }
       } catch { /* a blocked storage leaves the set empty */ }
+      for (const id of hostWindows.keys()) next.add(id);
       return publishDetached(next);
     };
 
@@ -426,6 +434,83 @@ window.__ModuleLoader__.load({
     };
     const getDetached = () => detachedSet;
     const useDetached = () => React.useSyncExternalStore(subscribeDetached, getDetached, getDetached);
+
+    /** Ask the Host which native windows are open; returns its answer, or undefined. */
+    const pullHostWindows = async () => {
+      try {
+        const response = await fetch(`${ROUTE_ROOT}/window/native/state`, { cache: 'no-store' });
+        if (!response.ok) return undefined;
+        const data = await response.json();
+        const next = new Map();
+        for (const entry of Array.isArray(data?.windows) ? data.windows : []) {
+          if (entry !== null && typeof entry === 'object' && entry.ready === true) {
+            next.set(String(entry.sessionId), entry);
+          }
+        }
+        hostWindows = next;
+        refreshDetached();
+        return data;
+      } catch {
+        return undefined;
+      }
+    };
+
+    /** Open one conversation in the companion window; false means unsupported. */
+    const openNativeWindow = async (sessionId, appearance) => {
+      const size = WINDOW_SIZES[appearance?.size] ?? WINDOW_SIZES.standard;
+      try {
+        const response = await fetch(`${ROUTE_ROOT}/window/native/open`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            sessionId,
+            width: size[0] + 2,
+            height: size[1] + 32,
+            opacity: appearance?.opacity ?? 100,
+          }),
+        });
+        const data = await response.json().catch(() => ({}));
+        return response.ok && data?.ok === true;
+      } catch {
+        return false;
+      }
+    };
+
+    /** Close the native window for one conversation, or every one of them. */
+    const closeNativeWindow = async (sessionId) => {
+      try {
+        await fetch(`${ROUTE_ROOT}/window/native/close`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(sessionId === undefined ? { all: true } : { sessionId }),
+        });
+      } catch { /* the Host may already be gone */ }
+      await pullHostWindows();
+    };
+
+    /**
+     * Wait until the Host reports the window of this conversation ready, i.e.
+     * its page really selected and rendered the conversation.
+     * @param sessionId - conversation the window should show.
+     * @param timeoutMs - how long to wait before giving up.
+     * @returns true once the window is ready.
+     */
+    const waitForNativeWindow = async (sessionId, timeoutMs) => {
+      const started = Date.now();
+      while (Date.now() - started <= timeoutMs) {
+        const state = await pullHostWindows();
+        if (state !== undefined) {
+          const entry = (state.windows ?? []).find(item => String(item?.sessionId) === sessionId);
+          if (entry?.ready === true) return true;
+          // The Host no longer knows this window: its process exited.
+          if (!Array.isArray(state.windows) || state.windows.length === 0) {
+            if (Date.now() - started > 1500) return false;
+          }
+        }
+        await new Promise((resolve) => { window.setTimeout(resolve, 400); });
+      }
+      return false;
+    };
 
     /* ------------------------------------------------------------------ */
     /* Detached-window appearance                                          */
@@ -504,6 +589,8 @@ window.__ModuleLoader__.load({
       if (handle !== null && handle !== undefined) {
         try { handle.close(); } catch { /* the browser may refuse */ }
       }
+      if (hostWindows.delete(sessionId)) refreshDetached();
+      void closeNativeWindow(sessionId);
       refreshDetached();
     };
 
@@ -568,8 +655,10 @@ window.__ModuleLoader__.load({
         try { handle?.close(); } catch { /* already gone */ }
       }
       detachedHandles.clear();
+      hostWindows = new Map();
       publishPanels(new Set());
       refreshDetached();
+      void closeNativeWindow();
     };
 
     /**
@@ -600,6 +689,23 @@ window.__ModuleLoader__.load({
         refreshDetached();
         await new Promise((resolve) => { window.setTimeout(resolve, 250); });
       }
+      // 1) A real OS window, owned by the Host: it has its own taskbar entry,
+      // its own minimise/restore, and keeps running while this window is
+      // minimised. It is the normal outcome on Windows.
+      const appearance = getWindow();
+      if (await openNativeWindow(sessionId, appearance)) {
+        if (await waitForNativeWindow(sessionId, 12000)) {
+          if (!already) {
+            const current = ctx?.uiWorkspace?.mainReference?.sessionId ?? '';
+            if (current === sessionId) leaveRemovedSession(ctx, sessionId);
+          }
+          return true;
+        }
+        // The companion window did not come up (no WebView2 runtime, no
+        // `connection` service): drop it and use the in-app window instead.
+        await closeNativeWindow(sessionId);
+      }
+      // 2) The in-app window, which cannot leave the main window.
       openDetachedPanel(sessionId);
       writeDetached(sessionId, Date.now(), true);
       if (!already) {
@@ -2257,6 +2363,15 @@ window.__ModuleLoader__.load({
           try {
             window.parent?.postMessage({ source: 'ove-detached', type, sessionId: detachedId }, '*');
           } catch { /* the opener may be gone */ }
+          // A top-level document is the companion window, not the in-app frame:
+          // tell the Host its window really rendered this conversation.
+          if (type === 'ready' && window.top === window) {
+            void fetch(`${ROUTE_ROOT}/window/native/ready`, {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ sessionId: detachedId }),
+            }).catch(() => { /* the Host may be restarting */ });
+          }
         };
         announce('boot');
         const timer = window.setInterval(() => {
@@ -2300,6 +2415,19 @@ window.__ModuleLoader__.load({
       });
       const detached = useDetached();
       const panels = usePanels();
+
+      // The Host owns the independent OS windows, so its report is the only
+      // place their liveness can come from: mirror it while this page lives.
+      React.useEffect(() => {
+        let alive = true;
+        const tick = () => { if (alive) void pullHostWindows(); };
+        tick();
+        const timer = window.setInterval(tick, 1500);
+        return () => {
+          alive = false;
+          window.clearInterval(timer);
+        };
+      }, []);
 
       // A mark that disappears elsewhere (the menu's "bring back", the switch,
       // a window that went away) takes its in-app window with it.
