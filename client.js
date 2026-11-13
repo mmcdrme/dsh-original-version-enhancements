@@ -557,6 +557,38 @@ window.__ModuleLoader__.load({
     });
 
     /**
+     * A real, separate window that no popup blocker can refuse.
+     *
+     * The Document Picture-in-Picture window is its own OS window: minimizing
+     * (or covering) the main window does not hide it. It hosts the same client
+     * in an iframe, so the conversation renders exactly as in the main view.
+     * @param url - the detached client URL.
+     * @param title - the window title.
+     * @returns the window, or null when the platform has no such API.
+     */
+    const openDetachedPip = async (url, title) => {
+      const api = globalThis.documentPictureInPicture;
+      if (api === null || api === undefined || typeof api.requestWindow !== 'function') return null;
+      try {
+        const win = await api.requestWindow({ width: 1000, height: 780 });
+        if (typeof title === 'string' && title.length > 0) {
+          try { win.document.title = title; } catch { /* the title is cosmetic */ }
+        }
+        const style = win.document.createElement('style');
+        style.textContent = 'html,body{margin:0;padding:0;height:100%;overflow:hidden}iframe{border:0;width:100%;height:100%;display:block}';
+        win.document.head.appendChild(style);
+        const frame = win.document.createElement('iframe');
+        frame.src = url;
+        frame.title = typeof title === 'string' ? title : '';
+        frame.setAttribute('allow', 'clipboard-read; clipboard-write');
+        win.document.body.appendChild(frame);
+        return win;
+      } catch {
+        return null;
+      }
+    };
+
+    /**
      * Take one conversation out of the main view.
      *
      * A real browser window is tried first (it survives the page). When the
@@ -569,7 +601,7 @@ window.__ModuleLoader__.load({
      * @param labels - localized strings for the failures a person can act on.
      * @returns a promise resolving to true when a window is up.
      */
-    const detachSession = async (ctx, sessionId) => {
+    const detachSession = async (ctx, sessionId, labels) => {
       if (typeof sessionId !== 'string' || sessionId.length === 0) return false;
       if (readDetachedBeat(sessionId) > 0) return true;
       // Keep the page's own query and hash: they may carry what the client
@@ -581,27 +613,51 @@ window.__ModuleLoader__.load({
         url = parsed.toString();
       } catch { /* the plain form above still works */ }
       let handle = null;
-      try {
-        handle = globalThis.open(url, `ove-detached-${sessionId}`, 'popup=yes,width=1120,height=860');
-      } catch {
-        handle = null;
-      }
       let opened = false;
-      if (handle !== null && handle !== undefined) {
+      // 1) A separate OS window that popup blockers cannot touch. Preferred
+      // where available: it keeps running while the main window is minimized.
+      // It must be requested before any other window attempt, because opening
+      // a popup spends the click's user activation.
+      const pip = await openDetachedPip(url, labels?.title ?? '');
+      if (pip !== null) {
+        detachedHandles.set(sessionId, pip);
+        try {
+          pip.addEventListener('pagehide', () => {
+            detachedHandles.delete(sessionId);
+            // The window is gone: hand the conversation back instead of
+            // waiting for the heartbeat to age out.
+            if (readDetachedBeat(sessionId) > 0) releaseDetached(sessionId);
+          });
+        } catch { /* no listener support is fine */ }
+        opened = await waitForDetachedBeat(sessionId, 15000);
+        if (!opened) {
+          const dead = detachedHandles.get(sessionId);
+          detachedHandles.delete(sessionId);
+          try { dead?.close(); } catch { /* already gone */ }
+        }
+      }
+      // 2) An ordinary browser window, when this platform cannot do better and
+      // allows popups at all.
+      if (!opened) {
+        try {
+          handle = globalThis.open(url, `ove-detached-${sessionId}`, 'popup=yes,width=1120,height=860');
+        } catch {
+          handle = null;
+        }
+      }
+      if (!opened && handle !== null && handle !== undefined) {
         try { handle.focus(); } catch { /* focus is best-effort */ }
         detachedHandles.set(sessionId, handle);
-        opened = await waitForDetachedBeat(sessionId, 12000);
+        opened = await waitForDetachedBeat(sessionId, 8000);
         if (!opened) {
-          // The proxy existed but no window ever loaded: close it and fall
-          // through to the in-app window.
           const dead = detachedHandles.get(sessionId);
           detachedHandles.delete(sessionId);
           try { dead?.close(); } catch { /* not ours to close */ }
         }
       }
+      // 3) A window inside this page. It is part of the main window, so it is
+      // the last resort, not the norm.
       if (!opened) {
-        // A window that never showed the conversation is no window: the
-        // in-app frame is the next attempt, and it marks itself ready.
         openDetachedPanel(sessionId);
         writeDetached(sessionId, Date.now(), true);
       }
@@ -1958,7 +2014,7 @@ window.__ModuleLoader__.load({
           releaseDetached(sessionId);
           return;
         }
-        void detachSession(ctx, sessionId);
+        void detachSession(ctx, sessionId, { title: tr('detachedWindowTitle') });
       };
 
       if (uiPrimitives?.MenuItemButton) {
@@ -2221,7 +2277,7 @@ window.__ModuleLoader__.load({
           // A drop on a real target keeps its own meaning (reorder, file, …).
           if (event.dataTransfer !== null && event.dataTransfer.dropEffect !== 'none') return;
           if (detachedSet.has(state.id)) return;
-          void detachSession(ctx, state.id);
+          void detachSession(ctx, state.id, { title: tr('detachedWindowTitle') });
         };
         document.addEventListener('dragstart', onDragStart, true);
         document.addEventListener('dragleave', onDragLeave, true);
