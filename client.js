@@ -33,7 +33,7 @@ window.__ModuleLoader__.load({
     /* ------------------------------------------------------------------ */
 
     const FLAGS_KEY = 'original-version-enhancements.flags.v1';
-    const DEFAULT_FLAGS = { stepSwitcher: true, chatManager: true, automation: true, recall: true };
+    const DEFAULT_FLAGS = { stepSwitcher: true, chatManager: true, automation: true, recall: true, detached: true };
     const flagListeners = new Set();
 
     const readFlags = () => {
@@ -45,6 +45,7 @@ window.__ModuleLoader__.load({
           chatManager: flags.chatManager !== false,
           automation: flags.automation !== false,
           recall: flags.recall !== false,
+          detached: flags.detached !== false,
         };
       } catch {
         return { ...DEFAULT_FLAGS };
@@ -468,8 +469,69 @@ window.__ModuleLoader__.load({
      * @param labels - localized strings for the blocked/failed cases.
      * @returns true when a window was opened.
      */
-    const detachSession = (ctx, sessionId, labels) => {
+    /** Drop every mark and close the windows this page opened. */
+    const releaseAllDetached = () => {
+      try {
+        const storage = globalThis.localStorage;
+        const ids = [];
+        if (storage !== null && storage !== undefined) {
+          for (let index = 0; index < storage.length; index += 1) {
+            const id = detachedSessionOf(storage.key(index));
+            if (id.length > 0) ids.push(id);
+          }
+          for (const id of ids) storage.removeItem(detachedKeyOf(id));
+        }
+      } catch { /* a blocked storage is already empty */ }
+      for (const handle of detachedHandles.values()) {
+        try { handle?.close(); } catch { /* already gone */ }
+      }
+      detachedHandles.clear();
+      refreshDetached();
+    };
+
+    /**
+     * Wait for the new window to announce itself.
+     *
+     * A blocked popup may still hand back a `WindowProxy`, so the return value
+     * is not proof: only the detached window's own heartbeat is. Until it
+     * arrives the conversation stays reachable here, which is what makes a
+     * blocked window harmless.
+     * @param sessionId - the conversation the window should show.
+     * @param timeoutMs - how long to wait for the first heartbeat.
+     * @returns a promise resolving to true once the window is really there.
+     */
+    const waitForDetachedBeat = (sessionId, timeoutMs) => new Promise((resolve) => {
+      const started = Date.now();
+      const tick = () => {
+        if (readDetachedBeat(sessionId) > 0) {
+          resolve(true);
+          return;
+        }
+        if (Date.now() - started > timeoutMs) {
+          resolve(false);
+          return;
+        }
+        window.setTimeout(tick, 150);
+      };
+      tick();
+    });
+
+    /**
+     * Open one conversation in its own window and mark it.
+     *
+     * `window.open` runs inside the click's gesture. When it is refused, an
+     * anchor with `target="_blank"` gets one more chance — some environments
+     * block scripted popups but still follow a link. The conversation is only
+     * marked detached once that window's heartbeat arrives; a blocked window
+     * therefore never locks it out of the main interface.
+     * @param ctx - the Client plugin context.
+     * @param sessionId - the conversation to detach.
+     * @param labels - localized strings for the blocked case.
+     * @returns a promise resolving to true when the window is up.
+     */
+    const detachSession = async (ctx, sessionId, labels) => {
       if (typeof sessionId !== 'string' || sessionId.length === 0) return false;
+      if (readDetachedBeat(sessionId) > 0) return true;
       const url = `${location.origin}${location.pathname}?ove-detached=${encodeURIComponent(sessionId)}`;
       let handle = null;
       try {
@@ -477,14 +539,30 @@ window.__ModuleLoader__.load({
       } catch {
         handle = null;
       }
-      if (handle === null || handle === undefined) {
-        // A blocked popup must not lock the conversation out of the main window.
+      if (handle !== null && handle !== undefined) {
+        try { handle.focus(); } catch { /* focus is best-effort */ }
+        detachedHandles.set(sessionId, handle);
+      } else {
+        // Still inside the gesture: a link click is the second attempt.
+        try {
+          const link = document.createElement('a');
+          link.href = url;
+          link.target = '_blank';
+          link.rel = 'noopener';
+          link.style.display = 'none';
+          document.body.appendChild(link);
+          link.click();
+          link.remove();
+        } catch { /* both attempts failed; reported below */ }
+      }
+      const opened = await waitForDetachedBeat(sessionId, 8000);
+      if (!opened) {
+        const dead = detachedHandles.get(sessionId);
+        detachedHandles.delete(sessionId);
+        try { dead?.close(); } catch { /* nothing to close */ }
         flashDetachedNote(labels?.blocked ?? '');
         return false;
       }
-      try { handle.focus(); } catch { /* focus is best-effort */ }
-      detachedHandles.set(sessionId, handle);
-      writeDetached(sessionId, Date.now());
       // The main view cannot keep showing a conversation it no longer opens:
       // leave it the way a deleted conversation is left.
       const current = ctx?.uiWorkspace?.mainReference?.sessionId ?? '';
@@ -1448,6 +1526,19 @@ window.__ModuleLoader__.load({
                   'aria-checked': flags.recall,
                   'aria-label': tr('switch.recall'),
                   onClick: () => toggle('recall'),
+                }, h('span', { className: 'ove-switch-thumb' }))),
+
+              h('div', { className: 'ove-row' },
+                h('div', { className: 'ove-row-text' },
+                  h('div', { className: 'ove-row-title' }, tr('switch.detached')),
+                  h('div', { className: 'ove-row-desc' }, tr('switch.detached.desc'))),
+                h('button', {
+                  type: 'button',
+                  className: 'ove-switch',
+                  role: 'switch',
+                  'aria-checked': flags.detached,
+                  'aria-label': tr('switch.detached'),
+                  onClick: () => toggle('detached'),
                 }, h('span', { className: 'ove-switch-thumb' }))))),
 
           !flags.recall
@@ -1827,7 +1918,7 @@ window.__ModuleLoader__.load({
           releaseDetached(sessionId);
           return;
         }
-        detachSession(ctx, sessionId, { blocked: tr('detachedBlockedPopup') });
+        void detachSession(ctx, sessionId, { blocked: tr('detachedBlockedPopup') });
       };
 
       if (uiPrimitives?.MenuItemButton) {
@@ -1956,6 +2047,52 @@ window.__ModuleLoader__.load({
           document.removeEventListener('dblclick', blocked, true);
         };
       }, [tr]);
+
+      // Dragging a conversation out of the window is the second way to make it
+      // independent: the drop happens outside the page, so `dragend` with no
+      // drop effect and a pointer that left the document is the signal.
+      React.useEffect(() => {
+        let dragging = null;
+        const rowIdOf = (target) => {
+          const element = target instanceof Element ? target.closest('[data-row-key^="session:"]') : null;
+          return element === null ? '' : String(element.getAttribute('data-row-key')).slice('session:'.length);
+        };
+        const onDragStart = (event) => {
+          const id = rowIdOf(event.target);
+          dragging = id.length > 0 ? { id, outside: false } : null;
+        };
+        const onDragLeave = (event) => {
+          if (dragging === null) return;
+          // A null relatedTarget means the pointer left the document itself.
+          if (event.relatedTarget === null) dragging.outside = true;
+        };
+        const onDragOver = (event) => {
+          if (dragging === null) return;
+          if (event.clientX <= 0 || event.clientY <= 0
+            || event.clientX >= window.innerWidth || event.clientY >= window.innerHeight) {
+            dragging.outside = true;
+          }
+        };
+        const onDragEnd = (event) => {
+          const state = dragging;
+          dragging = null;
+          if (state === null || state.outside !== true) return;
+          // A drop on a real target keeps its own meaning (reorder, file, …).
+          if (event.dataTransfer !== null && event.dataTransfer.dropEffect !== 'none') return;
+          if (detachedSet.has(state.id)) return;
+          void detachSession(ctx, state.id, { blocked: tr('detachedBlockedPopup') });
+        };
+        document.addEventListener('dragstart', onDragStart, true);
+        document.addEventListener('dragleave', onDragLeave, true);
+        document.addEventListener('dragover', onDragOver, true);
+        document.addEventListener('dragend', onDragEnd, true);
+        return () => {
+          document.removeEventListener('dragstart', onDragStart, true);
+          document.removeEventListener('dragleave', onDragLeave, true);
+          document.removeEventListener('dragover', onDragOver, true);
+          document.removeEventListener('dragend', onDragEnd, true);
+        };
+      }, [ctx, tr]);
 
       // This surface renders no markup, but the row frame and the toast live in
       // the shared stylesheet: without a slot that paints it, a page with no
@@ -5504,21 +5641,6 @@ window.__ModuleLoader__.load({
                   order: 500,
                   inject: () => ({ t: translator, ctx }),
                 }, SessionDeleteMenuItem)),
-                // Its own window is a session-management action too, so it
-                // appears and disappears with the chat-manager switch.
-                ctx.slots.inject('sidebar.workspaces.session.menu.item', () => ctx.slots.register({
-                  name: 'sidebar.workspaces.session.menu.item',
-                  id: 'original-version-enhancements.detached',
-                  order: 495,
-                  inject: () => ({ t: translator, ctx }),
-                }, DetachedSessionMenuItem)),
-                // The bridge lives on the shell: it must exist in the detached
-                // window as well, where no other plugin surface is guaranteed.
-                ctx.slots.inject('shell.overlay', () => ctx.slots.register({
-                  name: 'shell.overlay',
-                  id: 'original-version-enhancements.detached-bridge',
-                  inject: () => ({ t: translator, ctx }),
-                }, DetachedSessionsBridge)),
                 ctx.slots.inject('shell.overlay', () => ctx.slots.register({
                   name: 'shell.overlay',
                   id: 'original-version-enhancements.transfer-dialog',
@@ -5601,6 +5723,47 @@ window.__ModuleLoader__.load({
             disposers = [];
           };
         }, 'original-version-enhancements: automation panel');
+
+        // Independent windows have their own switch: the menu row and the
+        // cross-window bridge exist only while it is on. Turning it off brings
+        // every detached conversation back and closes the windows this page
+        // opened.
+        ctx.effect(() => {
+          let disposers = [];
+          const sync = () => {
+            const enabled = getFlags().detached;
+            if (enabled && disposers.length === 0) {
+              disposers = [
+                ctx.slots.inject('sidebar.workspaces.session.menu.item', () => ctx.slots.register({
+                  name: 'sidebar.workspaces.session.menu.item',
+                  id: 'original-version-enhancements.detached',
+                  // Above "move to workspace": taking a conversation out of the
+                  // page is the lighter action of the two.
+                  order: 470,
+                  inject: () => ({ t: translator, ctx }),
+                }, DetachedSessionMenuItem)),
+                // The bridge lives on the shell: it must exist in the detached
+                // window as well, where no other plugin surface is guaranteed.
+                ctx.slots.inject('shell.overlay', () => ctx.slots.register({
+                  name: 'shell.overlay',
+                  id: 'original-version-enhancements.detached-bridge',
+                  inject: () => ({ t: translator, ctx }),
+                }, DetachedSessionsBridge)),
+              ];
+            } else if (!enabled && disposers.length > 0) {
+              for (const dispose of disposers) dispose();
+              disposers = [];
+              releaseAllDetached();
+            }
+          };
+          const unsubscribe = subscribeFlags(sync);
+          sync();
+          return () => {
+            unsubscribe();
+            for (const dispose of disposers) dispose();
+            disposers = [];
+          };
+        }, 'original-version-enhancements: detached windows');
 
         // The composer history bridge renders nothing; it only needs the
         // Session's standard input props, so it lives in the composer's dock
