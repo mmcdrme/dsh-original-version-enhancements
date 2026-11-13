@@ -98,3 +98,30 @@ test('an ended task carries no run state, so a delivery does not block adoption'
   assert.equal(sameDraftContent(baseDraft, { ...baseDraft, active: undefined }), true)
   assert.equal(sameDraftContent({ ...baseDraft, active: undefined }, baseDraft), true)
 })
+
+const { toggleWeekday } = new Function(`${slice('    const toggleWeekday = ', '    /**\n     * Turn an editor draft into a Host timing request.')}
+return { toggleWeekday }`)()
+
+test('a selected weekday can be removed while another one keeps the rule alive', () => {
+  assert.deepEqual(toggleWeekday([1, 3], 1), [3])
+  assert.deepEqual(toggleWeekday([1, 2, 5], 5), [1, 2])
+})
+
+test('the last selected weekday refuses to be removed', () => {
+  const only = [3]
+  assert.equal(toggleWeekday(only, 3), only, 'the same selection must come back')
+  assert.deepEqual(toggleWeekday(only, 3), [3])
+})
+
+test('adding a weekday keeps the selection sorted', () => {
+  assert.deepEqual(toggleWeekday([5], 1), [1, 5])
+  assert.deepEqual(toggleWeekday([], 2), [2])
+  assert.deepEqual(toggleWeekday([0, 6], 3), [0, 3, 6])
+})
+
+test('an out-of-range day changes nothing', () => {
+  assert.deepEqual(toggleWeekday([1], -1), [1])
+  assert.deepEqual(toggleWeekday([1], 7), [1])
+  assert.deepEqual(toggleWeekday([1], 1.5), [1])
+  assert.deepEqual(toggleWeekday(undefined, 1), [1])
+})

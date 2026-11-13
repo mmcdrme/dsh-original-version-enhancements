@@ -2871,6 +2871,29 @@ window.__ModuleLoader__.load({
     };
 
     /**
+     * Toggle one day in the weekly picker.
+     *
+     * The last selected day cannot be removed. A rule that repeats on no day is
+     * not something the editor can mean, and the old fallback quietly saved
+     * Monday — which is exactly how a removed day came back. Monday therefore
+     * survives only as the defensive default inside `timingOfDraft`.
+     * @param weekdays - the currently selected day numbers.
+     * @param day - the day to toggle (0 = Sunday).
+     * @returns the next selection; the same array when the click is refused.
+     */
+    const toggleWeekday = (weekdays, day) => {
+      const current = Array.isArray(weekdays)
+        ? weekdays.filter(value => Number.isInteger(value) && value >= 0 && value <= 6)
+        : [];
+      if (!Number.isInteger(day) || day < 0 || day > 6) return current;
+      if (current.includes(day)) {
+        if (current.length <= 1) return weekdays;
+        return current.filter(value => value !== day);
+      }
+      return [...current, day].sort((a, b) => a - b);
+    };
+
+    /**
      * Turn an editor draft into a Host timing request.
      * @param draft - editor draft.
      * @returns the timing request, or undefined when the draft is invalid.
@@ -4506,25 +4529,26 @@ window.__ModuleLoader__.load({
               h('div', { className: 'ove-field' },
                 h('span', { className: 'ove-label' }, tr('auto.weekday')),
                 h('div', { className: 'ove-weekdays', role: 'group', 'aria-label': tr('auto.weekday') },
-                  WEEKDAY_KEYS.map((key, index) => h('button', {
-                    key,
-                    type: 'button',
-                    className: 'ove-weekday',
-                    'aria-pressed': draft.weekdays.includes(index),
-                    'data-on': draft.weekdays.includes(index),
-                    onClick: () => updateDraft({
-                      // A weekly rule can name several days; toggling one must not
-                      // drop the others.
-                      weekdays: draft.weekdays.includes(index)
-                        ? draft.weekdays.filter(day => day !== index)
-                        : [...draft.weekdays, index].sort((a, b) => a - b),
-                    }),
-                  }, tr(`auto.weekday.${key}`)))),
-                draft.weekdays.length === 0
-                  // The save falls back to Monday; saying so keeps the result
-                  // from looking like the removed day came back.
-                  ? h('p', { className: 'ove-hint' }, tr('auto.weekdayEmpty'))
-                  : null),
+                  WEEKDAY_KEYS.map((key, index) => {
+                    const selected = draft.weekdays.includes(index);
+                    // The last remaining day stays selected: a weekly rule has
+                    // to name at least one day.
+                    const locked = selected && draft.weekdays.length <= 1;
+                    return h('button', {
+                      key,
+                      type: 'button',
+                      className: 'ove-weekday',
+                      'aria-pressed': selected,
+                      'data-on': selected,
+                      'data-locked': locked ? 'true' : undefined,
+                      title: locked ? tr('auto.weekdayKeepOne') : undefined,
+                      onClick: () => {
+                        const next = toggleWeekday(draft.weekdays, index);
+                        if (next === draft.weekdays) return;
+                        updateDraft({ weekdays: next });
+                      },
+                    }, tr(`auto.weekday.${key}`));
+                  }))),
               h('label', { className: 'ove-field' },
                 h('span', { className: 'ove-label' }, tr('auto.time')),
                 h('input', {
