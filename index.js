@@ -32,6 +32,7 @@ import {
 } from './host/automation.mjs'
 import { createLangHandler } from './host/lang.mjs'
 import { createStyleHandler } from './host/css.mjs'
+import { createEmbedHandler } from './host/embed.mjs'
 import path from 'node:path'
 
 const ROUTE_ROOT = '/plugins/original-version-enhancements'
@@ -116,6 +117,24 @@ export function apply(ctx) {
       handler: styleHandler,
     }),
     'original-version-enhancements: stylesheet route',
+  )
+
+  // The detached-window panel hosts the client in an iframe. The Desktop shell
+  // serves `dsh-app://app/` as a bare static document, so that iframe has no
+  // boot data and would sit on the loading screen forever; this route answers
+  // the injected document the browser seat already gets.
+  const embedHandler = createEmbedHandler({
+    origin: () => ctx.webServer.getOrigin(),
+    warn: message => ctx.logger?.warn(message),
+  })
+
+  ctx.effect(
+    () => ctx.webServer.register({
+      kind: 'exact',
+      path: `${ROUTE_ROOT}/window`,
+      handler: embedHandler,
+    }),
+    'original-version-enhancements: embedded client route',
   )
 
   // Automation task enhancements. The shipped Automation tasks page owns

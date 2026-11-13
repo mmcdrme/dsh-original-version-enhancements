@@ -722,26 +722,59 @@
   box-sizing: border-box; overflow: hidden; resize: both; min-width: 420px; min-height: 320px;
   border-radius: 12px; border: 1.5px solid #7dd3fc; background: var(--dsw-alias-bg-base);
   box-shadow: 0 18px 50px rgba(15, 23, 42, .35);
+  /* The drag writes one transform per frame; keep it on its own layer. */
+  will-change: transform; contain: layout paint;
 }
+.ove-detached-panel.is-dragging { user-select: none; cursor: move; }
+.ove-detached-panel.is-dragging .ove-detached-frame { pointer-events: none; }
 .ove-detached-head {
-  flex: 0 0 auto; display: flex; align-items: center; gap: 8px;
-  padding: 6px 8px 6px 12px; cursor: move; user-select: none;
+  flex: 0 0 auto; display: flex; align-items: center; gap: 6px;
+  padding: 6px 8px 6px 12px; cursor: move; user-select: none; touch-action: none;
   background: color-mix(in srgb, #7dd3fc 18%, var(--dsw-alias-bg-base));
   color: var(--dsw-alias-label-primary);
 }
 .ove-detached-title { flex: 1 1 auto; min-width: 0; font-size: 12px; line-height: 18px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ove-detached-open {
-  flex: none; margin-right: 4px; padding: 2px 6px; border-radius: 6px;
-  font-size: 11px; line-height: 16px; color: #1d4ed8; text-decoration: none;
-  background: transparent;
-}
-.ove-detached-open:hover { background: color-mix(in srgb, #3b82f6 16%, transparent); }
+.ove-detached-min,
 .ove-detached-close {
   flex: none; width: 22px; height: 22px; border: 0; border-radius: 6px; cursor: pointer;
   background: transparent; color: var(--dsw-alias-label-secondary); font-size: 15px; line-height: 1;
+  display: inline-flex; align-items: center; justify-content: center;
 }
+.ove-detached-min:hover,
 .ove-detached-close:hover { background: color-mix(in srgb, var(--dsw-alias-label-primary) 12%, transparent); color: var(--dsw-alias-label-primary); }
+.ove-detached-body { position: relative; flex: 1 1 auto; min-height: 0; display: flex; }
 .ove-detached-frame { flex: 1 1 auto; width: 100%; min-height: 0; border: 0; background: var(--dsw-alias-bg-base); }
+.ove-detached-loading {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 9px;
+  font-size: 12px; color: var(--dsw-alias-label-secondary); background: var(--dsw-alias-bg-base);
+}
+.ove-detached-spinner {
+  width: 14px; height: 14px; border-radius: 50%;
+  border: 2px solid color-mix(in srgb, #3b82f6 30%, transparent); border-top-color: #3b82f6;
+  animation: ove-spin .8s linear infinite;
+}
+@keyframes ove-spin { to { transform: rotate(360deg); } }
+.ove-detached-pill {
+  position: fixed; right: 20px; bottom: 20px; z-index: 2147483002;
+  display: inline-flex; align-items: center; gap: 8px; max-width: min(320px, calc(100vw - 40px));
+  box-sizing: border-box; padding: 8px 14px; border-radius: 999px; cursor: pointer;
+  border: 1.5px solid #7dd3fc; background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary);
+  box-shadow: 0 10px 26px rgba(15, 23, 42, .28); font-size: 12px; line-height: 18px;
+}
+.ove-detached-pill:hover { background: color-mix(in srgb, #7dd3fc 12%, var(--dsw-alias-bg-base)); }
+.ove-detached-pill-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: #0ea5e9; }
+.ove-detached-pill-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.ove-window-opacity { display: flex; align-items: center; gap: 10px; }
+.ove-range { width: 156px; accent-color: #3b82f6; }
+.ove-range-value { min-width: 40px; text-align: right; font-size: 12px; font-variant-numeric: tabular-nums; color: var(--dsw-alias-label-secondary); }
+.ove-size-group { display: flex; gap: 6px; }
+.ove-size {
+  padding: 4px 12px; border-radius: 999px; cursor: pointer; font-size: 12px; line-height: 18px;
+  border: 1px solid color-mix(in srgb, var(--dsw-alias-label-primary) 18%, transparent);
+  background: transparent; color: var(--dsw-alias-label-secondary);
+}
+.ove-size:hover { background: color-mix(in srgb, var(--dsw-alias-label-primary) 8%, transparent); }
+.ove-size.is-on { background: #3b82f6; border-color: #3b82f6; color: #fff; }
 .ove-notice {
   margin: 0 0 8px; padding: 6px 10px; border-radius: 8px;
   font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-secondary);

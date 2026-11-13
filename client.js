@@ -387,20 +387,6 @@ window.__ModuleLoader__.load({
       }
     };
 
-    /**
-     * Whether the detached window has confirmed it actually shows the
-     * conversation. A window that boots but stays on the wrong session has no
-     * content, so the opener must not treat it as success.
-     */
-    const readDetachedReady = (sessionId) => {
-      try {
-        const raw = JSON.parse(globalThis.localStorage?.getItem(detachedKeyOf(sessionId)) ?? 'null');
-        return raw?.ready === true;
-      } catch {
-        return false;
-      }
-    };
-
     let detachedSet = new Set();
     const detachedListeners = new Set();
 
@@ -440,6 +426,61 @@ window.__ModuleLoader__.load({
     };
     const getDetached = () => detachedSet;
     const useDetached = () => React.useSyncExternalStore(subscribeDetached, getDetached, getDetached);
+
+    /* ------------------------------------------------------------------ */
+    /* Detached-window appearance                                          */
+    /* ------------------------------------------------------------------ */
+
+    /** Opacity and backdrop live here; the page edits them, every window reads. */
+    const WINDOW_KEY = 'original-version-enhancements.window.v1';
+    const WINDOW_SIZE_IDS = ['compact', 'standard', 'wide'];
+    const DEFAULT_WINDOW = { opacity: 100, size: 'standard' };
+
+    const readWindow = () => {
+      try {
+        const raw = JSON.parse(globalThis.localStorage?.getItem(WINDOW_KEY) ?? '{}');
+        const saved = raw !== null && typeof raw === 'object' ? raw : {};
+        const opacity = Number(saved.opacity);
+        return {
+          opacity: Number.isFinite(opacity) ? Math.min(100, Math.max(30, Math.round(opacity))) : DEFAULT_WINDOW.opacity,
+          size: WINDOW_SIZE_IDS.includes(saved.size) ? saved.size : DEFAULT_WINDOW.size,
+        };
+      } catch {
+        return { ...DEFAULT_WINDOW };
+      }
+    };
+
+    let windowState = readWindow();
+    const windowListeners = new Set();
+
+    const subscribeWindow = (listener) => {
+      windowListeners.add(listener);
+      return () => { windowListeners.delete(listener); };
+    };
+    const getWindow = () => windowState;
+    const useWindow = () => React.useSyncExternalStore(subscribeWindow, getWindow, getWindow);
+
+    const setWindow = (patch) => {
+      const next = { ...windowState, ...patch };
+      const opacity = Number(next.opacity);
+      windowState = {
+        opacity: Number.isFinite(opacity) ? Math.min(100, Math.max(30, Math.round(opacity))) : DEFAULT_WINDOW.opacity,
+        size: WINDOW_SIZE_IDS.includes(next.size) ? next.size : windowState.size,
+      };
+      try {
+        globalThis.localStorage?.setItem(WINDOW_KEY, JSON.stringify(windowState));
+      } catch { /* the setting is best-effort */ }
+      for (const listener of windowListeners) listener();
+    };
+
+    /** True inside the page the detached panel hosts: it shows one conversation only. */
+    const EMBEDDED = (() => {
+      try {
+        return globalThis.__OVE_EMBED__ === true;
+      } catch {
+        return false;
+      }
+    })();
 
     /** Claim the mark for one conversation (called by its own window). */
     const writeDetached = (sessionId, openedAt, ready = false) => {
@@ -532,137 +573,39 @@ window.__ModuleLoader__.load({
     };
 
     /**
-     * Wait for the new window to announce itself.
-     *
-     * A blocked popup may still hand back a `WindowProxy`, so the return value
-     * is not proof: only the detached window's own heartbeat is.
-     * @param sessionId - the conversation the window should show.
-     * @param timeoutMs - how long to wait for the first heartbeat.
-     * @returns a promise resolving to true once the window is really there.
-     */
-    const waitForDetachedBeat = (sessionId, timeoutMs) => new Promise((resolve) => {
-      const started = Date.now();
-      const tick = () => {
-        if (readDetachedReady(sessionId)) {
-          resolve(true);
-          return;
-        }
-        if (Date.now() - started > timeoutMs) {
-          resolve(false);
-          return;
-        }
-        window.setTimeout(tick, 150);
-      };
-      tick();
-    });
-
-    /**
-     * A real, separate window that no popup blocker can refuse.
-     *
-     * The Document Picture-in-Picture window is its own OS window: minimizing
-     * (or covering) the main window does not hide it. It hosts the same client
-     * in an iframe, so the conversation renders exactly as in the main view.
-     * @param url - the detached client URL.
-     * @param title - the window title.
-     * @returns the window, or null when the platform has no such API.
-     */
-    const openDetachedPip = async (url, title) => {
-      const api = globalThis.documentPictureInPicture;
-      if (api === null || api === undefined || typeof api.requestWindow !== 'function') return null;
-      try {
-        const win = await api.requestWindow({ width: 1000, height: 780 });
-        if (typeof title === 'string' && title.length > 0) {
-          try { win.document.title = title; } catch { /* the title is cosmetic */ }
-        }
-        const style = win.document.createElement('style');
-        style.textContent = 'html,body{margin:0;padding:0;height:100%;overflow:hidden}iframe{border:0;width:100%;height:100%;display:block}';
-        win.document.head.appendChild(style);
-        const frame = win.document.createElement('iframe');
-        frame.src = url;
-        frame.title = typeof title === 'string' ? title : '';
-        frame.setAttribute('allow', 'clipboard-read; clipboard-write');
-        win.document.body.appendChild(frame);
-        return win;
-      } catch {
-        return null;
-      }
-    };
-
-    /**
      * Take one conversation out of the main view.
      *
-     * A real browser window is tried first (it survives the page). When the
-     * environment refuses popups — a desktop webview commonly does — the
-     * conversation opens in an in-app floating window instead, which cannot be
-     * blocked. Only after a window exists is the conversation marked, and the
-     * main view leaves it the way a deleted conversation is left.
+     * The window lives inside this page. The Desktop shell denies `window.open`
+     * for the application URL and has no Document Picture-in-Picture, so an
+     * in-app frame is the only place the conversation can keep rendering; that
+     * frame hosts a second client document served by this plugin's own route,
+     * which is why it shows the live conversation rather than a snapshot.
      * @param ctx - the Client plugin context.
      * @param sessionId - the conversation to detach.
-     * @param labels - localized strings for the failures a person can act on.
-     * @returns a promise resolving to true when a window is up.
+     * @param labels - localized strings kept for callers that describe the action.
+     * @returns a promise resolving to true when the window is up.
      */
     const detachSession = async (ctx, sessionId, labels) => {
+      void labels;
       if (typeof sessionId !== 'string' || sessionId.length === 0) return false;
-      if (readDetachedBeat(sessionId) > 0) return true;
-      // Keep the page's own query and hash: they may carry what the client
-      // needs to boot (a token, a route, a review flag). Only our marker is added.
-      let url = `${location.origin}${location.pathname}?ove-detached=${encodeURIComponent(sessionId)}`;
-      try {
-        const parsed = new URL(location.href);
-        parsed.searchParams.set('ove-detached', sessionId);
-        url = parsed.toString();
-      } catch { /* the plain form above still works */ }
-      let handle = null;
-      let opened = false;
-      // 1) A separate OS window that popup blockers cannot touch. Preferred
-      // where available: it keeps running while the main window is minimized.
-      // It must be requested before any other window attempt, because opening
-      // a popup spends the click's user activation.
-      const pip = await openDetachedPip(url, labels?.title ?? '');
-      if (pip !== null) {
-        detachedHandles.set(sessionId, pip);
-        try {
-          pip.addEventListener('pagehide', () => {
-            detachedHandles.delete(sessionId);
-            // The window is gone: hand the conversation back instead of
-            // waiting for the heartbeat to age out.
-            if (readDetachedBeat(sessionId) > 0) releaseDetached(sessionId);
-          });
-        } catch { /* no listener support is fine */ }
-        opened = await waitForDetachedBeat(sessionId, 15000);
-        if (!opened) {
-          const dead = detachedHandles.get(sessionId);
-          detachedHandles.delete(sessionId);
-          try { dead?.close(); } catch { /* already gone */ }
-        }
+      const already = readDetachedBeat(sessionId) > 0;
+      // Only one window may host a client document at a time: the Host gives a
+      // browser session a single connection, so a second live document would
+      // sit on the welcome screen forever. Opening another conversation moves
+      // the window instead of adding one.
+      const others = [...panelIds].filter(id => id !== sessionId);
+      if (others.length > 0) {
+        for (const id of others) releaseDetached(id);
+        publishPanels(new Set());
+        refreshDetached();
+        await new Promise((resolve) => { window.setTimeout(resolve, 250); });
       }
-      // 2) An ordinary browser window, when this platform cannot do better and
-      // allows popups at all.
-      if (!opened) {
-        try {
-          handle = globalThis.open(url, `ove-detached-${sessionId}`, 'popup=yes,width=1120,height=860');
-        } catch {
-          handle = null;
-        }
+      openDetachedPanel(sessionId);
+      writeDetached(sessionId, Date.now(), true);
+      if (!already) {
+        const current = ctx?.uiWorkspace?.mainReference?.sessionId ?? '';
+        if (current === sessionId) leaveRemovedSession(ctx, sessionId);
       }
-      if (!opened && handle !== null && handle !== undefined) {
-        try { handle.focus(); } catch { /* focus is best-effort */ }
-        detachedHandles.set(sessionId, handle);
-        opened = await waitForDetachedBeat(sessionId, 8000);
-        if (!opened) {
-          const dead = detachedHandles.get(sessionId);
-          detachedHandles.delete(sessionId);
-          try { dead?.close(); } catch { /* not ours to close */ }
-        }
-      }
-      // 3) A window inside this page. It is part of the main window, so it is
-      // the last resort, not the norm.
-      if (!opened) {
-        openDetachedPanel(sessionId);
-        writeDetached(sessionId, Date.now(), true);
-      }
-      const current = ctx?.uiWorkspace?.mainReference?.sessionId ?? '';
-      if (current === sessionId) leaveRemovedSession(ctx, sessionId);
       return true;
     };
 
@@ -1524,6 +1467,7 @@ window.__ModuleLoader__.load({
       const tr = typeof t === 'function' ? t : (key) => key;
       const flags = useFlags();
       const recall = useRecall();
+      const appearance = useWindow();
       const count = useSentHistoryCount();
       /** The pending scope switch, which must confirm that history is dropped. */
       const [scopeConfirm, setScopeConfirm] = React.useState(false);
@@ -1701,6 +1645,42 @@ window.__ModuleLoader__.load({
                     disabled: count === 0,
                     onClick: () => clearAllSentHistory(),
                   }, tr('recall.clear'))))),
+
+          !flags.detached
+            ? null
+            : h('div', { className: 'ove-group' },
+              h('h2', { className: 'ove-group-title' }, tr('window.title')),
+              h('p', { className: 'ove-group-desc' }, tr('window.desc')),
+              h('div', { className: 'ove-card' },
+                h('div', { className: 'ove-row' },
+                  h('div', { className: 'ove-row-text' },
+                    h('div', { className: 'ove-row-title' }, tr('window.opacity')),
+                    h('div', { className: 'ove-row-desc' }, tr('window.opacity.desc'))),
+                  h('div', { className: 'ove-window-opacity' },
+                    h('input', {
+                      type: 'range',
+                      className: 'ove-range',
+                      min: 30,
+                      max: 100,
+                      step: 1,
+                      value: appearance.opacity,
+                      'aria-label': tr('window.opacity'),
+                      onChange: (event) => setWindow({ opacity: Number(event.target.value) }),
+                    }),
+                    h('span', { className: 'ove-range-value' }, `${appearance.opacity}%`))),
+
+                h('div', { className: 'ove-row' },
+                  h('div', { className: 'ove-row-text' },
+                    h('div', { className: 'ove-row-title' }, tr('window.size')),
+                    h('div', { className: 'ove-row-desc' }, tr('window.size.desc'))),
+                  h('div', { className: 'ove-size-group', role: 'group', 'aria-label': tr('window.size') },
+                    ['compact', 'standard', 'wide'].map(id => h('button', {
+                      key: id,
+                      type: 'button',
+                      className: `ove-size${appearance.size === id ? ' is-on' : ''}`,
+                      'aria-pressed': appearance.size === id,
+                      onClick: () => setWindow({ size: id }),
+                    }, tr(`window.size.${id}`))))))),
 
           h('p', { className: 'ove-hint' }, tr('pageHint')),
           h('p', { className: 'ove-footnote' }, tr('footnote'))),
@@ -2032,52 +2012,161 @@ window.__ModuleLoader__.load({
       }, h(DetachIcon, null), h('span', null, label));
     }
 
+    /** Window size presets, in CSS pixels. */
+    const WINDOW_SIZES = { compact: [720, 520], standard: [900, 640], wide: [1100, 780] };
+
     /**
-     * One in-app window: a movable, resizable frame hosting the client in an
-     * <iframe>, used when the environment refuses browser popups.
+     * Where a new window starts: centred, cascaded by one slight step per window.
+     * @param index - stacking index of the window.
+     * @returns its first rectangle.
+     */
+    const initialPanelPlace = (index) => {
+      const size = WINDOW_SIZES[windowState.size] ?? WINDOW_SIZES.standard;
+      const width = Math.min(size[0], Math.max(360, window.innerWidth - 24));
+      const height = Math.min(size[1], Math.max(260, window.innerHeight - 24));
+      const left = Math.round((window.innerWidth - width) / 2) + (index % 4) * 26;
+      const top = Math.round((window.innerHeight - height) / 2) + (index % 4) * 22;
+      return {
+        left: Math.min(Math.max(12, left), Math.max(12, window.innerWidth - width - 12)),
+        top: Math.min(Math.max(12, top), Math.max(12, window.innerHeight - height - 20)),
+        width,
+        height,
+      };
+    };
+
+    /**
+     * One in-app window: a movable, resizable frame hosting a second client
+     * document for exactly one conversation. It is the detached window: the
+     * Desktop shell denies `window.open` for the application URL and has no
+     * Document Picture-in-Picture, so this frame is where the live conversation
+     * can actually keep rendering while the main view looks elsewhere.
      * @param props - conversation id, translator and stacking index.
-     * @returns the floating frame.
+     * @returns the floating frame, or its minimised pill.
      */
     function DetachedPanel({ sessionId, tr, index }) {
-      const [place, setPlace] = React.useState(() => ({
-        left: Math.max(12, 72 + (index % 4) * 28),
-        top: Math.max(12, 56 + (index % 4) * 24),
-        width: Math.min(820, Math.max(420, window.innerWidth - 160)),
-        height: Math.min(600, Math.max(320, window.innerHeight - 140)),
-      }));
+      const appearance = useWindow();
+      const [place, setPlace] = React.useState(() => initialPanelPlace(index));
+      const [minimized, setMinimized] = React.useState(false);
+      const [loaded, setLoaded] = React.useState(false);
+      const [title, setTitle] = React.useState('');
       const [dragging, setDragging] = React.useState(false);
-      const start = React.useRef(null);
+      const rootRef = React.useRef(null);
+      const frameRef = React.useRef(null);
+      const drag = React.useRef(null);
+      const titlePoll = React.useRef(null);
+
+      React.useEffect(() => () => { titlePoll.current?.(); }, []);
 
       // While this window exists it owns the mark; closing it releases the
       // conversation back to the main view.
       React.useEffect(() => {
-        // The in-app window owns a real frame, so it is ready the moment it
-        // mounts; its iframe independently confirms the same conversation.
         const beat = () => writeDetached(sessionId, Date.now(), true);
         beat();
         const timer = window.setInterval(beat, 2000);
         return () => { window.clearInterval(timer); };
       }, [sessionId]);
 
+      // The embedded document announces itself once it really shows this
+      // conversation, which is what retires the loading veil.
       React.useEffect(() => {
-        if (!dragging) return undefined;
-        const onMove = (event) => {
-          if (start.current === null) return;
-          const left = Math.max(0, Math.min(window.innerWidth - 240, start.current.left + event.clientX - start.current.x));
-          const top = Math.max(0, Math.min(window.innerHeight - 80, start.current.top + event.clientY - start.current.y));
-          setPlace((current) => ({ ...current, left, top }));
+        const onMessage = (event) => {
+          const data = event.data;
+          if (data === null || typeof data !== 'object' || data.source !== 'ove-detached') return;
+          if (data.sessionId !== sessionId) return;
+          if (data.type !== 'ready') return;
+          setLoaded(true);
         };
-        const onUp = () => setDragging(false);
-        window.addEventListener('pointermove', onMove);
-        window.addEventListener('pointerup', onUp);
-        return () => {
-          window.removeEventListener('pointermove', onMove);
-          window.removeEventListener('pointerup', onUp);
-        };
-      }, [dragging]);
+        window.addEventListener('message', onMessage);
+        return () => { window.removeEventListener('message', onMessage); };
+      }, [sessionId]);
 
-      return h('div', {
-        className: 'ove-detached-panel',
+      /** The conversation title, from the document this window hosts. */
+      const titleFrom = (document) => {
+        const raw = typeof document?.title === 'string' ? document.title.trim() : '';
+        if (raw.length === 0 || raw === 'DeepSeek Harness') return '';
+        return raw.replace(/\s+[—–-]\s+DeepSeek Harness$/u, '').trim();
+      };
+
+      const onFrameLoad = () => {
+        // The document sets its title as the conversation selects itself, a
+        // moment after load: follow it for a few seconds instead of trusting
+        // the first value.
+        let tries = 0;
+        const follow = () => {
+          tries += 1;
+          try {
+            const clean = titleFrom(frameRef.current?.contentDocument);
+            if (clean.length > 0) setTitle(clean);
+          } catch { /* same-origin by construction */ }
+          if (tries > 12) window.clearInterval(timer);
+        };
+        follow();
+        const timer = window.setInterval(follow, 600);
+        titlePoll.current?.();
+        titlePoll.current = () => window.clearInterval(timer);
+        // A document that never posts (an older Host, or a boot that failed)
+        // must not spin forever: the frame loaded, so show it.
+        window.setTimeout(() => setLoaded(true), 3000);
+      };
+
+      const beginDrag = (event) => {
+        if (event.button !== 0 || event.target.closest('button') !== null) return;
+        const node = rootRef.current;
+        if (node === null) return;
+        try { event.currentTarget.setPointerCapture(event.pointerId); } catch { /* capture is best-effort */ }
+        drag.current = {
+          pointerId: event.pointerId,
+          x: event.clientX,
+          y: event.clientY,
+          left: place.left,
+          top: place.top,
+          dx: 0,
+          dy: 0,
+          frame: 0,
+        };
+        setDragging(true);
+      };
+
+      const moveDrag = (event) => {
+        const state = drag.current;
+        if (state === null || event.pointerId !== state.pointerId) return;
+        state.dx = event.clientX - state.x;
+        state.dy = event.clientY - state.y;
+        // One style write per animation frame, straight on the node: React state
+        // per pointer event is what made this drag stutter.
+        if (state.frame !== 0) return;
+        state.frame = window.requestAnimationFrame(() => {
+          state.frame = 0;
+          const node = rootRef.current;
+          if (node === null) return;
+          const width = node.offsetWidth;
+          const height = node.offsetHeight;
+          const left = Math.max(12 - width + 120, Math.min(window.innerWidth - 120, state.left + state.dx));
+          const top = Math.max(0, Math.min(window.innerHeight - 40, state.top + state.dy));
+          node.style.transform = `translate3d(${left - state.left}px, ${top - state.top}px, 0)`;
+        });
+      };
+
+      const endDrag = (event) => {
+        const state = drag.current;
+        drag.current = null;
+        setDragging(false);
+        const node = rootRef.current;
+        if (state === null || node === null) return;
+        if (state.frame !== 0) window.cancelAnimationFrame(state.frame);
+        node.style.transform = '';
+        if (event !== undefined && event.pointerId !== state.pointerId) return;
+        const width = node.offsetWidth;
+        const top = Math.min(Math.max(0, state.top + state.dy), Math.max(0, window.innerHeight - 40));
+        const left = Math.min(Math.max(12 - width + 120, state.left + state.dx), window.innerWidth - 120);
+        setPlace((current) => ({ ...current, left, top }));
+      };
+
+      const stopPointer = (event) => { event.stopPropagation(); };
+
+      const panel = h('div', {
+        ref: rootRef,
+        className: `ove-detached-panel${dragging ? ' is-dragging' : ''}`,
         'data-session': sessionId,
         role: 'dialog',
         'aria-label': tr('detachedWindowTitle'),
@@ -2086,36 +2175,107 @@ window.__ModuleLoader__.load({
           top: `${place.top}px`,
           width: `${place.width}px`,
           height: `${place.height}px`,
+          opacity: appearance.opacity / 100,
+          display: minimized ? 'none' : 'flex',
+          zIndex: 2147483002 + index,
         },
       },
       h('div', {
         className: 'ove-detached-head',
-        onPointerDown: (event) => {
-          if (event.button !== 0) return;
-          start.current = { x: event.clientX, y: event.clientY, left: place.left, top: place.top };
-          setDragging(true);
-        },
+        onPointerDown: beginDrag,
+        onPointerMove: moveDrag,
+        onPointerUp: endDrag,
+        onPointerCancel: endDrag,
       },
-      h('span', { className: 'ove-detached-title' }, tr('detachedWindowTitle')),
-      // A manual escape hatch: if a webview refuses to frame the client, a
-      // real user click on a link is the most likely path to a working window.
-      h('a', {
-        className: 'ove-detached-open',
-        href: `${location.origin}${location.pathname}?ove-detached=${encodeURIComponent(sessionId)}`,
-        target: '_blank',
-        rel: 'noopener',
-      }, tr('detachedOpenTab')),
+      h('span', { className: 'ove-detached-title', title: title || tr('detachedWindowTitle') },
+        title.length > 0 ? title : tr('detachedWindowTitle')),
+      h('button', {
+        type: 'button',
+        className: 'ove-detached-min',
+        'aria-label': tr('detachedMinimize'),
+        title: tr('detachedMinimize'),
+        onPointerDown: stopPointer,
+        onClick: () => setMinimized(true),
+      }, '\u2212'),
       h('button', {
         type: 'button',
         className: 'ove-detached-close',
         'aria-label': tr('detachedWindowClose'),
+        title: tr('detachedWindowClose'),
+        onPointerDown: stopPointer,
         onClick: () => closeDetachedPanel(sessionId),
-      }, '×')),
-      h('iframe', {
-        className: 'ove-detached-frame',
-        title: tr('detachedWindowTitle'),
-        src: `${location.origin}${location.pathname}?ove-detached=${encodeURIComponent(sessionId)}`,
-      }));
+      }, '\u00d7')),
+      h('div', { className: 'ove-detached-body' },
+        h('iframe', {
+          ref: frameRef,
+          className: 'ove-detached-frame',
+          title: title || tr('detachedWindowTitle'),
+          src: `${ROUTE_ROOT}/window?session=${encodeURIComponent(sessionId)}`,
+          onLoad: onFrameLoad,
+        }),
+        loaded ? null : h('div', { className: 'ove-detached-loading', role: 'status' },
+          h('span', { className: 'ove-detached-spinner', 'aria-hidden': 'true' }),
+          h('span', null, tr('detachedLoading')))));
+
+      if (!minimized) return panel;
+
+      return h(React.Fragment, null,
+        panel,
+        h('button', {
+          type: 'button',
+          className: 'ove-detached-pill',
+          'data-session': sessionId,
+          style: { zIndex: 2147483002 + index },
+          title: tr('detachedRestore'),
+          onClick: () => setMinimized(false),
+        },
+        h('span', { className: 'ove-detached-pill-dot', 'aria-hidden': 'true' }),
+        h('span', { className: 'ove-detached-pill-text' },
+          title.length > 0 ? title : tr('detachedWindowTitle'))));
+    }
+
+    /**
+     * The embedded document's whole job: show the one conversation its query
+     * names, then tell the window that opened it that the content is there.
+     * @param props - Client plugin context.
+     * @returns null; the page is the conversation itself.
+     */
+    function EmbeddedConversation({ ctx }) {
+      const [detachedId] = React.useState(() => {
+        try {
+          const params = new URLSearchParams(window.location.search);
+          return params.get('session') ?? params.get('ove-detached') ?? '';
+        } catch {
+          return '';
+        }
+      });
+
+      React.useEffect(() => {
+        if (detachedId.length === 0) return undefined;
+        let ready = false;
+        const announce = (type) => {
+          try {
+            window.parent?.postMessage({ source: 'ove-detached', type, sessionId: detachedId }, '*');
+          } catch { /* the opener may be gone */ }
+        };
+        announce('boot');
+        const timer = window.setInterval(() => {
+          const current = ctx?.uiWorkspace?.mainReference?.sessionId ?? '';
+          if (current === detachedId) {
+            if (ready) return;
+            ready = true;
+            window.clearInterval(timer);
+            announce('ready');
+            return;
+          }
+          try {
+            ctx?.uiWorkspace?.openSession?.(detachedId);
+          } catch { /* the catalogue may still be loading */ }
+        }, 400);
+        return () => { window.clearInterval(timer); };
+      }, [ctx, detachedId]);
+
+      return null;
     }
 
     /**
@@ -2127,6 +2287,9 @@ window.__ModuleLoader__.load({
      * @returns null.
      */
     function DetachedSessionsBridge({ ctx, t }) {
+      // The embedded document is one conversation and nothing else: no rows to
+      // decorate, nothing to drag, no window to open.
+      if (EMBEDDED) return h(EmbeddedConversation, { ctx });
       const tr = typeof t === 'function' ? t : (key) => key;
       const [detachedId] = React.useState(() => {
         try {
@@ -2233,8 +2396,6 @@ window.__ModuleLoader__.load({
           if (!detachedSet.has(id)) return;
           event.preventDefault();
           event.stopPropagation();
-          const handle = detachedHandles.get(id);
-          try { handle?.focus(); } catch { /* the window may be gone */ }
           flashDetachedNote(tr('detachedBlocked'));
         };
         document.addEventListener('click', blocked, true);
