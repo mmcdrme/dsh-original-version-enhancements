@@ -2609,6 +2609,9 @@ window.__ModuleLoader__.load({
           event.stopPropagation();
           window.clearTimeout(hint);
           releaseDetached(id);
+          // Take it back *and* open it: a double click on a blocked row is the
+          // shortcut for "I want this conversation here, now".
+          try { ctx?.uiWorkspace?.openSession?.(id); } catch { /* the catalogue may still be loading */ }
           flashDetachedNote(tr('detachedRestored'));
         };
         document.addEventListener('click', onClick, true);

@@ -118,6 +118,9 @@ namespace OveWindow
 
         private readonly Options options;
         private readonly WebView2 view;
+        private readonly Panel splash;
+        private readonly Label splashLabel;
+        private readonly ProgressBar splashBar;
         private static string explicitDataDir = "";
         private bool switched;
 
@@ -147,6 +150,37 @@ namespace OveWindow
                 DefaultBackgroundColor = Color.FromArgb(249, 250, 251),
             };
             Controls.Add(view);
+
+            // The token hop loads the ordinary shell for a moment; cover it
+            // with the same quiet loading state the conversation page paints.
+            splash = new Panel { Dock = DockStyle.Fill, BackColor = Color.FromArgb(249, 250, 251) };
+            splashLabel = new Label
+            {
+                AutoSize = false,
+                Dock = DockStyle.Fill,
+                Text = "正在载入会话…",
+                TextAlign = ContentAlignment.MiddleCenter,
+                ForeColor = Color.FromArgb(107, 114, 128),
+                BackColor = Color.Transparent,
+                Font = new Font("Microsoft YaHei UI", 11f, FontStyle.Regular),
+            };
+            splashBar = new ProgressBar
+            {
+                Style = ProgressBarStyle.Marquee,
+                MarqueeAnimationSpeed = 26,
+                Anchor = AnchorStyles.None,
+                Size = new Size(200, 6),
+            };
+            var splashLayout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 4 };
+            splashLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 50f));
+            splashLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 40f));
+            splashLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 26f));
+            splashLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 50f));
+            splashLayout.Controls.Add(splashLabel, 0, 1);
+            splashLayout.Controls.Add(splashBar, 0, 2);
+            splash.Controls.Add(splashLayout);
+            Controls.Add(splash);
+            splash.BringToFront();
         }
 
         protected override async void OnLoad(EventArgs e)
@@ -200,6 +234,11 @@ namespace OveWindow
 
             core.NavigationCompleted += OnNavigationCompleted;
             Stage("载入会话…");
+            // The token URL answers with the ordinary application shell, which
+            // already paints a sidebar this window will never show. Keep the
+            // view hidden for that one hop; the conversation page (with its own
+            // loading animation) is what the user is meant to see.
+            view.Visible = false;
             core.Navigate(options.BootUrl);
         }
 
@@ -210,6 +249,8 @@ namespace OveWindow
             // the conversation page (sidebar-free) can be opened in place.
             switched = true;
             Stage("载入会话…");
+            view.Visible = true;
+            splash.Visible = false;
             view.CoreWebView2.Navigate(options.AppUrl);
         }
 

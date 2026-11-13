@@ -220,7 +220,7 @@
     "menuDelete": "永久删除",
     "menuDetachedOpen": "在独立窗口打开",
     "menuDetachedBack": "移回主界面",
-    "detachedBlocked": "该会话正在独立窗口中显示；双击这一行可直接移回主界面。",
+    "detachedBlocked": "该会话正在独立窗口中显示；双击这一行可强制移回并打开会话。",
     "detachedWindowTitle": "独立会话窗口",
     "detachedWindowClose": "移回主界面并关闭窗口",
     "cancel": "取消",
@@ -279,7 +279,7 @@
     "window.size.wide": "宽大",
     "window.mute": "静音独立窗口",
     "window.mute.desc": "独立窗口默认不播放提示音与音效，避免不合时宜的错误提示音；想听完成提醒时可以关掉。",
-    "detachedRestored": "已移回主界面"
+    "detachedRestored": "已移回主界面并打开会话"
   },
   "en": {
     "group": "Work details",
@@ -502,7 +502,7 @@
     "menuDelete": "Delete permanently",
     "menuDetachedOpen": "Open in its own window",
     "menuDetachedBack": "Bring back to the main window",
-    "detachedBlocked": "This conversation is shown in its own window; double-click this row to bring it back.",
+    "detachedBlocked": "This conversation is shown in its own window; double-click the row to force it back and open it here.",
     "detachedWindowTitle": "Independent conversation window",
     "detachedWindowClose": "Bring back and close the window",
     "cancel": "Cancel",
@@ -561,6 +561,6 @@
     "window.size.wide": "Wide",
     "window.mute": "Mute independent windows",
     "window.mute.desc": "Independent windows start muted so a background conversation cannot chime unexpectedly. Turn this off to hear completion sounds there.",
-    "detachedRestored": "Brought back to the main window"
+    "detachedRestored": "Brought back and opened in the main window"
   }
 }
