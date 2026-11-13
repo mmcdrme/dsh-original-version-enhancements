@@ -715,6 +715,27 @@
   font-size: 13px; line-height: 20px; box-shadow: 0 10px 30px rgba(0, 0, 0, .35);
   pointer-events: none;
 }
+/* An in-app window: the fallback for environments that refuse popups. It is a
+   real frame around a second client document, movable and resizable. */
+.ove-detached-panel {
+  position: fixed; z-index: 2147483002; display: flex; flex-direction: column;
+  box-sizing: border-box; overflow: hidden; resize: both; min-width: 420px; min-height: 320px;
+  border-radius: 12px; border: 1.5px solid #7dd3fc; background: var(--dsw-alias-bg-base);
+  box-shadow: 0 18px 50px rgba(15, 23, 42, .35);
+}
+.ove-detached-head {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 8px;
+  padding: 6px 8px 6px 12px; cursor: move; user-select: none;
+  background: color-mix(in srgb, #7dd3fc 18%, var(--dsw-alias-bg-base));
+  color: var(--dsw-alias-label-primary);
+}
+.ove-detached-title { flex: 1 1 auto; min-width: 0; font-size: 12px; line-height: 18px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ove-detached-close {
+  flex: none; width: 22px; height: 22px; border: 0; border-radius: 6px; cursor: pointer;
+  background: transparent; color: var(--dsw-alias-label-secondary); font-size: 15px; line-height: 1;
+}
+.ove-detached-close:hover { background: color-mix(in srgb, var(--dsw-alias-label-primary) 12%, transparent); color: var(--dsw-alias-label-primary); }
+.ove-detached-frame { flex: 1 1 auto; width: 100%; min-height: 0; border: 0; background: var(--dsw-alias-bg-base); }
 .ove-notice {
   margin: 0 0 8px; padding: 6px 10px; border-radius: 8px;
   font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-secondary);

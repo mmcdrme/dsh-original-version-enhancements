@@ -375,7 +375,7 @@ window.__ModuleLoader__.load({
       && now - heartbeat <= DETACHED_STALE_MS
     );
 
-    /** Window handles this page opened, so "bring back" can close them. */
+    /** Windows this page opened, so "bring back" can close them. */
     const detachedHandles = new Map();
 
     const readDetachedBeat = (sessionId) => {
@@ -462,13 +462,39 @@ window.__ModuleLoader__.load({
       window.setTimeout(() => node.remove(), 2600);
     };
 
-    /**
-     * Open one conversation in its own window and mark it.
-     * @param ctx - the Client plugin context.
-     * @param sessionId - the conversation to detach.
-     * @param labels - localized strings for the blocked/failed cases.
-     * @returns true when a window was opened.
-     */
+    // In-app windows: the fallback for an environment that refuses popups.
+    // Each one hosts the same client in an <iframe>, which boots its own
+    // document and selects the conversation through the same bridge, so the
+    // feature still starts when `window.open` is denied outright.
+    let panelIds = new Set();
+    const panelListeners = new Set();
+    const subscribePanels = (listener) => {
+      panelListeners.add(listener);
+      return () => { panelListeners.delete(listener); };
+    };
+    const getPanels = () => panelIds;
+    const usePanels = () => React.useSyncExternalStore(subscribePanels, getPanels, getPanels);
+    const publishPanels = (next) => {
+      panelIds = next;
+      for (const listener of panelListeners) listener();
+    };
+    const openDetachedPanel = (sessionId) => {
+      const next = new Set(panelIds);
+      next.add(sessionId);
+      publishPanels(next);
+    };
+    const dropDetachedPanel = (sessionId) => {
+      if (!panelIds.has(sessionId)) return;
+      const next = new Set(panelIds);
+      next.delete(sessionId);
+      publishPanels(next);
+    };
+    /** Closing the in-app window is the same "bring back" the menu performs. */
+    const closeDetachedPanel = (sessionId) => {
+      dropDetachedPanel(sessionId);
+      releaseDetached(sessionId);
+    };
+
     /** Drop every mark and close the windows this page opened. */
     const releaseAllDetached = () => {
       try {
@@ -486,6 +512,7 @@ window.__ModuleLoader__.load({
         try { handle?.close(); } catch { /* already gone */ }
       }
       detachedHandles.clear();
+      publishPanels(new Set());
       refreshDetached();
     };
 
@@ -493,9 +520,7 @@ window.__ModuleLoader__.load({
      * Wait for the new window to announce itself.
      *
      * A blocked popup may still hand back a `WindowProxy`, so the return value
-     * is not proof: only the detached window's own heartbeat is. Until it
-     * arrives the conversation stays reachable here, which is what makes a
-     * blocked window harmless.
+     * is not proof: only the detached window's own heartbeat is.
      * @param sessionId - the conversation the window should show.
      * @param timeoutMs - how long to wait for the first heartbeat.
      * @returns a promise resolving to true once the window is really there.
@@ -517,19 +542,19 @@ window.__ModuleLoader__.load({
     });
 
     /**
-     * Open one conversation in its own window and mark it.
+     * Take one conversation out of the main view.
      *
-     * `window.open` runs inside the click's gesture. When it is refused, an
-     * anchor with `target="_blank"` gets one more chance — some environments
-     * block scripted popups but still follow a link. The conversation is only
-     * marked detached once that window's heartbeat arrives; a blocked window
-     * therefore never locks it out of the main interface.
+     * A real browser window is tried first (it survives the page). When the
+     * environment refuses popups — a desktop webview commonly does — the
+     * conversation opens in an in-app floating window instead, which cannot be
+     * blocked. Only after a window exists is the conversation marked, and the
+     * main view leaves it the way a deleted conversation is left.
      * @param ctx - the Client plugin context.
      * @param sessionId - the conversation to detach.
-     * @param labels - localized strings for the blocked case.
-     * @returns a promise resolving to true when the window is up.
+     * @param labels - localized strings for the failures a person can act on.
+     * @returns a promise resolving to true when a window is up.
      */
-    const detachSession = async (ctx, sessionId, labels) => {
+    const detachSession = async (ctx, sessionId) => {
       if (typeof sessionId !== 'string' || sessionId.length === 0) return false;
       if (readDetachedBeat(sessionId) > 0) return true;
       const url = `${location.origin}${location.pathname}?ove-detached=${encodeURIComponent(sessionId)}`;
@@ -539,32 +564,23 @@ window.__ModuleLoader__.load({
       } catch {
         handle = null;
       }
+      let opened = false;
       if (handle !== null && handle !== undefined) {
         try { handle.focus(); } catch { /* focus is best-effort */ }
         detachedHandles.set(sessionId, handle);
-      } else {
-        // Still inside the gesture: a link click is the second attempt.
-        try {
-          const link = document.createElement('a');
-          link.href = url;
-          link.target = '_blank';
-          link.rel = 'noopener';
-          link.style.display = 'none';
-          document.body.appendChild(link);
-          link.click();
-          link.remove();
-        } catch { /* both attempts failed; reported below */ }
+        opened = await waitForDetachedBeat(sessionId, 4500);
+        if (!opened) {
+          // The proxy existed but no window ever loaded: close it and fall
+          // through to the in-app window.
+          const dead = detachedHandles.get(sessionId);
+          detachedHandles.delete(sessionId);
+          try { dead?.close(); } catch { /* not ours to close */ }
+        }
       }
-      const opened = await waitForDetachedBeat(sessionId, 8000);
       if (!opened) {
-        const dead = detachedHandles.get(sessionId);
-        detachedHandles.delete(sessionId);
-        try { dead?.close(); } catch { /* nothing to close */ }
-        flashDetachedNote(labels?.blocked ?? '');
-        return false;
+        openDetachedPanel(sessionId);
+        writeDetached(sessionId, Date.now());
       }
-      // The main view cannot keep showing a conversation it no longer opens:
-      // leave it the way a deleted conversation is left.
       const current = ctx?.uiWorkspace?.mainReference?.sessionId ?? '';
       if (current === sessionId) leaveRemovedSession(ctx, sessionId);
       return true;
@@ -1918,7 +1934,7 @@ window.__ModuleLoader__.load({
           releaseDetached(sessionId);
           return;
         }
-        void detachSession(ctx, sessionId, { blocked: tr('detachedBlockedPopup') });
+        void detachSession(ctx, sessionId);
       };
 
       if (uiPrimitives?.MenuItemButton) {
@@ -1934,6 +1950,82 @@ window.__ModuleLoader__.load({
         className: 'ove-menu-item',
         onClick: select,
       }, h(DetachIcon, null), h('span', null, label));
+    }
+
+    /**
+     * One in-app window: a movable, resizable frame hosting the client in an
+     * <iframe>, used when the environment refuses browser popups.
+     * @param props - conversation id, translator and stacking index.
+     * @returns the floating frame.
+     */
+    function DetachedPanel({ sessionId, tr, index }) {
+      const [place, setPlace] = React.useState(() => ({
+        left: Math.max(12, 72 + (index % 4) * 28),
+        top: Math.max(12, 56 + (index % 4) * 24),
+        width: Math.min(820, Math.max(420, window.innerWidth - 160)),
+        height: Math.min(600, Math.max(320, window.innerHeight - 140)),
+      }));
+      const [dragging, setDragging] = React.useState(false);
+      const start = React.useRef(null);
+
+      // While this window exists it owns the mark; closing it releases the
+      // conversation back to the main view.
+      React.useEffect(() => {
+        const beat = () => writeDetached(sessionId, Date.now());
+        beat();
+        const timer = window.setInterval(beat, 2000);
+        return () => { window.clearInterval(timer); };
+      }, [sessionId]);
+
+      React.useEffect(() => {
+        if (!dragging) return undefined;
+        const onMove = (event) => {
+          if (start.current === null) return;
+          const left = Math.max(0, Math.min(window.innerWidth - 240, start.current.left + event.clientX - start.current.x));
+          const top = Math.max(0, Math.min(window.innerHeight - 80, start.current.top + event.clientY - start.current.y));
+          setPlace((current) => ({ ...current, left, top }));
+        };
+        const onUp = () => setDragging(false);
+        window.addEventListener('pointermove', onMove);
+        window.addEventListener('pointerup', onUp);
+        return () => {
+          window.removeEventListener('pointermove', onMove);
+          window.removeEventListener('pointerup', onUp);
+        };
+      }, [dragging]);
+
+      return h('div', {
+        className: 'ove-detached-panel',
+        'data-session': sessionId,
+        role: 'dialog',
+        'aria-label': tr('detachedWindowTitle'),
+        style: {
+          left: `${place.left}px`,
+          top: `${place.top}px`,
+          width: `${place.width}px`,
+          height: `${place.height}px`,
+        },
+      },
+      h('div', {
+        className: 'ove-detached-head',
+        onPointerDown: (event) => {
+          if (event.button !== 0) return;
+          start.current = { x: event.clientX, y: event.clientY, left: place.left, top: place.top };
+          setDragging(true);
+        },
+      },
+      h('span', { className: 'ove-detached-title' }, tr('detachedWindowTitle')),
+      h('button', {
+        type: 'button',
+        className: 'ove-detached-close',
+        'aria-label': tr('detachedWindowClose'),
+        onClick: () => closeDetachedPanel(sessionId),
+      }, '×')),
+      h('iframe', {
+        className: 'ove-detached-frame',
+        title: tr('detachedWindowTitle'),
+        src: `${location.origin}${location.pathname}?ove-detached=${encodeURIComponent(sessionId)}`,
+      }));
     }
 
     /**
@@ -1953,6 +2045,16 @@ window.__ModuleLoader__.load({
           return '';
         }
       });
+      const detached = useDetached();
+      const panels = usePanels();
+
+      // A mark that disappears elsewhere (the menu's "bring back", the switch,
+      // a window that went away) takes its in-app window with it.
+      React.useEffect(() => {
+        for (const id of panels) {
+          if (!detached.has(id)) dropDetachedPanel(id);
+        }
+      }, [panels, detached]);
 
       // The window that shows one detached conversation: select it, keep the
       // heartbeat going, and close when the mark is taken back.
@@ -2080,7 +2182,7 @@ window.__ModuleLoader__.load({
           // A drop on a real target keeps its own meaning (reorder, file, …).
           if (event.dataTransfer !== null && event.dataTransfer.dropEffect !== 'none') return;
           if (detachedSet.has(state.id)) return;
-          void detachSession(ctx, state.id, { blocked: tr('detachedBlockedPopup') });
+          void detachSession(ctx, state.id);
         };
         document.addEventListener('dragstart', onDragStart, true);
         document.addEventListener('dragleave', onDragLeave, true);
@@ -2094,10 +2196,12 @@ window.__ModuleLoader__.load({
         };
       }, [ctx, tr]);
 
-      // This surface renders no markup, but the row frame and the toast live in
-      // the shared stylesheet: without a slot that paints it, a page with no
-      // other plugin surface would have no rule to apply.
-      return h('style', { key: 'styles', 'data-plugin-css': `${NS}-detached` }, CSS);
+      // This surface renders no markup of its own beyond the stylesheet and the
+      // in-app windows: without a slot that paints it, a page with no other
+      // plugin surface would have no rule to apply.
+      return h(React.Fragment, null,
+        h('style', { key: 'styles', 'data-plugin-css': `${NS}-detached` }, CSS),
+        [...panels].map((sessionId, index) => h(DetachedPanel, { key: sessionId, sessionId, tr, index })));
     }
 
     /* ------------------------------------------------------------------ */
