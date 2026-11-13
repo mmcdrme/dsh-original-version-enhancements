@@ -47,43 +47,55 @@ const SIDEBAR_TRACK_SCRIPT = `(() => {
 
 /**
  * A conversation needs a moment to mount, and the app's own skeleton is not
- * worth showing. This paints a small spinner over the document and lifts it
- * once the conversation itself is on screen (or after a long safety timeout so
- * a broken session can never leave the window stuck on the spinner forever).
+ * worth showing. The companion exe already paints one loading state of its own
+ * and keeps it until the page says it is ready, so this script only reports
+ * readiness there; a browser fallback (the in-app window) has no host, so it
+ * paints the small spinner itself and lifts it once the conversation is on
+ * screen (or after a long safety timeout, so a broken session can never leave
+ * the window stuck on the spinner forever).
  */
 const LOADING_SCRIPT = `(() => {
   const doc = document
   const root = doc.documentElement
-  root.classList.add('ove-embed-loading')
-  const overlay = doc.createElement('div')
-  overlay.id = 'ove-embed-loading'
-  overlay.setAttribute('role', 'status')
-  overlay.setAttribute('aria-live', 'polite')
-  overlay.innerHTML = '<div class="ove-load-badge" aria-hidden="true">'
-    + '<svg viewBox="0 0 64 64" focusable="false"><rect width="64" height="64" rx="15" fill="#1D4ED8"/>'
-    + '<path d="M16 18h32M16 27h22M16 36h32M16 45h16" fill="none" stroke="#DBEAFE" stroke-width="3.6" stroke-linecap="round"/>'
-    + '<circle cx="49" cy="18" r="3.4" fill="#93C5FD"/><circle cx="43" cy="27" r="2.8" fill="#93C5FD"/>'
-    + '<circle cx="49" cy="36" r="3.4" fill="#93C5FD"/><circle cx="38" cy="45" r="2.8" fill="#93C5FD"/></svg>'
-    + '</div><div class="ove-load-text">正在载入会话…</div>'
-    + '<div class="ove-load-dots" aria-hidden="true"><i></i><i></i><i></i></div>'
-  ;(doc.body || root).appendChild(overlay)
-
-  let done = false
-  const finish = () => {
-    if (done) return
-    done = true
-    root.classList.remove('ove-embed-loading')
-    overlay.classList.add('is-done')
-    doc.removeEventListener('DOMContentLoaded', check)
-    window.removeEventListener('load', check)
-    window.setTimeout(() => overlay.remove(), 340)
-  }
+  const bridge = window.chrome && window.chrome.webview
+  const native = !!(bridge && typeof bridge.postMessage === 'function')
   const mounted = () => {
     if (!doc.querySelector('[data-slot="conversation.composer"],[data-composer-input]')) return false
     for (const el of doc.querySelectorAll('[data-content-phase]')) {
       if (el.getAttribute('data-content-phase') === 'loading') return false
     }
     return doc.querySelector('[data-chat-flow],[data-slot="conversation.view"]') !== null
+  }
+  let done = false
+  let overlay = null
+  const finish = () => {
+    if (done) return
+    done = true
+    doc.removeEventListener('DOMContentLoaded', check)
+    window.removeEventListener('load', check)
+    if (native) {
+      try { bridge.postMessage('ove-ready') } catch (error) { /* the host has its own timeout */ }
+      return
+    }
+    if (overlay === null) return
+    root.classList.remove('ove-embed-loading')
+    overlay.classList.add('is-done')
+    window.setTimeout(() => overlay.remove(), 340)
+  }
+  if (!native) {
+    root.classList.add('ove-embed-loading')
+    overlay = doc.createElement('div')
+    overlay.id = 'ove-embed-loading'
+    overlay.setAttribute('role', 'status')
+    overlay.setAttribute('aria-live', 'polite')
+    overlay.innerHTML = '<div class="ove-load-badge" aria-hidden="true">'
+      + '<svg viewBox="0 0 64 64" focusable="false"><rect width="64" height="64" rx="15" fill="#1D4ED8"/>'
+      + '<path d="M16 18h32M16 27h22M16 36h32M16 45h16" fill="none" stroke="#DBEAFE" stroke-width="3.6" stroke-linecap="round"/>'
+      + '<circle cx="49" cy="18" r="3.4" fill="#93C5FD"/><circle cx="43" cy="27" r="2.8" fill="#93C5FD"/>'
+      + '<circle cx="49" cy="36" r="3.4" fill="#93C5FD"/><circle cx="38" cy="45" r="2.8" fill="#93C5FD"/></svg>'
+      + '</div><div class="ove-load-text">正在载入会话…</div>'
+      + '<div class="ove-load-dots" aria-hidden="true"><i></i><i></i><i></i></div>'
+    ;(doc.body || root).appendChild(overlay)
   }
   const fonts = doc.fonts && typeof doc.fonts.ready === 'object' ? doc.fonts.ready.catch(() => {}) : Promise.resolve()
   const reveal = () => {

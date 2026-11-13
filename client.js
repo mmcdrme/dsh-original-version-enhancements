@@ -443,8 +443,11 @@ window.__ModuleLoader__.load({
         const data = await response.json();
         const next = new Map();
         for (const entry of Array.isArray(data?.windows) ? data.windows : []) {
-          if (entry !== null && typeof entry === 'object' && entry.ready === true) {
-            next.set(String(entry.sessionId), entry);
+          // A window counts the moment its process exists: the row can be
+          // marked while the page is still loading, and `ready` only tells the
+          // opener when it may leave the conversation.
+          if (entry !== null && typeof entry === 'object' && typeof entry.sessionId === 'string') {
+            next.set(entry.sessionId, entry);
           }
         }
         hostWindows = next;
@@ -477,7 +480,19 @@ window.__ModuleLoader__.load({
           }),
         });
         const data = await response.json().catch(() => ({}));
-        return response.ok && data?.ok === true;
+        if (response.ok && data?.ok === true) {
+          // Paint the row now instead of waiting for the window's first state
+          // poll: the process is up, which is all the frame needs.
+          hostWindows.set(sessionId, {
+            sessionId,
+            openedAt: Date.now(),
+            ready: data.reused === true,
+            title: '',
+          });
+          refreshDetached();
+          return true;
+        }
+        return false;
       } catch {
         return false;
       }
@@ -2488,7 +2503,7 @@ window.__ModuleLoader__.load({
         let alive = true;
         const tick = () => { if (alive) void pullHostWindows(); };
         tick();
-        const timer = window.setInterval(tick, 1500);
+        const timer = window.setInterval(tick, 600);
         return () => {
           alive = false;
           window.clearInterval(timer);
@@ -2553,8 +2568,7 @@ window.__ModuleLoader__.load({
       // Every window: paint the frame on the rows the marks name, and drop
       // marks whose window is gone so the conversation becomes reachable again.
       React.useEffect(() => {
-        const decorate = () => {
-          refreshDetached();
+        const paint = () => {
           const rows = document.querySelectorAll('[data-row-key^="session:"]');
           for (const row of rows) {
             const id = String(row.getAttribute('data-row-key') ?? '').slice('session:'.length);
@@ -2566,14 +2580,19 @@ window.__ModuleLoader__.load({
             else row.removeAttribute('data-detached');
           }
         };
+        const decorate = () => { refreshDetached(); paint(); };
         decorate();
-        const timer = window.setInterval(decorate, 800);
+        // Repaint the instant the set changes (open/close), with the slow tick
+        // left only as a safety net for a window that died behind our back.
+        const unsubscribe = subscribeDetached(paint);
+        const timer = window.setInterval(decorate, 1200);
         const onStorage = (event) => {
           if (event.key !== null && !String(event.key).startsWith(DETACHED_KEY)) return;
           decorate();
         };
         window.addEventListener('storage', onStorage);
         return () => {
+          unsubscribe();
           window.clearInterval(timer);
           window.removeEventListener('storage', onStorage);
         };

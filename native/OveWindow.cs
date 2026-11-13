@@ -123,6 +123,8 @@ namespace OveWindow
         private readonly ProgressBar splashBar;
         private static string explicitDataDir = "";
         private bool switched;
+        private bool revealed;
+        private Timer splashTimer;
 
         public Window(Options options)
         {
@@ -233,12 +235,14 @@ namespace OveWindow
             };
 
             core.NavigationCompleted += OnNavigationCompleted;
+            core.WebMessageReceived += OnWebMessage;
             Stage("载入会话…");
-            // The token URL answers with the ordinary application shell, which
-            // already paints a sidebar this window will never show. Keep the
-            // view hidden for that one hop; the conversation page (with its own
-            // loading animation) is what the user is meant to see.
-            view.Visible = false;
+            // One loading state only: this splash (label + marquee) stays on
+            // top of the view until the conversation page reports that it is
+            // ready, so neither the token hop nor the page's own boot flashes.
+            splashTimer = new Timer { Interval = 10000 };
+            splashTimer.Tick += (sender, args) => Reveal();
+            splashTimer.Start();
             core.Navigate(options.BootUrl);
         }
 
@@ -249,9 +253,35 @@ namespace OveWindow
             // the conversation page (sidebar-free) can be opened in place.
             switched = true;
             Stage("载入会话…");
-            view.Visible = true;
-            splash.Visible = false;
             view.CoreWebView2.Navigate(options.AppUrl);
+        }
+
+        /** The conversation page says it finished mounting; lift the cover. */
+        private void OnWebMessage(object sender, CoreWebView2WebMessageReceivedEventArgs args)
+        {
+            string message;
+            try { message = args.TryGetWebMessageAsString(); }
+            catch { return; }
+            if (message == "ove-ready") Reveal();
+        }
+
+        private void Reveal()
+        {
+            if (revealed) return;
+            revealed = true;
+            try
+            {
+                if (splashTimer != null)
+                {
+                    splashTimer.Stop();
+                    splashTimer.Dispose();
+                    splashTimer = null;
+                }
+            }
+            catch
+            {
+            }
+            try { splash.Visible = false; } catch { }
         }
 
         private void Stage(string message)

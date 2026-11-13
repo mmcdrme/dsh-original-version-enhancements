@@ -32,12 +32,15 @@ test('the left sidebar is hidden but the right rail is left alone', () => {
   assert.match(embed, /const next = template\.replace\(\/\^\\s\*\[\\d\.\]\+px\/u, '0px'\)/u)
 })
 
-test('a loading animation covers the document until the conversation mounts', () => {
+test('the loading state is reported to the companion window, not doubled', () => {
+  // The exe paints the one loading state; the page only says when it is done.
+  assert.match(embed, /window\.chrome && window\.chrome\.webview/u)
+  assert.match(embed, /postMessage\('ove-ready'\)/u)
+  // The in-page spinner survives only for the browser fallback.
+  assert.match(embed, /if \(!native\) \{/u)
   assert.match(embed, /id = 'ove-embed-loading'/u)
-  assert.match(embed, /正在载入会话…/u)
   assert.match(embed, /@keyframes ove-load-spin/u)
   assert.match(embed, /conversation\.composer/u)
-  assert.match(embed, /@media \(prefers-reduced-motion:reduce\)/u)
 })
 
 test('the boot chime of a fresh window is rebased instead of replayed', () => {
