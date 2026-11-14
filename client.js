@@ -3164,10 +3164,11 @@ window.__ModuleLoader__.load({
     const SUBAGENT_TREE_CSS = `
 /* The expander sits at the row's own left edge: a caret plus the direct
    subagent count, before the status dot and the title. */
-/* Out of flow on purpose: the arrow sits in the row's left gutter, so every
-   conversation title stays at the same x whether or not it has subagents. */
+/* Out of flow on purpose: the arrow is right-packed against the title's left
+   edge (34px into the row), so every conversation name stays in the same
+   column while the arrow reads as part of that name. */
 .ove-sub-toggle {
-  position: absolute; left: -6px; top: 50%; transform: translateY(-50%);
+  position: absolute; right: calc(100% - 29px); top: 50%; transform: translateY(-50%); z-index: 1;
   display: inline-flex; align-items: center; justify-content: center; gap: 1px;
   min-width: 16px; height: 18px; margin: 0; padding: 0 1px;
   border: 0; border-radius: 5px; background: transparent;
