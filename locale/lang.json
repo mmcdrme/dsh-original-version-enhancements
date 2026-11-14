@@ -338,7 +338,13 @@
     "subagentMenu.copyIdDone": "Session ID 已复制",
     "subagentMenu.copyIdFailed": "复制失败，请重试",
     "switch.bindScopes": "实验性：绑定会话时显示不可见会话",
-    "switch.bindScopes.desc": "关闭时：绑定到多个会话和单个绑定的会话列表都只列出客户端可见的会话（侧边栏里能看到的会话）。开启时：子智能体等客户端不可见的会话也会出现在这两个列表里，单个绑定的下拉用灰色背景标出它们。"
+    "switch.bindScopes.desc": "关闭时：绑定到多个会话和单个绑定的会话列表都只列出客户端可见的会话（侧边栏里能看到的会话）。开启时：「绑定到多个会话」弹窗出现「可见的会话 / 不可见的会话」选项，单个绑定的下拉也会列出子智能体等不可见会话，并用灰色背景标出它们。",
+    "auto.bindScope": "会话范围",
+    "auto.bindScope.visible": "可见的会话",
+    "auto.bindScope.hidden": "不可见的会话",
+    "auto.bindScope.tip": "「可见的会话」是客户端侧边栏里能看到的会话；「不可见的会话」是子智能体等侧边栏不显示的会话。",
+    "auto.bindScope.hiddenEmpty": "没有可绑定的不可见会话。",
+    "auto.bindScope.visibleEmpty": "没有可绑定的可见会话。"
   },
   "en": {
     "group": "Work details",
@@ -679,6 +685,12 @@
     "subagentMenu.copyIdDone": "Session ID copied",
     "subagentMenu.copyIdFailed": "Copy failed. Try again.",
     "switch.bindScopes": "Experimental: show hidden conversations when binding",
-    "switch.bindScopes.desc": "Off: both the multi-conversation picker and the single-conversation picker list only the conversations the client can see (the sidebar rows). On: conversations the client cannot see, such as subagents, are listed too; the single-conversation dropdown marks them with a grey background."
+    "switch.bindScopes.desc": "Off: both the multi-conversation picker and the single-conversation picker list only the conversations the client can see (the sidebar rows). On: the multi-conversation dialog gains a Visible/Hidden choice, and the single-conversation dropdown also lists hidden conversations such as subagents, marking them with a grey background.",
+    "auto.bindScope": "Conversation scope",
+    "auto.bindScope.visible": "Visible conversations",
+    "auto.bindScope.hidden": "Hidden conversations",
+    "auto.bindScope.tip": "\"Visible\" means conversations the sidebar lists; \"hidden\" means conversations such as subagents that the sidebar does not show.",
+    "auto.bindScope.hiddenEmpty": "No hidden conversations to bind.",
+    "auto.bindScope.visibleEmpty": "No visible conversations to bind."
   }
 }

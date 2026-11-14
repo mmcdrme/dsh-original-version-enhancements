@@ -6573,6 +6573,8 @@ window.__ModuleLoader__.load({
       const stampDraft = (next) => ({ ...next, seq: (draftSeq.current += 1) });
       const [bindTasks, setBindTasks] = React.useState([]);
       const [bindPicks, setBindPicks] = React.useState(() => new Set());
+      // Scope of the multi-conversation picker; the experimental switch adds it.
+      const [bindScope, setBindScope] = React.useState('visible');
       const [cleanPending, setCleanPending] = React.useState(false);
       const [detailTab, setDetailTab] = React.useState('edit');
       const [records, setRecords] = React.useState([]);
@@ -7035,6 +7037,7 @@ window.__ModuleLoader__.load({
         const list = Array.isArray(tasks) ? tasks.filter((task) => task !== null && task !== undefined) : [];
         setBindTasks(list);
         setBindPicks(new Set());
+        setBindScope('visible');
         setActionError('');
         setNotice(null);
       };
@@ -7042,6 +7045,7 @@ window.__ModuleLoader__.load({
       const closeBind = () => {
         setBindTasks([]);
         setBindPicks(new Set());
+        setBindScope('visible');
       };
 
       const confirmBind = async () => {
@@ -7204,8 +7208,14 @@ window.__ModuleLoader__.load({
           // copies it created rather than by a title match.
           for (const id of Array.isArray(task?.copySessionIds) ? task.copySessionIds : []) bound.add(id);
         }
-        return sessionOptions.filter((session) => !bound.has(session.id));
-      }, [sessionOptions, bindTasks]);
+        return sessionOptions.filter((session) => {
+          if (bound.has(session.id)) return false;
+          // The experimental switch adds the visible/hidden choice; without it
+          // the picker only ever lists the sessions the client can see.
+          if (!flags.bindScopes) return true;
+          return bindScope === 'hidden' ? session.hidden === true : session.hidden !== true;
+        });
+      }, [sessionOptions, bindTasks, flags.bindScopes, bindScope]);
 
       /** Rows in the bind picker that need their short id to stay distinct. */
       const bindDuplicates = React.useMemo(() => duplicateIdsOf(bindCandidates), [bindCandidates]);
@@ -8037,8 +8047,24 @@ window.__ModuleLoader__.load({
             children: h(React.Fragment, null,
               h('p', { className: 'ove-dialog-target' }, tr('auto.bindTasks')
                 .replace('{names}', bindTasks.map((task) => task.title).join('、'))),
+              // Experimental: choose whether the picker lists the conversations
+              // the client can see or the ones it cannot see.
+              flags.bindScopes
+                ? h('div', { className: 'ove-bind-scope' },
+                  h('div', { className: 'ove-size-group', role: 'group', 'aria-label': tr('auto.bindScope') },
+                    ['visible', 'hidden'].map((scope) => h('button', {
+                      key: scope,
+                      type: 'button',
+                      className: `ove-size${bindScope === scope ? ' is-on' : ''}`,
+                      'aria-pressed': bindScope === scope,
+                      onClick: () => setBindScope(scope),
+                    }, tr(`auto.bindScope.${scope}`)))),
+                  h('p', { className: 'ove-bind-scope-tip' }, tr('auto.bindScope.tip')))
+                : null,
               bindCandidates.length === 0
-                ? h('p', { className: 'ove-muted' }, tr('auto.bindEmpty'))
+                ? h('p', { className: 'ove-muted' }, flags.bindScopes
+                  ? tr(bindScope === 'hidden' ? 'auto.bindScope.hiddenEmpty' : 'auto.bindScope.visibleEmpty')
+                  : tr('auto.bindEmpty'))
                 : h('div', { className: 'ove-session-pick' }, bindCandidates.map((session) => h('label', {
                   className: 'ove-session-option',
                   key: session.id,
