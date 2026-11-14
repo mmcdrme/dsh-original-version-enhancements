@@ -299,7 +299,11 @@
     "batchRestored": "已取消归档 {n} 个会话",
     "batchDeleted": "已永久删除 {n} 个会话",
     "batchDeleteTitle": "批量永久删除",
-    "batchDeleteDesc": "将永久删除选中的 {n} 个会话，删除后无法撤销。"
+    "batchDeleteDesc": "将永久删除选中的 {n} 个会话，删除后无法撤销。",
+    "archiveMonth": "{y}年{m}月",
+    "archiveDay": "{m}月{d}日",
+    "archiveUnknownDate": "未标注日期",
+    "archiveCount": "{n} 个"
   },
   "en": {
     "group": "Work details",
@@ -601,6 +605,10 @@
     "batchRestored": "Unarchived {n} conversations",
     "batchDeleted": "Permanently deleted {n} conversations",
     "batchDeleteTitle": "Delete permanently",
-    "batchDeleteDesc": "This permanently deletes the {n} selected conversations and cannot be undone."
+    "batchDeleteDesc": "This permanently deletes the {n} selected conversations and cannot be undone.",
+    "archiveMonth": "{y}-{m}",
+    "archiveDay": "{m}-{d}",
+    "archiveUnknownDate": "Unknown date",
+    "archiveCount": "{n}"
   }
 }

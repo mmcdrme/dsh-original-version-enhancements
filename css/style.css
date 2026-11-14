@@ -123,17 +123,40 @@
 .ove-search:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: -1px; }
 .ove-muted { margin: 0; font-size: 14px; line-height: 22px; color: var(--dsw-alias-label-tertiary); }
 .ove-error { margin: 0; font-size: 13px; line-height: 20px; color: var(--dsw-alias-state-error-primary); }
-.ove-row-item { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 14px 0; }
-.ove-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 0 0 10px; }
+.ove-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 0 0 10px; padding: 0 14.5px; }
 .ove-check-all { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--dsw-alias-label-secondary); cursor: pointer; }
 .ove-check { width: 14px; height: 14px; margin: 0; flex: none; accent-color: #3b82f6; cursor: pointer; }
 .ove-sort { display: flex; gap: 6px; }
-.ove-row-item.is-selected { background: color-mix(in srgb, #3b82f6 6%, transparent); border-radius: 8px; }
+.ove-arc-card { padding-top: 6px; padding-bottom: 6px; }
+/* One row shape for groups and sessions: a fixed checkbox column so every
+   level (and the select-all box) lines up, with the tree indent applied to
+   the text area only. */
+.ove-arc-item {
+  display: flex; align-items: center; gap: 10px;
+  margin: 1px -10px; padding: 7px 10px; border-radius: 10px;
+  transition: background-color .14s ease;
+}
+.ove-arc-main { display: flex; align-items: center; gap: 12px; flex: 1 1 auto; min-width: 0; }
+.ove-arc-row:hover { background: color-mix(in srgb, var(--dsw-alias-label-primary) 6%, transparent); }
+.ove-arc-row.is-selected { background: color-mix(in srgb, #3b82f6 10%, transparent); }
+.ove-arc-row.is-selected:hover { background: color-mix(in srgb, #3b82f6 16%, transparent); }
+.ove-arc-group {
+  cursor: pointer; font-size: 12px; font-weight: 600; letter-spacing: .02em;
+  color: var(--dsw-alias-label-secondary);
+}
+.ove-arc-group:hover { background: color-mix(in srgb, var(--dsw-alias-label-primary) 5%, transparent); }
+.ove-arc-caret {
+  width: 8px; height: 8px; flex: none; margin-right: -2px;
+  border-right: 1.6px solid currentColor; border-bottom: 1.6px solid currentColor;
+  transform: rotate(45deg) translateY(-1px); transition: transform .15s ease; opacity: .55;
+}
+.ove-arc-caret.is-folded { transform: rotate(-45deg); }
+.ove-arc-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ove-arc-count { margin-left: auto; flex: none; font-weight: 400; color: var(--dsw-alias-label-tertiary); }
 /* Row actions stay out of the way until the row is hovered or focused. */
-.ove-row-item .ove-actions { opacity: 0; pointer-events: none; transition: opacity .12s ease; }
-.ove-row-item:hover .ove-actions,
-.ove-row-item:focus-within .ove-actions { opacity: 1; pointer-events: auto; }
-.ove-row-item + .ove-row-item { border-top: .5px solid var(--dsw-alias-border-l1); }
+.ove-arc-row .ove-actions { opacity: 0; pointer-events: none; transition: opacity .12s ease; }
+.ove-arc-row:hover .ove-actions,
+.ove-arc-row:focus-within .ove-actions { opacity: 1; pointer-events: auto; }
 .ove-item-text { flex: 1 1 180px; min-width: 0; display: grid; gap: 2px; }
 .ove-item-title { font-size: 14px; line-height: 22px; overflow-wrap: anywhere; }
 .ove-item-sub { font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-tertiary); }

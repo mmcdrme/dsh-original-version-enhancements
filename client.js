@@ -1903,6 +1903,7 @@ window.__ModuleLoader__.load({
       const [selected, setSelected] = React.useState(() => new Set());
       const [batchBusy, setBatchBusy] = React.useState(false);
       const [batchConfirm, setBatchConfirm] = React.useState(false);
+      const [collapsed, setCollapsed] = React.useState(() => new Set());
 
       const normalized = query.trim();
 
@@ -1947,10 +1948,16 @@ window.__ModuleLoader__.load({
       for (const workspace of workspaces?.items ?? []) {
         for (const id of workspace.sessionIds ?? []) owners.set(id, workspace.title);
       }
+      const stampOf = (id) => {
+        const raw = sessions?.byId?.[id]?.updatedAt ?? sessions?.byId?.[id]?.createdAt ?? '';
+        // The store hands out epoch milliseconds; older shapes hand out ISO.
+        if (typeof raw === 'number' && Number.isFinite(raw)) return raw;
+        return Date.parse(String(raw)) || 0;
+      };
       const rows = archivedIds.map((id, index) => ({
         id,
         order: index,
-        stamp: Date.parse(sessions?.byId?.[id]?.updatedAt ?? sessions?.byId?.[id]?.createdAt ?? '') || 0,
+        stamp: stampOf(id),
         title: sessions?.byId?.[id]?.displayTitle || id,
         workspace: owners.get(id) || tr('ungrouped'),
         snippet: matches.get(id),
@@ -1973,6 +1980,81 @@ window.__ModuleLoader__.load({
           return next;
         });
       };
+      const toggleIds = (ids) => {
+        setSelected((current) => {
+          const next = new Set(current);
+          const every = ids.length > 0 && ids.every((id) => next.has(id));
+          for (const id of ids) {
+            if (every) next.delete(id);
+            else next.add(id);
+          }
+          return next;
+        });
+      };
+      const toggleCollapsed = (key) => {
+        setCollapsed((current) => {
+          const next = new Set(current);
+          if (next.has(key)) next.delete(key);
+          else next.add(key);
+          return next;
+        });
+      };
+      const groupState = (ids) => {
+        const marked = ids.filter((id) => selected.has(id)).length;
+        return { checked: ids.length > 0 && marked === ids.length, mixed: marked > 0 && marked < ids.length };
+      };
+
+      /** Month / day labels for the time tree; missing stamps group at the end. */
+      const calendarOf = (stamp) => {
+        if (!stamp) return null;
+        const date = new Date(stamp);
+        if (Number.isNaN(date.getTime())) return null;
+        const month = date.getMonth() + 1;
+        const day = date.getDate();
+        return {
+          monthKey: `${date.getFullYear()}-${String(month).padStart(2, '0')}`,
+          monthLabel: tr('archiveMonth').replace('{y}', String(date.getFullYear())).replace('{m}', String(month)),
+          dayKey: `${date.getFullYear()}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`,
+          dayLabel: tr('archiveDay').replace('{m}', String(month)).replace('{d}', String(day)),
+        };
+      };
+
+      // Two levels for both orders: a workspace, or month -> day.
+      const groups = (() => {
+        if (sort === 'workspace') {
+          const byName = new Map();
+          for (const row of rows) {
+            const key = `w:${row.workspace}`;
+            const group = byName.get(key) ?? { key, label: row.workspace, rows: [] };
+            group.rows.push(row);
+            byName.set(key, group);
+          }
+          return [...byName.values()]
+            .sort((left, right) => left.label.localeCompare(right.label, 'zh-Hans-CN'));
+        }
+        const byMonth = new Map();
+        for (const row of rows) {
+          const parts = calendarOf(row.stamp);
+          const monthKey = parts === null ? 'unknown' : parts.monthKey;
+          let month = byMonth.get(monthKey);
+          if (month === undefined) {
+            month = { key: `m:${monthKey}`, label: parts === null ? tr('archiveUnknownDate') : parts.monthLabel, days: [] };
+            byMonth.set(monthKey, month);
+          }
+          const dayKey = parts === null ? 'unknown' : parts.dayKey;
+          let day = month.days.find((entry) => entry.key === `d:${dayKey}`);
+          if (day === undefined) {
+            day = { key: `d:${dayKey}`, label: parts === null ? tr('archiveUnknownDate') : parts.dayLabel, rows: [] };
+            month.days.push(day);
+          }
+          day.rows.push(row);
+        }
+        return [...byMonth.values()];
+      })();
+      const idsOf = (group) => (sort === 'workspace'
+        ? group.rows.map((row) => row.id)
+        : group.days.reduce((all, day) => all.concat(day.rows.map((row) => row.id)), []));
+      const idsOfDay = (day) => day.rows.map((row) => row.id);
       const changeSort = (next) => {
         setSort(next);
         try { globalThis.localStorage?.setItem(ARCHIVE_SORT_KEY, next); } catch { /* best effort */ }
@@ -2088,6 +2170,65 @@ window.__ModuleLoader__.load({
         if (done > 0) setNotice(tr('batchDeleted').replace('{n}', String(done)));
       };
 
+      const groupHead = (key, label, ids, depth) => {
+        const state = groupState(ids);
+        const folded = collapsed.has(key);
+        return h('div', {
+          key,
+          className: 'ove-arc-item ove-arc-group',
+          role: 'treeitem',
+          'aria-expanded': !folded,
+          onClick: (event) => {
+            if (event.target instanceof Element && event.target.tagName === 'INPUT') return;
+            toggleCollapsed(key);
+          },
+        },
+          h('input', {
+            type: 'checkbox',
+            className: 'ove-check',
+            checked: state.checked,
+            ref: (el) => { if (el !== null) el.indeterminate = state.mixed; },
+            'aria-label': label,
+            onClick: (event) => event.stopPropagation(),
+            onChange: () => toggleIds(ids),
+          }),
+          h('div', { className: 'ove-arc-main', style: { paddingLeft: `${depth * 16}px` } },
+            h('span', { className: `ove-arc-caret${folded ? ' is-folded' : ''}`, 'aria-hidden': 'true' }),
+            h('span', { className: 'ove-arc-label' }, label)),
+          h('span', { className: 'ove-arc-count' }, tr('archiveCount').replace('{n}', String(ids.length))));
+      };
+
+      const sessionRow = (row, depth) => h('div', {
+        key: row.id,
+        className: `ove-arc-item ove-arc-row${selected.has(row.id) ? ' is-selected' : ''}`,
+        role: 'treeitem',
+      },
+        h('input', {
+          type: 'checkbox',
+          className: 'ove-check',
+          checked: selected.has(row.id),
+          'aria-label': `${tr('selectRow')} ${row.title}`,
+          onChange: () => toggleSelected(row.id),
+        }),
+        h('div', { className: 'ove-arc-main', style: { paddingLeft: `${depth * 16}px` } },
+          h('div', { className: 'ove-item-text' },
+            h('div', { className: 'ove-item-title' }, row.title),
+            h('div', { className: 'ove-item-sub' }, row.workspace),
+            row.snippet !== undefined && h('p', { className: 'ove-snippet' }, row.snippet)),
+          h('div', { className: 'ove-actions' },
+            h('button', {
+              type: 'button',
+              className: 'ove-btn',
+              disabled: busy !== null || batchBusy,
+              onClick: () => restore(row),
+            }, busy === row.id ? tr('restoring') : tr('restore')),
+            h('button', {
+              type: 'button',
+              className: 'ove-btn ove-btn-danger',
+              disabled: busy !== null || batchBusy,
+              onClick: () => openDelete(row),
+            }, tr('delete')))));
+
       return h(React.Fragment, null,
         h('style', { key: 'styles', 'data-plugin-css': `${NS}-archives` }, CSS),
         h('div', { className: 'ove-page' },
@@ -2145,37 +2286,20 @@ window.__ModuleLoader__.load({
                 onClick: () => setBatchConfirm(true),
               }, tr('batchDelete')))),
 
-          rows.length > 0 && h('div', { className: 'ove-card' },
-            rows.map((row) => h('div', {
-              key: row.id,
-              className: `ove-row-item${selected.has(row.id) ? ' is-selected' : ''}`,
-            },
-              h('input', {
-                type: 'checkbox',
-                className: 'ove-check',
-                checked: selected.has(row.id),
-                'aria-label': `${tr('selectRow')} ${row.title}`,
-                onChange: () => toggleSelected(row.id),
-              }),
-              h('div', { className: 'ove-item-text' },
-                h('div', { className: 'ove-item-title' }, row.title),
-                h('div', { className: 'ove-item-sub' }, row.workspace),
-                row.snippet !== undefined && h('p', { className: 'ove-snippet' }, row.snippet)),
-              h('div', { className: 'ove-actions' },
-                h('button', {
-                  type: 'button',
-                  className: 'ove-btn',
-                  disabled: busy !== null || batchBusy,
-                  onClick: () => restore(row),
-                }, busy === row.id ? tr('restoring') : tr('restore')),
-                h('button', {
-                  type: 'button',
-                  className: 'ove-btn ove-btn-danger',
-                  disabled: busy !== null || batchBusy,
-                  onClick: () => {
-                    openDelete(row);
-                  },
-                }, tr('delete')))))),
+          rows.length > 0 && h('div', {
+            className: 'ove-card ove-arc-card',
+            role: 'tree',
+            'aria-label': tr('archivesTitle'),
+          },
+            sort === 'workspace'
+              ? groups.map((group) => h(React.Fragment, { key: group.key },
+                groupHead(group.key, group.label, idsOf(group), 0),
+                collapsed.has(group.key) ? null : group.rows.map((row) => sessionRow(row, 1))))
+              : groups.map((month) => h(React.Fragment, { key: month.key },
+                groupHead(month.key, month.label, idsOf(month), 0),
+                collapsed.has(month.key) ? null : month.days.map((day) => h(React.Fragment, { key: day.key },
+                  groupHead(day.key, day.label, idsOfDay(day), 1),
+                  collapsed.has(day.key) ? null : day.rows.map((row) => sessionRow(row, 2))))))),
 
           h('p', { className: 'ove-footnote' }, tr('footnote'))),
 
