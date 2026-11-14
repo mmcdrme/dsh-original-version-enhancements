@@ -3501,13 +3501,16 @@ window.__ModuleLoader__.load({
 .ove-sub-row:hover { background: color-mix(in srgb, var(--dsw-alias-label-primary) 6%, transparent); }
 .ove-sub-row.is-active { background: color-mix(in srgb, #3b82f6 12%, transparent); }
 .ove-sub-row:focus-visible { outline: 2px solid #3b82f6; outline-offset: -2px; }
+/* The arrow owns a fixed column that already includes the count badge, so a
+   row with two children and one with a single child start the level number and
+   the name at exactly the same x. */
 .ove-sub-caret-btn {
-  flex: none; display: inline-flex; align-items: center; justify-content: center; gap: 1px;
-  min-width: 10px; height: 16px; padding: 0; border: 0; background: transparent;
+  flex: none; display: inline-flex; align-items: center; justify-content: flex-start; gap: 1px;
+  width: 20px; height: 16px; padding: 0; border: 0; background: transparent;
   color: var(--dsw-alias-label-tertiary); cursor: pointer;
 }
-.ove-sub-caret-count { flex: none; margin-right: 2px; font-size: 10px; line-height: 16px; font-variant-numeric: tabular-nums; opacity: .9; }
-.ove-sub-caret-slot { flex: none; width: 10px; height: 16px; }
+.ove-sub-caret-count { flex: none; font-size: 10px; line-height: 16px; font-variant-numeric: tabular-nums; opacity: .9; }
+.ove-sub-caret-slot { flex: none; width: 20px; height: 16px; }
 /* The lead cluster owns one fixed 18px column before the name: the caret,
    status marker and level dot are packed against its right edge, so the deepest
    element (the dot) touches the name and every name starts in the shipped
@@ -3565,12 +3568,14 @@ window.__ModuleLoader__.load({
 /* Depth marker before the name: a dot for direct children, dot-level-dot below
    them, so nesting stays readable now that the rows share one indentation. */
 /* The level is drawn as a blue number instead of a dot prefix; one blank
-   column (6px) separates it from the conversation name. */
+   column (6px) separates it from the conversation name. A row without any
+   subagent shows no number, but keeps the column so its name still lines up. */
 .ove-sub-level {
-  flex: none; margin-right: 6px;
+  flex: none; min-width: 8px; margin-right: 6px;
   font-size: 11px; line-height: 12px; font-weight: 600;
   color: #2563eb; font-variant-numeric: tabular-nums;
 }
+.ove-sub-level.is-empty { visibility: hidden; }
 /* Sibling rows that would read identically carry the catalogue's unique name. */
 .ove-sub-suffix {
   flex: none; margin-left: 2px; font-size: 11px; color: #2563eb;
@@ -4038,7 +4043,7 @@ window.__ModuleLoader__.load({
         // The level is a blue number before the name (no dot prefix), so the
         // nesting reads as a number and same-level rows line up from the left.
         const level = document.createElement('span');
-        level.className = 'ove-sub-level';
+        level.className = `ove-sub-level${kids.length === 0 ? ' is-empty' : ''}`;
         level.setAttribute('aria-hidden', 'true');
         level.textContent = String(depth);
         leadCluster.append(level);
