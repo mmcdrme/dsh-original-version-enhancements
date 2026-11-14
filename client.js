@@ -3461,9 +3461,12 @@ window.__ModuleLoader__.load({
    edge (34px into the row), so every conversation name stays in the same
    column while the arrow reads as part of that name. */
 .ove-sub-toggle {
-  position: absolute; right: calc(100% - 29px); top: 50%; transform: translateY(-50%); z-index: 1;
+  /* Same left edge as a normal conversation's leading icon (20px from the
+     row box at 8px), so the arrow+count sits in that column and leaves the
+     original icon a place instead of squeezing the title. */
+  position: absolute; left: 9px; top: 50%; transform: translateY(-50%); z-index: 1;
   display: inline-flex; align-items: center; justify-content: center; gap: 1px;
-  min-width: 16px; height: 18px; margin: 0; padding: 0 1px;
+  min-width: 0; height: 18px; margin: 0; padding: 0 1px;
   border: 0; border-radius: 5px; background: transparent;
   color: var(--dsw-alias-label-tertiary);
   font: inherit; font-size: 10px; line-height: 18px; font-variant-numeric: tabular-nums;
@@ -3472,7 +3475,7 @@ window.__ModuleLoader__.load({
 /* With a leading icon present the expander joins the row flow, so the original
    icon keeps its column and the title moves right instead of being covered. */
 .ove-sub-toggle.is-inline {
-  position: static; right: auto; top: auto; transform: none;
+  position: static; left: auto; right: auto; top: auto; transform: none;
   /* In flow the box is wider than the caret + count it draws (16px box,
      ~11px content), so its right edge pushes the name away. Cancel the
      title's own 6px left margin instead of leaving that dead space: the
@@ -3990,10 +3993,11 @@ window.__ModuleLoader__.load({
         row.dataset.oveSubagentRow = itemId;
         row.tabIndex = 0;
         row.setAttribute('role', 'treeitem');
-        // Each level indents the whole row by one step: a deeper `●2●` prefix
-        // then pushes the conversation right instead of sliding left into the
-        // row's edge (the marker's right edge is the name's left edge).
-        row.style.paddingLeft = `${8 + Math.max(0, depth - 1) * 12}px`;
+        // The first level starts on the top-level arrow's own column (20px),
+        // and each deeper level starts where the previous level's arrow starts:
+        // the blue number column is 11px wide, so one step is exactly that and
+        // the tree nests without extra blank gaps.
+        row.style.paddingLeft = `${4 + Math.max(0, depth - 1) * 11}px`;
         // One lead cluster, packed against the name. Left to right: the running
         // animation (status marker, only while it has one), the expander (only
         // when the row really expands), then the level dot — whose right edge is
