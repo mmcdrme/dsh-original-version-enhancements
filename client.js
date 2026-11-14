@@ -3481,7 +3481,7 @@ window.__ModuleLoader__.load({
 .ove-sub-caret.is-open { transform: rotate(90deg); }
 .ove-sub-branch { display: block; }
 .ove-sub-row {
-  display: flex; align-items: center; gap: 6px;
+  display: flex; align-items: center; gap: 4px;
   height: 30px; margin: 0 8px; padding: 0 8px; box-sizing: border-box;
   border-radius: 10px; color: var(--dsw-alias-label-primary);
   font-size: 13px; line-height: 30px; cursor: pointer;
@@ -3495,13 +3495,17 @@ window.__ModuleLoader__.load({
   width: 10px; height: 16px; padding: 0; border: 0; background: transparent;
   color: var(--dsw-alias-label-tertiary); cursor: pointer;
 }
-.ove-sub-spacer { flex: none; width: 10px; }
+/* A leaf row has no expander, so it starts at the level marker instead of
+   reserving an empty caret column: no leading blank space before the name. */
 /* The lead cluster: caret or spacer, then the shipped status marker. The slot
    width is fixed so every title starts in the same column. */
 .ove-sub-statusslot {
   flex: none; display: inline-flex; align-items: center; justify-content: center;
   width: 10px; height: 10px;
 }
+/* An idle session draws no marker, so its reserve disappears instead of
+   leaving another blank column in front of the name. */
+.ove-sub-statusslot:empty { display: none; }
 /* Shipped StateDot look: a dot whose colour follows the Session state. */
 .ove-sub-state { position: relative; display: inline-block; flex: none; width: 10px; height: 10px; }
 .ove-sub-state::after {
@@ -3541,8 +3545,11 @@ window.__ModuleLoader__.load({
 }
 /* Depth marker before the name: a dot for direct children, dot-level-dot below
    them, so nesting stays readable now that the rows share one indentation. */
+/* A fixed slot keeps the names in the shipped conversation column (42px)
+   whatever the marker says, so a deeper level marker does not shift it. */
 .ove-sub-level {
-  flex: none; font-size: 9px; line-height: 12px; letter-spacing: .2px;
+  flex: none; min-width: 14px; text-align: center;
+  font-size: 9px; line-height: 12px; letter-spacing: .2px;
   color: var(--dsw-alias-label-secondary); font-variant-numeric: tabular-nums;
 }
 /* Sibling rows that would read identically carry the catalogue's unique name. */
@@ -3960,6 +3967,8 @@ window.__ModuleLoader__.load({
         row.setAttribute('role', 'treeitem');
         // No space indentation any more: every level shares the row's own left
         // padding and the depth is drawn by the `●` / `●2●` marker below.
+        // Only a row that really expands gets a caret column: a leaf row must
+        // not reserve an empty one, which used to look like leading indentation.
         if (kids.length > 0) {
           row.setAttribute('aria-expanded', String(expanded));
           const caretButton = document.createElement('button');
@@ -3973,10 +3982,6 @@ window.__ModuleLoader__.load({
             toggle(itemId);
           });
           row.append(caretButton);
-        } else {
-          const spacer = document.createElement('span');
-          spacer.className = 'ove-sub-spacer';
-          row.append(spacer);
         }
         // A fixed lead slot keeps every title in one column whether or not the
         // row carries a status marker.

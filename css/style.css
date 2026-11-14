@@ -611,7 +611,10 @@
 .ove-task[data-active="true"]:hover { background: color-mix(in srgb, var(--dsw-alias-label-primary) 10%, var(--dsw-alias-bg-base)); }
 /* No UA left margin: the row checkbox must line up with the search box. */
 .ove-task-check {
-  margin-top: 5px; margin-left: 0; width: 15px; height: 15px; flex: none;
+  /* The row is a multi-line block; the old fixed 5px offset parked the box
+     next to the title instead of the row's vertical middle. Centring against
+     the row's own height keeps it level at one line or at four. */
+  align-self: center; margin-top: 0; margin-left: 0; width: 15px; height: 15px; flex: none;
   accent-color: var(--dsw-alias-brand-primary, #4f7cff); cursor: pointer;
   border-radius: 4px;
   transition: box-shadow .12s ease;
