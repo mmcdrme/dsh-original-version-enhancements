@@ -3285,6 +3285,12 @@ window.__ModuleLoader__.load({
   position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
   overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
 }
+/* Depth marker before the name: a dot for direct children, dot-level-dot below
+   them, so nesting stays readable now that the rows share one indentation. */
+.ove-sub-level {
+  flex: none; font-size: 9px; line-height: 12px; letter-spacing: .2px;
+  color: var(--dsw-alias-label-secondary); font-variant-numeric: tabular-nums;
+}
 /* Sibling rows that would read identically carry the catalogue's unique name. */
 .ove-sub-suffix {
   flex: none; margin-left: 2px; font-size: 11px; color: #2563eb;
@@ -3698,9 +3704,8 @@ window.__ModuleLoader__.load({
         row.dataset.oveSubagentRow = itemId;
         row.tabIndex = 0;
         row.setAttribute('role', 'treeitem');
-        // Two spaces of indent for the first level, one more per nested level:
-        // the row no longer wears a bullet, only the lead slot (caret + status).
-        row.style.paddingLeft = `${2 + Math.max(0, depth - 1) * 12}px`;
+        // No space indentation any more: every level shares the row's own left
+        // padding and the depth is drawn by the `●` / `●2●` marker below.
         if (kids.length > 0) {
           row.setAttribute('aria-expanded', String(expanded));
           const caretButton = document.createElement('button');
@@ -3731,6 +3736,13 @@ window.__ModuleLoader__.load({
           lead.append(spoken);
         }
         row.append(lead);
+        // Depth marker: `●` for a direct child, `●<level>●` from the second
+        // layer on, so the nesting stays readable without empty leading space.
+        const level = document.createElement('span');
+        level.className = 'ove-sub-level';
+        level.setAttribute('aria-hidden', 'true');
+        level.textContent = depth <= 1 ? '●' : `●${depth}●`;
+        row.append(level);
         const label = document.createElement('span');
         label.className = 'ove-sub-title';
         label.textContent = titleOf(item, parentId);
