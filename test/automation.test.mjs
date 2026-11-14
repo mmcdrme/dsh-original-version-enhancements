@@ -628,3 +628,101 @@ test('the catalog counts runs once per delivery instead of once per poll', async
   assert.equal(service.historyCalls.length, 2)
   assert.equal(third.body.value.records['task-1'], 1)
 })
+
+test('a weekly rule uses the Host ISO day numbers', async () => {
+  const service = makeService([])
+  const created = []
+  service.create = async (request) => {
+    created.push(request)
+    return { ...baseTask(), id: 'task-new', ...request }
+  }
+  const surface = makeSurface(service, { version: 2, autoClean: {}, ephemeral: {} })
+
+  // 7 = Sunday in the Host contract; it used to be rejected as out of range
+  // while a 0 (which the Host rejects) was accepted here and failed there.
+  const sunday = await call(surface.handlers.create, {
+    title: 'Sunday check',
+    prompt: 'Check it.',
+    timing: { kind: 'weekly', weekly: { time: '09:00', time_zone: 'Asia/Shanghai', weekdays: [7] } },
+  })
+  assert.equal(sunday.status, 200)
+  assert.deepEqual(created[0].timing.weekly.weekdays, [7])
+
+  const zero = await call(surface.handlers.create, {
+    title: 'Bad day',
+    prompt: 'Check it.',
+    timing: { kind: 'weekly', weekly: { time: '09:00', time_zone: 'Asia/Shanghai', weekdays: [0] } },
+  })
+  assert.equal(zero.status, 400)
+  assert.equal(zero.body.error.code, 'invalid-timing')
+  assert.equal(created.length, 1)
+})
+
+test('a task title is capped at the Host limit, not a longer local one', async () => {
+  const service = makeService([])
+  service.create = async (request) => ({ ...baseTask(), id: 'task-new', ...request })
+  const surface = makeSurface(service, { version: 2, autoClean: {}, ephemeral: {} })
+  const payload = (title) => ({
+    title,
+    prompt: 'Check it.',
+    timing: { kind: 'daily', daily: { time: '09:00', time_zone: 'Asia/Shanghai' } },
+  })
+
+  const tooLong = await call(surface.handlers.create, payload('x'.repeat(121)))
+  assert.equal(tooLong.status, 400)
+  assert.equal(tooLong.body.error.code, 'invalid-task')
+
+  const atLimit = await call(surface.handlers.create, payload('x'.repeat(120)))
+  assert.equal(atLimit.status, 200)
+})
+
+test('a run record keeps the prompt that was delivered', async () => {
+  const task = {
+    ...baseTask(),
+    prompt: 'current text after an edit',
+    receipts: [{
+      messageId: 'message-1',
+      deliveredAt: '2026-01-01T00:00:00.000Z',
+      scheduledAt: '2026-01-01T00:00:00.000Z',
+      targetSessionId: 'session-1',
+      prompt: 'text delivered at the time',
+    }],
+  }
+  const service = makeService([task])
+  const surface = makeSurface(service, { version: 2, autoClean: {}, ephemeral: {} })
+
+  const result = await call(surface.handlers.history, { id: 'task-1' })
+
+  assert.equal(result.status, 200)
+  assert.equal(result.body.value.records[0].prompt, 'text delivered at the time')
+})
+
+test('two immediate deliveries cannot each build a clone', async () => {
+  const original = baseTask()
+  original.deliveryFloorEndsAt = new Date(Date.now() + 30_000).toISOString()
+  const service = makeService([original])
+  const state = { version: 2, autoClean: {}, ephemeral: {} }
+  service.run = async () => ({ id: 'task-1', code: 'schedule_execution_pending' })
+  const create = service.create.bind(service)
+  let release
+  const gate = new Promise((resolve) => { release = resolve })
+  service.create = async (request) => {
+    await gate
+    return create(request)
+  }
+  const surface = makeSurface(service, state)
+
+  const firstCall = call(surface.handlers.run, { id: 'task-1', withinInterval: true })
+  // Let the first request reach the clone branch, then race a second one.
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  const second = await call(surface.handlers.run, { id: 'task-1', withinInterval: true })
+  release()
+  const first = await firstCall
+
+  assert.equal(second.status, 409)
+  assert.equal(second.body.error.code, 'schedule-run-busy')
+  assert.equal(first.status, 200)
+  // Exactly one clone was built and removed: the reminder went out once.
+  assert.equal(service.created.length, 1)
+  assert.deepEqual(state.ephemeral, {})
+})

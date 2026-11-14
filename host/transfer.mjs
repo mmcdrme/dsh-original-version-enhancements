@@ -114,25 +114,29 @@ const materializeCopy = async (deps, meta, events) => {
   // The persistence header of a seeded log must carry its inherited prefix
   // length; without it the backend refuses to materialize the copy at all.
   const handle = await sessionPersistence.create(meta, meta.isSeeded ? { inheritedEventCount: inherited } : undefined)
+  // `create` has already published the header, so any later failure leaves a
+  // session the backend can list. Remove what this call created before reporting
+  // the failure, so a failed copy never lingers as a second log for one id.
+  const discard = async (error) => {
+    const problem = error instanceof Error ? error : new Error(String(error))
+    const removed = await removeCopyWhileReserved(deps, meta.id)
+    problem.copyCleanup = removed ? 'done' : 'failed'
+    return problem
+  }
   try {
     await handle.append(events)
     await handle.flush()
-    // Never file a copy that has no durable log: a half-written session shows up
-    // in the sidebar and then refuses to open its history. Verify while the
-    // failure is still recoverable rather than leaving the shell behind.
-    await verifyMaterialized(sessionPersistence, meta.id, events.length)
   } catch (error) {
-    // `create` has already published the header, so append/flush/verify failing
-    // (full disk, EIO, short log) leaves a session the backend can list. The
-    // old code left exactly that behind: a second log for one id after a failed
-    // move. Remove what this call created before reporting the failure.
     try { await handle.close() } catch { /* the leased handle is already gone */ }
-    const removed = await removeCopyWhileReserved(deps, meta.id)
-    const problem = error instanceof Error ? error : new Error(String(error))
-    problem.copyCleanup = removed ? 'done' : 'failed'
-    throw problem
-  } finally {
-    try { await handle.close() } catch { /* flush already settled the log */ }
+    throw await discard(error)
+  }
+  try { await handle.close() } catch { /* flush already settled the log */ }
+  // Verify after the write lease is closed: the check reopens the copy, and a
+  // backend that hands out one lease per id would refuse it while still held.
+  try {
+    await verifyMaterialized(sessionPersistence, meta.id, events)
+  } catch (error) {
+    throw await discard(error)
   }
   try {
     sessionProjectionCache?.coldSnapshot?.(meta, inherited, events)
@@ -169,16 +173,23 @@ export const waitForCachedProjection = async (cache, meta, timeoutMs = 800) => {
 
 /**
  * Confirm the copy reached durable storage with at least its whole log.
+ *
+ * The JSONL backend's `stat()` hands out `header`/`revision`/`sizeBytes` and no
+ * event count, so the old `eventCount` branch could never fire. Reading the copy
+ * back through the persistence API is the check that works on every backend: a
+ * short, truncated or unreadable log is refused here, while the failure is still
+ * recoverable.
  * @param persistence - the JSONL backend.
  * @param sessionId - the copy's identity.
- * @param expectedEvents - how many events the copy must carry.
- * @throws when the session is unknown to the backend or its log is empty/short.
+ * @param events - the source events the copy must carry.
+ * @throws when the session is unknown to the backend or its log is short/empty.
  */
-const verifyMaterialized = async (persistence, sessionId, expectedEvents) => {
+const verifyMaterialized = async (persistence, sessionId, events) => {
+  const expected = Array.isArray(events) ? events.length : 0
   const snapshot = await persistence.stat(sessionId).catch(() => undefined)
   if (snapshot === undefined) throw new Error('宿主没有落盘复制出的会话')
-  if (typeof snapshot.eventCount === 'number' && snapshot.eventCount < expectedEvents) {
-    throw new Error(`复制出的会话日志不完整（${snapshot.eventCount}/${expectedEvents} 条事件）`)
+  if (typeof snapshot.eventCount === 'number' && expected > 0 && snapshot.eventCount < expected) {
+    throw new Error(`复制出的会话日志不完整（${snapshot.eventCount}/${expected} 条事件）`)
   }
   if (typeof snapshot.sizeBytes === 'number' && snapshot.sizeBytes === 0) {
     throw new Error('复制出的会话日志为空')
@@ -187,6 +198,22 @@ const verifyMaterialized = async (persistence, sessionId, expectedEvents) => {
   if (location?.kind === 'jsonl' && typeof location.path === 'string') {
     const info = await stat(location.path).catch(() => undefined)
     if (info === undefined || !info.isFile() || info.size === 0) throw new Error('复制出的会话日志没有落盘')
+  }
+  if (expected === 0 || typeof persistence.open !== 'function') return
+  let copied
+  try {
+    const handle = await persistence.open(sessionId, 'read')
+    try {
+      const read = await handle.read()
+      copied = Array.isArray(read?.events) ? read.events : []
+    } finally {
+      try { await handle.close() } catch { /* the lease is already gone */ }
+    }
+  } catch {
+    throw new Error('复制出的会话无法读回')
+  }
+  if (copied.length < expected) {
+    throw new Error(`复制出的会话日志不完整（${copied.length}/${expected} 条事件）`)
   }
 }
 

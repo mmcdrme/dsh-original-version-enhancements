@@ -130,16 +130,59 @@ window.__ModuleLoader__.load({
     };
 
     /**
+     * Symbols a US layout produces with Shift, mapped back to the key that
+     * carries them. Recorded as-is, `Shift` + `=` became the binding
+     * `shift++`, which could never be split back into modifiers and key, so the
+     * shortcut silently never fired and its label read `Shift +  + `.
+     */
+    const UNSHIFTED_SYMBOL = {
+      '+': '=', '_': '-', '{': '[', '}': ']', '|': '\\', ':': ';', '"': "'",
+      '<': ',', '>': '.', '?': '/', '~': '`',
+      '!': '1', '@': '2', '#': '3', '$': '4', '%': '5', '^': '6', '&': '7', '*': '8', '(': '9', ')': '0',
+    };
+    /** The shifted symbol of one base key, for display and matching. */
+    const SHIFTED_SYMBOL = {
+      '=': '+', '-': '_', '[': '{', ']': '}', '\\': '|', ';': ':', "'": '"',
+      ',': '<', '.': '>', '/': '?', '`': '~',
+      '1': '!', '2': '@', '3': '#', '4': '$', '5': '%', '6': '^', '7': '&', '8': '*', '9': '(', '0': ')',
+    };
+
+    /**
+     * Split a stored binding into its modifiers and its key.
+     * @param combo - the stored combination.
+     * @returns the modifier names and the key (which may itself be `+`).
+     */
+    const splitCombo = (combo) => {
+      if (typeof combo !== 'string' || combo.length === 0) return { modifiers: [], key: '' };
+      let text = combo;
+      let key;
+      if (text.endsWith('++')) {
+        // An older build stored Shift+= as `shift++`; the trailing `+` is the key.
+        key = '+';
+        text = text.slice(0, -2);
+      } else {
+        const at = text.lastIndexOf('+');
+        if (at < 0) return { modifiers: [], key: text };
+        key = text.slice(at + 1);
+        text = text.slice(0, at);
+      }
+      return { modifiers: text.length === 0 ? [] : text.split('+').filter(Boolean), key };
+    };
+
+    /**
      * Read one keyboard event as a stored binding (`alt+p`).
      * @param event - a keyboard event.
      * @returns the combination, or undefined for a modifier-only or unmodified stroke.
      */
     const comboOfEvent = (event) => {
-      const key = typeof event.key === 'string' ? event.key.toLowerCase() : '';
-      if (key.length === 0 || MODIFIER_KEYS.has(key)) return undefined;
+      const raw = typeof event.key === 'string' ? event.key.toLowerCase() : '';
+      if (raw.length === 0 || MODIFIER_KEYS.has(raw)) return undefined;
+      // A shifted symbol is stored as the physical key plus the shift modifier,
+      // so the same stroke round-trips through matching and labelling.
+      const key = UNSHIFTED_SYMBOL[raw] ?? raw;
       const modifiers = modifiersOf(event);
       if (modifiers.length === 0) return undefined;
-      return [...modifiers, key].join('+');
+      return [...new Set([...modifiers, key])].join('+');
     };
 
     /**
@@ -154,17 +197,20 @@ window.__ModuleLoader__.load({
      * @returns true when every modifier and the key match.
      */
     const matchesCombo = (combo, event) => {
-      if (typeof combo !== 'string' || combo.length === 0) return false;
-      const parts = combo.split('+');
-      const key = parts.pop();
-      if (key === undefined || key.length === 0) return false;
-      const wanted = new Set(parts);
+      const { modifiers, key } = splitCombo(combo);
+      if (key.length === 0) return false;
+      const wanted = new Set(modifiers);
       const pressed = new Set(modifiersOf(event));
       if (wanted.size !== pressed.size) return false;
       for (const name of wanted) if (!pressed.has(name)) return false;
       const reported = typeof event.key === 'string' ? event.key.toLowerCase() : '';
       const physical = keyOfCode(event.code);
-      return reported === key || (physical.length > 0 && physical === key);
+      // Compare in the unshifted form so `Shift` + `=` matches whether the
+      // browser reports `+` or `=`, and so a stored `+` (legacy `shift++`) still
+      // works.
+      const wantedBase = UNSHIFTED_SYMBOL[key] ?? key;
+      const reportedBase = UNSHIFTED_SYMBOL[reported] ?? reported;
+      return wantedBase === reportedBase || (physical.length > 0 && physical === wantedBase);
     };
 
     /** Human-readable label of a binding (`alt+p` → `Alt + P`). */
@@ -175,11 +221,16 @@ window.__ModuleLoader__.load({
         ' ': 'Space', arrowup: '↑', arrowdown: '↓', arrowleft: '←', arrowright: '→',
         enter: 'Enter', escape: 'Esc', tab: 'Tab', backspace: 'Backspace', delete: 'Delete',
       };
-      return combo.split('+').map((part, index, all) => {
-        if (names[part] !== undefined) return names[part];
-        if (special[part] !== undefined && index === all.length - 1) return special[part];
-        return part.length === 1 ? part.toUpperCase() : part.charAt(0).toUpperCase() + part.slice(1);
-      }).join(' + ');
+      const { modifiers, key } = splitCombo(combo);
+      const parts = modifiers.map((name) => names[name] ?? name);
+      if (key.length > 0) {
+        // Show the character the human actually pressed: Shift + `=` renders as
+        // Shift + `+`, not Shift + `=` (and never as an empty middle part).
+        const shifted = modifiers.includes('shift') ? SHIFTED_SYMBOL[key] : undefined;
+        const shown = shifted ?? key;
+        parts.push(special[key] ?? (shown.length === 1 ? shown.toUpperCase() : shown.charAt(0).toUpperCase() + shown.slice(1)));
+      }
+      return parts.join(' + ');
     };
 
     const readRecall = () => {
@@ -259,7 +310,11 @@ window.__ModuleLoader__.load({
     };
 
     const rememberSentText = (text) => {
-      const before = getHistory();
+      // Start from what is on disk now: every window shares this storage, and
+      // merging into the snapshot this page loaded at startup made the later
+      // writer drop whatever another window had added since (or resurrect what
+      // it had just cleared).
+      const before = readHistory();
       const after = nextHistory(before, text, recallState.max);
       if (after.length === before.length && after.every((item, index) => item === before[index])) return;
       publishHistory(after);
@@ -323,10 +378,12 @@ window.__ModuleLoader__.load({
         return;
       }
       if (typeof sessionId !== 'string' || sessionId.length === 0) return;
-      const before = historyForSession(sessionId);
+      const latest = readSessionHistories();
+      const before = Array.isArray(latest[sessionId]) ? latest[sessionId] : [];
       const after = nextHistory(before, text, recallState.max);
       if (after.length === before.length && after.every((item, index) => item === before[index])) return;
-      publishSessionHistories({ ...sessionHistorySnapshot, [sessionId]: after });
+      // Write the freshest table, not this window's startup copy.
+      publishSessionHistories({ ...latest, [sessionId]: after });
     };
 
     /** How many messages the current mode holds (the page's counter). */
@@ -338,6 +395,36 @@ window.__ModuleLoader__.load({
     const useSentHistoryCount = () => React.useSyncExternalStore(subscribeHistory, sentHistoryCount, sentHistoryCount);
 
     /** Drop every recorded message, in both shapes. */
+    /**
+     * Re-read both stores after another window wrote them.
+     *
+     * Without this, a window kept walking (and re-writing) the list it loaded at
+     * startup: one window's clear left the other sending from a stale list that
+     * put every cleared message back.
+     */
+    const syncSentHistory = () => {
+      const list = readHistory();
+      const same = list.length === historySnapshot.length
+        && list.every((item, index) => item === historySnapshot[index]);
+      if (!same) {
+        historySnapshot = list;
+        for (const listener of historyListeners) listener();
+      }
+      const table = readSessionHistories();
+      if (JSON.stringify(table) !== JSON.stringify(sessionHistorySnapshot)) {
+        sessionHistorySnapshot = table;
+        for (const listener of historyListeners) listener();
+      }
+    };
+
+    if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+      window.addEventListener('storage', (event) => {
+        // `key === null` is a whole-store clear from another window.
+        if (event?.key !== null && event?.key !== HISTORY_KEY && event?.key !== HISTORY_SESSIONS_KEY) return;
+        syncSentHistory();
+      });
+    }
+
     const clearAllSentHistory = () => {
       publishHistory([]);
       publishSessionHistories({});
@@ -409,8 +496,16 @@ window.__ModuleLoader__.load({
         const storage = globalThis.localStorage;
         if (storage === null || storage === undefined) return publishDetached(next);
         const now = Date.now();
+        // Snapshot the keys before dropping any: `removeItem` shifts every later
+        // index down, so removing during the loop skipped the next key — and the
+        // skipped one could be a live window, which was then reported gone and
+        // closed by the panel's reconciler.
+        const keys = [];
         for (let index = 0; index < storage.length; index += 1) {
           const key = storage.key(index);
+          if (typeof key === 'string') keys.push(key);
+        }
+        for (const key of keys) {
           const id = detachedSessionOf(key);
           if (id.length === 0) continue;
           if (!detachedAlive(readDetachedBeat(id), now)) {
@@ -1451,8 +1546,13 @@ window.__ModuleLoader__.load({
       sessionRef.current = sessionId;
       /** The last non-blank draft, i.e. the text a submission would carry. */
       const lastText = React.useRef(null);
-      /** When the composer was last in flight (`sending`/`submitting`). */
-      const inFlightAt = React.useRef(0);
+      /**
+       * The text a submission is carrying, captured when the composer leaves
+       * `plain`. A blank draft when it comes back means the Host accepted it; a
+       * restored draft means it was refused. Guessing from a 3-second window
+       * recorded refusals (manually cleared right after) and missed slow hosts.
+       */
+      const pendingSend = React.useRef(null);
       /** -1 = not walking the history; 0 = the newest entry. */
       const cursor = React.useRef(-1);
       /** The Session this bridge last tracked; a change starts a fresh walk. */
@@ -1486,21 +1586,22 @@ window.__ModuleLoader__.load({
         if (seenSession.current !== sessionId) {
           seenSession.current = sessionId;
           lastText.current = null;
-          inFlightAt.current = 0;
+          pendingSend.current = null;
           cursor.current = -1;
           shown.current = null;
           return;
         }
         const text = typeof draft === 'string' ? draft : '';
-        if (phase !== 'plain') inFlightAt.current = Date.now();
-        if (text.trim().length > 0) {
-          lastText.current = text;
-        } else if (lastText.current !== null) {
-          if (Date.now() - inFlightAt.current <= 3000) {
-            rememberSentTextFor(sessionRef.current, lastText.current);
-          }
-          lastText.current = null;
+        if (phase !== 'plain') {
+          // The composer is in flight: remember exactly what it is sending.
+          if (pendingSend.current === null && lastText.current !== null) pendingSend.current = lastText.current;
+        } else if (pendingSend.current !== null) {
+          // Back to `plain`. The draft is still there if the Host refused the
+          // submission; it is blank only when the submission was accepted.
+          if (text.trim().length === 0) rememberSentTextFor(sessionRef.current, pendingSend.current);
+          pendingSend.current = null;
         }
+        lastText.current = text.trim().length > 0 ? text : null;
         // Any edit of a recalled draft ends the walk: the next stroke starts
         // again from the newest entry instead of continuing from a stale index.
         if (shown.current !== null && text !== shown.current) {
@@ -1563,6 +1664,9 @@ window.__ModuleLoader__.load({
       React.useEffect(() => {
         if (!recording) return undefined;
         const onKeyDown = (event) => {
+          // An IME composition key must never become a binding: the keystroke
+          // belongs to the input method, not to the shortcut.
+          if (event.isComposing || event.keyCode === 229) return;
           event.preventDefault();
           event.stopPropagation();
           if (event.key === 'Escape') {
@@ -2060,8 +2164,16 @@ window.__ModuleLoader__.load({
           setMatches(new Map());
           setHasMore(false);
           setSearching(false);
+          // A failure banner belongs to the query that failed; clearing the box
+          // must not leave it on screen.
+          setSearchError('');
           return undefined;
         }
+        // A new query starts from no hits: the previous query's snippets used to
+        // survive and (through the `|| row.snippet !== undefined` filter) keep
+        // matching rows on screen, as if they matched the new text.
+        setMatches(new Map());
+        setHasMore(false);
         const controller = new AbortController();
         const timer = setTimeout(async () => {
           setSearching(true);
@@ -2083,7 +2195,12 @@ window.__ModuleLoader__.load({
             setMatches(next);
             setHasMore(body.value?.hasMore === true);
           } catch (error) {
-            if (!controller.signal.aborted) setSearchError(describeRequestFailure(error));
+            if (!controller.signal.aborted) {
+              // Do not keep the previous query's hits as if they were answers.
+              setMatches(new Map());
+              setHasMore(false);
+              setSearchError(describeRequestFailure(error));
+            }
           } finally {
             if (!controller.signal.aborted) setSearching(false);
           }
@@ -2182,6 +2299,14 @@ window.__ModuleLoader__.load({
             throw new Error(tr('loadFailed') + 'workspaces.unarchiveSession');
           }
           await service.unarchiveSession(row.id);
+          // The row is gone from the archive; a stale selection would let a
+          // later batch action act on it without it being visible.
+          setSelected((current) => {
+            if (!current.has(row.id)) return current;
+            const next = new Set(current);
+            next.delete(row.id);
+            return next;
+          });
           setNotice(`${tr('restore')} · ${row.title}`);
           await refreshStores(ctx);
         } catch (error) {
@@ -2206,6 +2331,12 @@ window.__ModuleLoader__.load({
         }
         setBusy(null);
         if (result.ok) {
+          setSelected((current) => {
+            if (!current.has(row.id)) return current;
+            const next = new Set(current);
+            next.delete(row.id);
+            return next;
+          });
           setNotice(`${tr('delete')} · ${row.title}`);
           pushDeleteNotice({
             text: `${tr('delete')} · ${row.title}`,
@@ -2230,19 +2361,25 @@ window.__ModuleLoader__.load({
         setActionError('');
         setNotice('');
         let done = 0;
+        // Every failure is reported, not just the first: the rows that failed
+        // stay selected so the human can retry exactly those.
+        const failures = [];
         for (const row of targets) {
           try {
             await service.unarchiveSession(row.id);
             done += 1;
           } catch (error) {
-            if (done === 0) setActionError(String(error?.message ?? error));
+            failures.push({ id: row.id, error: String(error?.message ?? error) });
           }
         }
         await refreshStores(ctx);
-        setSelected(new Set());
+        setSelected(new Set(failures.map((failure) => failure.id)));
         setBatchKind(null);
         setBatchBusy(false);
-        if (done > 0) setNotice(tr('batchRestored').replace('{n}', String(done)));
+        if (failures.length === 0) setNotice(tr('batchRestored').replace('{n}', String(done)));
+        else setActionError(tr('batchPartial').replace('{ok}', String(done))
+          .replace('{fail}', String(failures.length))
+          .replace('{reason}', failures[0].error));
       };
 
       const deleteMany = async () => {
@@ -2252,6 +2389,7 @@ window.__ModuleLoader__.load({
         setActionError('');
         setNotice('');
         const tokens = [];
+        const failures = [];
         let done = 0;
         for (const row of targets) {
           // Retain every removal so the single receipt below can hand the whole
@@ -2263,17 +2401,24 @@ window.__ModuleLoader__.load({
           if (result.ok) {
             done += 1;
             if (typeof result.token === 'string' && result.token.length > 0) tokens.push(result.token);
-          } else if (done === 0) {
-            setActionError(result.error);
+          } else {
+            failures.push({ id: row.id, error: result.error });
           }
         }
         setBatchKind(null);
-        setSelected(new Set());
+        // Rows that failed keep their selection, so a retry does not have to
+        // start over from the whole list.
+        setSelected(new Set(failures.map((failure) => failure.id)));
         setBatchBusy(false);
         if (done > 0) {
           const text = tr('batchDeleted').replace('{n}', String(done));
           setNotice(text);
           pushDeleteNotice({ text, tone: 'success', tokens, seconds: 10 });
+        }
+        if (failures.length > 0) {
+          setActionError(tr('batchPartial').replace('{ok}', String(done))
+            .replace('{fail}', String(failures.length))
+            .replace('{reason}', failures[0].error));
         }
       };
 
@@ -2650,8 +2795,16 @@ window.__ModuleLoader__.load({
       const frameRef = React.useRef(null);
       const drag = React.useRef(null);
       const titlePoll = React.useRef(null);
+      const failTimer = React.useRef(0);
 
-      React.useEffect(() => () => { titlePoll.current?.(); }, []);
+      // Every timer this frame starts dies with it: the 20 s failure timer used
+      // to survive unmount (and every reload stacked another one), calling
+      // setState on a component that no longer exists.
+      React.useEffect(() => () => {
+        titlePoll.current?.();
+        titlePoll.current = null;
+        window.clearTimeout(failTimer.current);
+      }, []);
 
       // While this window exists it owns the mark; closing it releases the
       // conversation back to the main view.
@@ -2699,11 +2852,14 @@ window.__ModuleLoader__.load({
         };
         follow();
         const timer = window.setInterval(follow, 600);
+        // A reload replaces the previous follow loop and failure timer instead of
+        // adding another pair.
         titlePoll.current?.();
         titlePoll.current = () => window.clearInterval(timer);
+        window.clearTimeout(failTimer.current);
         // A document that never announces itself is not "loaded": say so after
         // a generous wait instead of lifting the veil over a stuck page.
-        window.setTimeout(() => { if (!loadedRef.current) setFailed(true); }, 20000);
+        failTimer.current = window.setTimeout(() => { if (!loadedRef.current) setFailed(true); }, 20000);
       };
 
       const beginDrag = (event) => {
@@ -2892,24 +3048,21 @@ window.__ModuleLoader__.load({
      * @param props - plugin context and translator.
      * @returns null.
      */
-    function DetachedSessionsBridge({ ctx, t }) {
-      // The embedded document is one conversation and nothing else: no rows to
-      // decorate, nothing to drag, no window to open.
-      if (EMBEDDED) return h(EmbeddedConversation, { ctx });
-      const tr = typeof t === 'function' ? t : (key) => key;
-      const [detachedId] = React.useState(() => {
-        try {
-          return new URLSearchParams(window.location.search).get('ove-detached') ?? '';
-        } catch {
-          return '';
-        }
-      });
-      const detached = useDetached();
-      const panels = usePanels();
-
-      // The archive action lives in the stock menu, so this is where a new
-      // archive can be timestamped. The first snapshot only seeds the set:
-      // sessions archived before this build keep their last-activity time.
+    /**
+     * Remembers when each Session enters the archive set, and prunes the ledger
+     * when one leaves it.
+     *
+     * The archive action lives in the stock menu, so the only place it can be
+     * observed is the Workspace snapshot. This bridge runs on the shell whether
+     * or not the independent-window switch is on: gating it on that switch made
+     * the archive page fall back to "last active" and let the ledger grow
+     * without bound whenever the switch was off. The first snapshot only seeds
+     * the set — sessions archived before this build keep their last-activity
+     * time.
+     * @param props - the plugin context.
+     * @returns nothing; it only observes.
+     */
+    function ArchiveTimesBridge({ ctx }) {
       const workspaceSnapshot = useWorkspaceSnapshot(ctx);
       const archivedKey = Array.isArray(workspaceSnapshot?.archivedSessionIds)
         ? workspaceSnapshot.archivedSessionIds.join(',')
@@ -2927,6 +3080,23 @@ window.__ModuleLoader__.load({
         if (added.length > 0) rememberArchiveTimes(added);
         pruneArchiveTimes(ids);
       }, [archivedKey]);
+      return null;
+    }
+
+    function DetachedSessionsBridge({ ctx, t }) {
+      // The embedded document is one conversation and nothing else: no rows to
+      // decorate, nothing to drag, no window to open.
+      if (EMBEDDED) return h(EmbeddedConversation, { ctx });
+      const tr = typeof t === 'function' ? t : (key) => key;
+      const [detachedId] = React.useState(() => {
+        try {
+          return new URLSearchParams(window.location.search).get('ove-detached') ?? '';
+        } catch {
+          return '';
+        }
+      });
+      const detached = useDetached();
+      const panels = usePanels();
 
       // The Host owns the independent OS windows, so its report is the only
       // place their liveness can come from: mirror it while this page lives.
@@ -3630,6 +3800,11 @@ window.__ModuleLoader__.load({
       const tokens = noticeTokens(notice);
       const tokenKey = tokens.join(',');
       const seconds = typeof notice.seconds === 'number' ? notice.seconds : 10;
+      // Starting an undo cancels the countdown's purge. Without this, a click on
+      // "撤销" just before the timer fired ran a restore and a `rm -rf` of the
+      // same directory concurrently.
+      const purgeTimer = React.useRef(0);
+      const undoStarted = React.useRef(false);
 
       React.useEffect(() => {
         if (tokenKey.length === 0) return undefined;
@@ -3637,13 +3812,14 @@ window.__ModuleLoader__.load({
         const tick = window.setInterval(() => {
           setRemaining(value => (value > 0 ? value - 1 : 0));
         }, 1000);
-        const timer = window.setTimeout(() => {
+        purgeTimer.current = window.setTimeout(() => {
+          if (undoStarted.current) return;
           for (const token of tokens) void requestPurge(token);
           dismissDeleteNotice(notice.seq);
         }, seconds * 1000);
         return () => {
           window.clearInterval(tick);
-          window.clearTimeout(timer);
+          window.clearTimeout(purgeTimer.current);
         };
       }, [notice.seq, tokenKey, seconds]);
 
@@ -3657,6 +3833,8 @@ window.__ModuleLoader__.load({
 
       const undo = async () => {
         if (busy || tokens.length === 0) return;
+        undoStarted.current = true;
+        window.clearTimeout(purgeTimer.current);
         setBusy(true);
         const outcomes = await Promise.all(tokens.map((token) => requestRestore(ctx, token)));
         const failed = outcomes.find((outcome) => !outcome.ok);
@@ -3692,8 +3870,12 @@ window.__ModuleLoader__.load({
           className: 'ove-toast-close',
           'aria-label': tr('transferClose'),
           // Closing the receipt means "do not undo this": the retained copy is
-          // dropped now instead of waiting for the Host's sweep.
+          // dropped now instead of waiting for the Host's sweep. It is disabled
+          // while the undo is running, because purging the same token the undo
+          // is restoring is exactly how the directory could be deleted twice.
+          disabled: busy,
           onClick: () => {
+            if (busy) return;
             for (const token of tokens) void requestPurge(token);
             dismissDeleteNotice(notice.seq);
           },
@@ -3888,7 +4070,17 @@ window.__ModuleLoader__.load({
       return tr('auto.inDays').replace('{n}', String(Math.round(hours / 24)));
     };
 
-    const WEEKDAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+    /**
+     * Weekday codes in the Host's ISO order: 1 = Monday … 7 = Sunday.
+     *
+     * The Schedule contract numbers days that way (`normalizeWeekdays` rejects a
+     * 0 with `invalid_rule`, and returns 7 for Sunday). The panel used to number
+     * them 0..6 with Sunday first, which made Sunday impossible to create and
+     * silently rewrote a stored Sunday task to Monday on the next save.
+     */
+    const WEEKDAY_KEYS = { 1: 'mon', 2: 'tue', 3: 'wed', 4: 'thu', 5: 'fri', 6: 'sat', 7: 'sun' };
+    /** Every ISO weekday, in picker order. */
+    const WEEKDAY_ORDER = [1, 2, 3, 4, 5, 6, 7];
 
     /** RFC 5545 weekday codes, in the panel's Sunday-first numbering. */
     const BYDAY_KEYS = { MO: 'mon', TU: 'tue', WE: 'wed', TH: 'thu', FR: 'fri', SA: 'sat', SU: 'sun' };
@@ -4177,9 +4369,14 @@ window.__ModuleLoader__.load({
     const isMonthlyRule = (rule) => {
       const clauses = rruleClausesOf(rule);
       if (clauses === null || clauses.get('FREQ') !== 'MONTHLY') return false;
-      if (!clauses.has('BYMONTHDAY')) return false;
+      const days = clauses.get('BYMONTHDAY');
+      if (typeof days !== 'string') return false;
       if (ruleStartOf(rule) === undefined) return false;
-      return isPlainRule(clauses, ['FREQ', 'BYMONTHDAY']);
+      // Only the Host's "that day or month end" form is claimed. A bare
+      // BYMONTHDAY (the older plugin shape) stays in the raw editor: rewriting it
+      // into the month-end form on save would change when it fires.
+      if (!/^\d{1,2},-1$/.test(days) || clauses.get('BYSETPOS') !== '1') return false;
+      return isPlainRule(clauses, ['FREQ', 'BYMONTHDAY', 'BYSETPOS']);
     };
 
     /**
@@ -4262,7 +4459,7 @@ window.__ModuleLoader__.load({
       // Every stored weekday travels with the draft: a weekly task on Mon+Thu used
       // to be edited — and saved — as Monday only.
       const days = Array.isArray(task?.weekdays)
-        ? [...new Set(task.weekdays.filter(day => Number.isInteger(day) && day >= 0 && day <= 6))].sort((a, b) => a - b)
+        ? [...new Set(task.weekdays.filter(day => Number.isInteger(day) && day >= 1 && day <= 7))].sort((a, b) => a - b)
         : [];
       const weekdays = days.length > 0 ? days : [1];
       // A rule-derived editor keeps the rule's own DTSTART. Rebuilding it from
@@ -4374,15 +4571,15 @@ window.__ModuleLoader__.load({
      * not something the editor can mean, and the old fallback quietly saved
      * Monday — which is exactly how a removed day came back. Monday therefore
      * survives only as the defensive default inside `timingOfDraft`.
-     * @param weekdays - the currently selected day numbers.
-     * @param day - the day to toggle (0 = Sunday).
+     * @param weekdays - the currently selected day numbers (ISO, 1 = Monday).
+     * @param day - the day to toggle.
      * @returns the next selection; the same array when the click is refused.
      */
     const toggleWeekday = (weekdays, day) => {
       const current = Array.isArray(weekdays)
-        ? weekdays.filter(value => Number.isInteger(value) && value >= 0 && value <= 6)
+        ? weekdays.filter(value => Number.isInteger(value) && value >= 1 && value <= 7)
         : [];
-      if (!Number.isInteger(day) || day < 0 || day > 6) return current;
+      if (!Number.isInteger(day) || day < 1 || day > 7) return current;
       if (current.includes(day)) {
         if (current.length <= 1) return weekdays;
         return current.filter(value => value !== day);
@@ -4417,7 +4614,7 @@ window.__ModuleLoader__.load({
           // picker saved the one day the human had just removed. Monday is the
           // documented fallback.
           const days = Array.isArray(draft.weekdays) && draft.weekdays.length > 0
-            ? [...new Set(draft.weekdays.filter(day => Number.isInteger(day) && day >= 0 && day <= 6))].sort((a, b) => a - b)
+            ? [...new Set(draft.weekdays.filter(day => Number.isInteger(day) && day >= 1 && day <= 7))].sort((a, b) => a - b)
             : [1];
           return { kind: 'weekly', weekly: { time: withSeconds(draft.time), time_zone: zone, weekdays: days.length > 0 ? days : [1] } };
         }
@@ -4426,7 +4623,11 @@ window.__ModuleLoader__.load({
         case 'monthly': {
           const day = Number(draft.monthDay);
           if (!Number.isFinite(day) || day < 1 || day > 31) return undefined;
-          return { kind: 'rrule', rrule: `${stamp}\nRRULE:FREQ=MONTHLY;BYMONTHDAY=${Math.round(day)}` };
+          // The Host's own monthly form is "that day, or the month's last day".
+          // A plain BYMONTHDAY=31 never fires in February or a short month, and
+          // the stock automation page classifies only this exact shape as
+          // "monthly" — it showed the plugin's tasks as "custom".
+          return { kind: 'rrule', rrule: `${stamp}\nRRULE:FREQ=MONTHLY;BYMONTHDAY=${Math.round(day)},-1;BYSETPOS=1` };
         }
         case 'once': {
           const when = new Date(`${draft.date}T${withSeconds(draft.time)}`);
@@ -5158,6 +5359,75 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * The frame every schedule dialog shares.
+     *
+     * The four dialogs of this page used to be bare `aria-modal` divs with no
+     * Escape, no initial focus and no focus trap: a keyboard user stayed on the
+     * page behind the veil and could keep operating it. One frame fixes all of
+     * them, and carries the title/description/action layout they share.
+     * @param props - title, optional description, close handler, busy flag, the
+     *   dialog's own body nodes, and its action buttons.
+     * @returns the modal overlay.
+     */
+    function ScheduleDialog({ title, desc, onClose, busy, children, actions }) {
+      const panelRef = React.useRef(null);
+      const blocked = busy === true;
+      React.useEffect(() => {
+        // Start focus inside the dialog: the first control is the safe one
+        // (Cancel before the destructive button).
+        const focusable = panelRef.current?.querySelector(
+          'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        );
+        if (focusable instanceof HTMLElement) focusable.focus();
+        else panelRef.current?.focus?.();
+      }, []);
+      React.useEffect(() => {
+        const onKey = (event) => {
+          if (event.key === 'Escape') {
+            if (blocked) return;
+            event.preventDefault();
+            event.stopPropagation();
+            onClose();
+            return;
+          }
+          if (event.key !== 'Tab') return;
+          const nodes = [...(panelRef.current?.querySelectorAll(
+            'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+          ) ?? [])].filter((node) => node instanceof HTMLElement && node.offsetParent !== null);
+          if (nodes.length === 0) return;
+          const first = nodes[0];
+          const last = nodes[nodes.length - 1];
+          const active = document.activeElement;
+          if (event.shiftKey && (active === first || active === panelRef.current)) {
+            event.preventDefault();
+            last.focus();
+          } else if (!event.shiftKey && active === last) {
+            event.preventDefault();
+            first.focus();
+          }
+        };
+        window.addEventListener('keydown', onKey, true);
+        return () => window.removeEventListener('keydown', onKey, true);
+      }, [blocked, onClose]);
+      return overlayPortal(h('div', {
+        className: 'ove-overlay ove-overlay-portal',
+        onMouseDown: (event) => { if (event.target === event.currentTarget && !blocked) onClose(); },
+      },
+        h('div', {
+          className: 'ove-dialog',
+          role: 'dialog',
+          'aria-modal': 'true',
+          'aria-label': title,
+          tabIndex: -1,
+          ref: panelRef,
+        },
+          h('h2', { className: 'ove-dialog-title' }, title),
+          desc === undefined ? null : h('p', { className: 'ove-dialog-desc' }, desc),
+          children,
+          h('div', { className: 'ove-dialog-actions' }, actions))));
+    }
+
+    /**
      * Automation task management beside the stock Automation tasks page:
      * the same list, tabs and search, plus in-place creation, bulk deletion,
      * multi-conversation binding and the auto-clean flag.
@@ -5185,6 +5455,9 @@ window.__ModuleLoader__.load({
       const [confirm, setConfirm] = React.useState(null);
       const [intervalRun, setIntervalRun] = React.useState(null);
       const [conflict, setConflict] = React.useState(null);
+      // A row (or the new-task button) the human asked to open while the drawer
+      // held unsaved edits; null means nothing is pending.
+      const [pendingOpen, setPendingOpen] = React.useState(null);
       // Whether the open draft holds an edit the human made. Only an untouched
       // draft may adopt a newer revision from the polling list.
       const [draftDirty, setDraftDirty] = React.useState(false);
@@ -5193,6 +5466,12 @@ window.__ModuleLoader__.load({
       const [cleanPending, setCleanPending] = React.useState(false);
       const [detailTab, setDetailTab] = React.useState('edit');
       const [records, setRecords] = React.useState([]);
+      const [recordsError, setRecordsError] = React.useState('');
+      // The draft the async handlers must look at when they settle. Reading the
+      // closure's `draft` wrote one task's revision into another's drawer and
+      // closed a drawer the human had already switched away from.
+      const draftRef = React.useRef(null);
+      draftRef.current = draft;
       const [createMenu, setCreateMenu] = React.useState(false);
       const createTriggerRef = React.useRef(null);
       const createMenuRef = React.useRef(null);
@@ -5299,6 +5578,7 @@ window.__ModuleLoader__.load({
         setDraft(draftOf(null));
         setDetailTab('edit');
         setRecords([]);
+        setRecordsError('');
         setDraftError('');
         setNotice(null);
         setActionError('');
@@ -5322,6 +5602,7 @@ window.__ModuleLoader__.load({
         setDraft(draftOf(task, autoClean));
         setDetailTab('edit');
         setRecords([]);
+        setRecordsError('');
         setDraftError('');
         setActionError('');
         setConflict(null);
@@ -5334,9 +5615,51 @@ window.__ModuleLoader__.load({
         setDetailTab('edit');
         setDraftError('');
         setRecords([]);
+        setRecordsError('');
         setConflict(null);
         setDraftDirty(false);
       };
+
+      /**
+       * Open another task (or the empty new-task draft), asking first when the
+       * drawer holds edits that were never saved: a stray click on a row used to
+       * throw the whole form away without a word.
+       * @param task - the row to open, or null for the new-task draft.
+       */
+      const requestOpenTask = (task) => {
+        if (draft !== null && draftDirty) {
+          setPendingOpen({ task });
+          return;
+        }
+        openEdit(task);
+      };
+
+      /** The "new task" button, with the same unsaved-edit guard. */
+      const requestOpenNew = () => {
+        if (draft !== null && draftDirty) {
+          setPendingOpen({ task: null });
+          return;
+        }
+        openNew();
+      };
+
+      const confirmDiscardOpen = () => {
+        const pending = pendingOpen;
+        setPendingOpen(null);
+        if (pending === null) return;
+        if (pending.task === null) openNew();
+        else openEdit(pending.task);
+      };
+
+      // Escape closes the unsaved-edit prompt, like the other dialogs.
+      React.useEffect(() => {
+        if (pendingOpen === null) return undefined;
+        const onKey = (event) => {
+          if (event.key === 'Escape') setPendingOpen(null);
+        };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+      }, [pendingOpen]);
 
       const updateDraft = (patch) => {
         setDraftDirty(true);
@@ -5432,8 +5755,14 @@ window.__ModuleLoader__.load({
           });
         }
         announce(tr('auto.saved'), 'success');
-        setDraft(null);
-        setRecords([]);
+        // Only close the drawer the save belongs to: the human may have opened
+        // another task while the request was in flight, and that one holds
+        // their own unsaved edits.
+        setDraft((current) => (current !== null && current.id === savedId ? null : current));
+        if (draftRef.current !== null && draftRef.current.id === savedId) {
+          setRecords([]);
+          setRecordsError('');
+        }
         await load();
       };
 
@@ -5449,13 +5778,13 @@ window.__ModuleLoader__.load({
         announce(tr(next ? 'auto.resumeOne' : 'auto.pauseOne').replace('{name}', task.title), next ? 'success' : 'warn');
         await load();
         // Keep the open draft in step with the row it belongs to, so a save after
-        // pausing does not report a stale revision as a conflict.
-        if (draft !== null && draft.id === task.id) {
-          updateDraft({
-            active: next,
-            updatedAt: typeof result.value?.updatedAt === 'string' ? result.value.updatedAt : draft.updatedAt,
-          });
-        }
+        // pausing does not report a stale revision as a conflict. The check is
+        // against the draft that is open NOW: the request may have outlived it,
+        // and writing into whatever replaced it changed another task's revision.
+        const updatedAt = typeof result.value?.updatedAt === 'string' ? result.value.updatedAt : undefined;
+        setDraft((current) => (current === null || current.id !== task.id
+          ? current
+          : { ...current, active: next, ...(updatedAt === undefined ? {} : { updatedAt }) }));
       };
 
       /**
@@ -5498,7 +5827,7 @@ window.__ModuleLoader__.load({
         const adopted = task.target?.kind === 'new_once' && result.value?.target?.kind === 'session';
         announce(tr(confirmed ? 'auto.ranInterval' : adopted ? 'auto.ranAdopted' : 'auto.ran'), 'info');
         await load();
-        if (draft !== null && draft.id === task.id) void loadRecords(task.id);
+        if (draftRef.current !== null && draftRef.current.id === task.id) void loadRecords(task.id);
       };
 
       /**
@@ -5537,7 +5866,7 @@ window.__ModuleLoader__.load({
           ? tr('auto.deleted').replace('{count}', String(deleted))
           : tr('auto.deleteFailed').replace('{count}', String(failed)), 'danger');
         setSelected(new Set());
-        if (draft !== null && ids.includes(draft.id)) setDraft(null);
+        setDraft((current) => (current !== null && ids.includes(current.id) ? null : current));
         await load();
       };
 
@@ -5577,7 +5906,15 @@ window.__ModuleLoader__.load({
       const loadRecords = async (id) => {
         if (typeof id !== 'string' || id.length === 0) return;
         const result = await automationCall('history', { id });
-        if (!result.ok) return;
+        // The drawer may have been switched to another task while the request
+        // was in flight: its receipts must not land under the new one.
+        if (draftRef.current === null || draftRef.current.id !== id) return;
+        if (!result.ok) {
+          setRecords([]);
+          setRecordsError(result.error);
+          return;
+        }
+        setRecordsError('');
         setRecords(Array.isArray(result.value?.records) ? result.value.records : []);
       };
 
@@ -5885,9 +6222,12 @@ window.__ModuleLoader__.load({
         detailTab === 'records' && draft.id !== ''
           ? h('div', { className: 'ove-detail-body' },
             h('div', { className: 'ove-field ove-records' },
-              records.length === 0
+              recordsError.length > 0
+                ? h('p', { className: 'ove-error', role: 'alert' }, `${tr('auto.error')}：${recordsError}`)
+                : null,
+              records.length === 0 && recordsError.length === 0
                 ? h('p', { className: 'ove-muted ove-records-empty' }, tr('auto.recordsEmpty'))
-                : h('ul', { className: 'ove-record-list ove-record-list-tall' },
+                : records.length === 0 ? null : h('ul', { className: 'ove-record-list ove-record-list-tall' },
                   records.map((record) => h('li', { key: record.messageId, className: 'ove-record' },
                     h('div', { className: 'ove-record-head' },
                       h('span', { className: 'ove-record-time' }, formatInstant(record.deliveredAt)),
@@ -6026,8 +6366,9 @@ window.__ModuleLoader__.load({
               h('div', { className: 'ove-field' },
                 h('span', { className: 'ove-label' }, tr('auto.weekday')),
                 h('div', { className: 'ove-weekdays', role: 'group', 'aria-label': tr('auto.weekday') },
-                  WEEKDAY_KEYS.map((key, index) => {
-                    const selected = draft.weekdays.includes(index);
+                  WEEKDAY_ORDER.map((day) => {
+                    const key = WEEKDAY_KEYS[day];
+                    const selected = draft.weekdays.includes(day);
                     // The last remaining day stays selected: a weekly rule has
                     // to name at least one day.
                     const locked = selected && draft.weekdays.length <= 1;
@@ -6040,7 +6381,7 @@ window.__ModuleLoader__.load({
                       'data-locked': locked ? 'true' : undefined,
                       title: locked ? tr('auto.weekdayKeepOne') : undefined,
                       onClick: () => {
-                        const next = toggleWeekday(draft.weekdays, index);
+                        const next = toggleWeekday(draft.weekdays, day);
                         if (next === draft.weekdays) return;
                         updateDraft({ weekdays: next });
                       },
@@ -6170,7 +6511,7 @@ window.__ModuleLoader__.load({
                     h('button', {
                       type: 'button',
                       className: 'ove-split-main',
-                      onClick: openNew,
+                      onClick: requestOpenNew,
                     }, `+ ${tr('auto.new')}`),
                     h('button', {
                       ref: createTriggerRef,
@@ -6249,7 +6590,7 @@ window.__ModuleLoader__.load({
                         className: 'ove-menu-row',
                         onClick: () => {
                           setCreateMenu(false);
-                          openNew();
+                          requestOpenNew();
                         },
                       }, tr('auto.createManually')))
                     : null)),
@@ -6294,8 +6635,9 @@ window.__ModuleLoader__.load({
                   onChange: (event) => setQuery(event.target.value),
                 })),
 
-              // A fixed-height strip keeps the list from jumping when the
-              // selection bar or an action receipt appears and disappears.
+              // The selection bar and an action receipt are two independent
+              // rows: a failure while rows are selected used to be swallowed by
+              // the bar and cleared after 4 s without ever being shown.
               h('div', { className: 'ove-list-top' },
                 selectedRows.length > 0
                   ? h('div', { className: 'ove-bulk' },
@@ -6321,11 +6663,12 @@ window.__ModuleLoader__.load({
                       className: 'ove-btn',
                       onClick: () => setSelected(new Set()),
                     }, tr('auto.clearSelection')))
-                  : actionError.length > 0
-                    ? h('p', { className: 'ove-error', role: 'alert' }, actionError)
-                    : notice !== null
-                      ? h('p', { className: `ove-notice ove-notice-${notice.tone}`, role: 'status' }, notice.text)
-                      : null),
+                  : null,
+                actionError.length > 0
+                  ? h('p', { className: 'ove-error', role: 'alert' }, actionError)
+                  : notice !== null
+                    ? h('p', { className: `ove-notice ove-notice-${notice.tone}`, role: 'status' }, notice.text)
+                    : null),
 
               loading && rows.length === 0 ? h('p', { className: 'ove-muted' }, tr('auto.loading')) : null,
               loadError.length > 0
@@ -6337,7 +6680,7 @@ window.__ModuleLoader__.load({
                   h('div', { className: 'ove-empty-art' }, h(EmptyArt, null)),
                   h('p', { className: 'ove-empty-text' }, query.trim().length > 0 ? tr('auto.noMatches') : tr('auto.empty')),
                   rows.length === 0
-                    ? h('button', { type: 'button', className: 'ove-btn', onClick: openNew }, tr('auto.emptyAction'))
+                    ? h('button', { type: 'button', className: 'ove-btn', onClick: requestOpenNew }, tr('auto.emptyAction'))
                     : null)
                 : null,
 
@@ -6368,11 +6711,15 @@ window.__ModuleLoader__.load({
                 'data-active': draft !== null && draft.id === task.id,
                 role: 'button',
                 tabIndex: 0,
-                onClick: () => openEdit(task),
+                onClick: () => requestOpenTask(task),
                 onKeyDown: (event) => {
+                  // The row is a keyboard target of its own; its checkbox and
+                  // inline buttons must keep their own Enter/Space, or Space on
+                  // the checkbox opened the editor instead of ticking it.
+                  if (event.target !== event.currentTarget) return;
                   if (event.key === 'Enter' || event.key === ' ') {
                     event.preventDefault();
-                    openEdit(task);
+                    requestOpenTask(task);
                   }
                 },
               },
@@ -6462,83 +6809,93 @@ window.__ModuleLoader__.load({
           editor,
 
         portal(intervalRun !== null
-          ? h('div', { className: 'ove-overlay ove-overlay-portal' },
-            h('div', { className: 'ove-dialog', role: 'dialog', 'aria-modal': 'true' },
-              h('h2', { className: 'ove-dialog-title' }, tr('auto.intervalTitle')),
-              h('p', { className: 'ove-dialog-desc' }, tr('auto.intervalDesc')),
-              h('p', { className: 'ove-dialog-target' }, intervalRun.title),
-              h('div', { className: 'ove-dialog-actions' },
-                h('button', {
-                  type: 'button',
-                  className: 'ove-btn',
-                  disabled: busy !== '',
-                  onClick: () => setIntervalRun(null),
-                }, tr('cancel')),
-                h('button', {
-                  type: 'button',
-                  className: 'ove-btn ove-btn-warn',
-                  disabled: busy !== '',
-                  onClick: () => {
-                    const task = intervalRun;
-                    setIntervalRun(null);
-                    void runNow(task, { confirmed: true });
-                  },
-                }, busy === 'run' ? tr('auto.running') : tr('auto.intervalConfirm')))))
+          ? h(ScheduleDialog, {
+            title: tr('auto.intervalTitle'),
+            desc: tr('auto.intervalDesc'),
+            busy: busy !== '',
+            onClose: () => setIntervalRun(null),
+            children: h('p', { className: 'ove-dialog-target' }, intervalRun.title),
+            actions: h(React.Fragment, null,
+              h('button', {
+                type: 'button',
+                className: 'ove-btn',
+                disabled: busy !== '',
+                onClick: () => setIntervalRun(null),
+              }, tr('cancel')),
+              h('button', {
+                type: 'button',
+                className: 'ove-btn ove-btn-warn',
+                disabled: busy !== '',
+                onClick: () => {
+                  const task = intervalRun;
+                  setIntervalRun(null);
+                  void runNow(task, { confirmed: true });
+                },
+              }, busy === 'run' ? tr('auto.running') : tr('auto.intervalConfirm'))),
+          })
           : null),
 
         portal(conflict !== null
-          ? h('div', { className: 'ove-overlay ove-overlay-portal' },
-            h('div', { className: 'ove-dialog', role: 'dialog', 'aria-modal': 'true' },
-              h('h2', { className: 'ove-dialog-title' }, tr('auto.conflictTitle')),
-              h('p', { className: 'ove-dialog-desc' }, tr('auto.conflictDesc')),
-              conflict.title.length > 0 ? h('p', { className: 'ove-dialog-target' }, conflict.title) : null,
-              h('div', { className: 'ove-dialog-actions' },
-                h('button', {
-                  type: 'button',
-                  className: 'ove-btn',
-                  disabled: busy !== '',
-                  onClick: () => setConflict(null),
-                }, tr('cancel')),
-                h('button', {
-                  type: 'button',
-                  className: 'ove-btn ove-btn-warn',
-                  disabled: busy !== '',
-                  onClick: () => {
-                    setConflict(null);
-                    void saveDraft({ force: true });
-                  },
-                }, busy === 'save' ? tr('auto.saving') : tr('auto.conflictOverwrite')))))
+          ? h(ScheduleDialog, {
+            title: tr('auto.conflictTitle'),
+            desc: tr('auto.conflictDesc'),
+            busy: busy !== '',
+            onClose: () => setConflict(null),
+            children: conflict.title.length > 0
+              ? h('p', { className: 'ove-dialog-target' }, conflict.title)
+              : null,
+            actions: h(React.Fragment, null,
+              h('button', {
+                type: 'button',
+                className: 'ove-btn',
+                disabled: busy !== '',
+                onClick: () => setConflict(null),
+              }, tr('cancel')),
+              h('button', {
+                type: 'button',
+                className: 'ove-btn ove-btn-warn',
+                disabled: busy !== '',
+                onClick: () => {
+                  setConflict(null);
+                  void saveDraft({ force: true });
+                },
+              }, busy === 'save' ? tr('auto.saving') : tr('auto.conflictOverwrite'))),
+          })
           : null),
 
         portal(confirm !== null
-          ? h('div', { className: 'ove-overlay ove-overlay-portal' },
-            h('div', { className: 'ove-dialog', role: 'dialog', 'aria-modal': 'true' },
-              h('h2', { className: 'ove-dialog-title' }, tr('auto.deleteTitle')),
-              h('p', { className: 'ove-dialog-desc' }, tr('auto.deleteDesc')),
-              confirm.title.length > 0
-                ? h('p', { className: 'ove-dialog-target' }, confirm.title)
-                : h('p', { className: 'ove-dialog-target' },
-                  selectedRows.map((task) => task.title).join('、')),
-              h('div', { className: 'ove-dialog-actions' },
-                h('button', {
-                  type: 'button',
-                  className: 'ove-btn',
-                  disabled: busy !== '',
-                  onClick: () => setConfirm(null),
-                }, tr('cancel')),
-                h('button', {
-                  type: 'button',
-                  className: 'ove-btn ove-btn-danger',
-                  disabled: busy !== '',
-                  onClick: () => void removeTasks(confirm.ids),
-                }, busy === 'delete' ? tr('auto.deleting') : tr('auto.deleteConfirm')))))
+          ? h(ScheduleDialog, {
+            title: tr('auto.deleteTitle'),
+            desc: tr('auto.deleteDesc'),
+            busy: busy !== '',
+            onClose: () => setConfirm(null),
+            children: confirm.title.length > 0
+              ? h('p', { className: 'ove-dialog-target' }, confirm.title)
+              : h('p', { className: 'ove-dialog-target' },
+                selectedRows.map((task) => task.title).join('、')),
+            actions: h(React.Fragment, null,
+              h('button', {
+                type: 'button',
+                className: 'ove-btn',
+                disabled: busy !== '',
+                onClick: () => setConfirm(null),
+              }, tr('cancel')),
+              h('button', {
+                type: 'button',
+                className: 'ove-btn ove-btn-danger',
+                disabled: busy !== '',
+                onClick: () => void removeTasks(confirm.ids),
+              }, busy === 'delete' ? tr('auto.deleting') : tr('auto.deleteConfirm'))),
+          })
           : null),
 
         portal(bindTasks.length > 0
-          ? h('div', { className: 'ove-overlay ove-overlay-portal' },
-            h('div', { className: 'ove-dialog', role: 'dialog', 'aria-modal': 'true' },
-              h('h2', { className: 'ove-dialog-title' }, tr('auto.bindTitle')),
-              h('p', { className: 'ove-dialog-desc' }, tr('auto.bindDesc')),
+          ? h(ScheduleDialog, {
+            title: tr('auto.bindTitle'),
+            desc: tr('auto.bindDesc'),
+            busy: busy !== '',
+            onClose: closeBind,
+            children: h(React.Fragment, null,
               h('p', { className: 'ove-dialog-target' }, tr('auto.bindTasks')
                 .replace('{names}', bindTasks.map((task) => task.title).join('、'))),
               bindCandidates.length === 0
@@ -6559,19 +6916,43 @@ window.__ModuleLoader__.load({
                   }),
                 }),
                 h('span', { className: 'ove-session-label' }, sessionNodes(session, tr, bindDuplicates.has(session.id)))))),
-              h('div', { className: 'ove-dialog-actions' },
-                h('button', {
-                  type: 'button',
-                  className: 'ove-btn',
-                  disabled: busy !== '',
-                  onClick: closeBind,
-                }, tr('cancel')),
-                h('button', {
-                  type: 'button',
-                  className: 'ove-btn',
-                  disabled: busy !== '' || bindPicks.size === 0,
-                  onClick: () => void confirmBind(),
-                }, busy === 'bind' ? tr('auto.binding') : tr('auto.bindConfirm')))))
+            ),
+            actions: h(React.Fragment, null,
+              h('button', {
+                type: 'button',
+                className: 'ove-btn',
+                disabled: busy !== '',
+                onClick: closeBind,
+              }, tr('cancel')),
+              h('button', {
+                type: 'button',
+                className: 'ove-btn',
+                disabled: busy !== '' || bindPicks.size === 0,
+                onClick: () => void confirmBind(),
+              }, busy === 'bind' ? tr('auto.binding') : tr('auto.bindConfirm'))),
+          })
+          : null),
+
+        // Opening another task (or the new-task form) over unsaved edits asks
+        // first instead of discarding them silently.
+        portal(pendingOpen !== null
+          ? h(ScheduleDialog, {
+            title: tr('auto.discardTitle'),
+            desc: tr('auto.discardDesc'),
+            onClose: () => setPendingOpen(null),
+            actions: h(React.Fragment, null,
+              h('button', {
+                type: 'button',
+                className: 'ove-btn',
+                autoFocus: true,
+                onClick: () => setPendingOpen(null),
+              }, tr('auto.keepEditing')),
+              h('button', {
+                type: 'button',
+                className: 'ove-btn ove-btn-danger',
+                onClick: confirmDiscardOpen,
+              }, tr('auto.discardEdits'))),
+          })
           : null));
     }
 
@@ -6755,6 +7136,14 @@ window.__ModuleLoader__.load({
             disposers = [];
           };
         }, 'original-version-enhancements: automation panel');
+
+        // Archive timestamping feeds the archive page, not the detached
+        // windows, so it is mounted regardless of that switch.
+        ctx.effect(() => ctx.slots.inject('shell.overlay', () => ctx.slots.register({
+          name: 'shell.overlay',
+          id: 'original-version-enhancements.archive-times',
+          inject: () => ({ ctx }),
+        }, ArchiveTimesBridge)), 'original-version-enhancements: archive times');
 
         // Independent windows have their own switch: the menu row and the
         // cross-window bridge exist only while it is on. Turning it off brings

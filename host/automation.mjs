@@ -15,6 +15,11 @@ import path from 'node:path'
 
 const MAX_REQUEST_BYTES = 32 * 1024
 const STATE_VERSION = 2
+// The Host's own Schedule contract caps a task title at 120 characters. A
+// longer one is refused there with an English 409, so the panel rejects it up
+// front with a message the human can act on.
+const MAX_TITLE_LENGTH = 120
+const MAX_PROMPT_LENGTH = 20_000
 // How long after creation the scheduler gets to run a "deliver now" clone.
 const RUN_DELAY_MS = 2000
 // A clone younger than this is never reclaimed by the background reconciler:
@@ -391,7 +396,12 @@ async function recordsOf(service, id, prompt = '') {
       deliveredAt: receipt.deliveredAt,
       scheduledAt: receipt.scheduledAt,
       targetSessionId: receipt.targetSessionId,
-      prompt: typeof prompt === 'string' ? prompt : '',
+      // The receipt's own prompt is the text that was delivered at that moment;
+      // overwriting it with the task's current prompt rewrote history after an
+      // edit. The fallback only covers a backend that omits the field.
+      prompt: typeof receipt.prompt === 'string' && receipt.prompt.length > 0
+        ? receipt.prompt
+        : (typeof prompt === 'string' ? prompt : ''),
     })),
   }
 }
@@ -470,13 +480,16 @@ function sanitizeTiming(input) {
         ? { kind: 'daily', daily: { time: withSeconds(input.daily.time), time_zone: nestedZone(input.daily) } }
         : undefined
     case 'weekly':
+      // The Host's Schedule contract numbers weekdays the ISO way: 1 = Monday
+      // … 7 = Sunday. A 0 is rejected there (`invalid_rule`), so accepting it
+      // here would only turn a valid panel request into an English Host error.
       return typeof input.weekly?.time === 'string'
         && /^\d{2}:\d{2}(:\d{2})?$/.test(input.weekly.time)
         && nestedZone(input.weekly) !== undefined
         && Array.isArray(input.weekly.weekdays)
-        && input.weekly.weekdays.every(day => Number.isInteger(day) && day >= 0 && day <= 6)
+        && input.weekly.weekdays.every(day => Number.isInteger(day) && day >= 1 && day <= 7)
         && input.weekly.weekdays.length > 0
-        ? { kind: 'weekly', weekly: { time: withSeconds(input.weekly.time), time_zone: nestedZone(input.weekly), weekdays: [...input.weekly.weekdays] } }
+        ? { kind: 'weekly', weekly: { time: withSeconds(input.weekly.time), time_zone: nestedZone(input.weekly), weekdays: [...new Set(input.weekly.weekdays)].sort((left, right) => left - right) } }
         : undefined
     case 'cron':
       return typeof input.cron?.expression === 'string' && input.cron.expression.trim().length > 0 && nestedZone(input.cron) !== undefined
@@ -743,6 +756,10 @@ export function createAutomationSurface(options) {
   // keeps the displayed count from going stale forever.
   const RECORD_COUNT_TTL_MS = 60 * 1000
   const recordCounts = new Map()
+  // One in-flight "deliver now" clone per task. Two tabs (or a retried request)
+  // racing this branch used to build one clone each and deliver the reminder
+  // twice; both requests were answered 200.
+  const cloneRuns = new Set()
   let running = false
 
   const reconcile = async () => {
@@ -887,8 +904,8 @@ export function createAutomationSurface(options) {
     const prompt = typeof body?.prompt === 'string' ? body.prompt : ''
     const timing = sanitizeTiming(body?.timing)
     const target = body?.target === undefined ? undefined : sanitizeTarget(body.target)
-    if (title.length === 0 || title.length > 200 || prompt.trim().length === 0 || prompt.length > 20000) {
-      sendJson(res, 400, failure('invalid-task', '请填写任务名称与内容，名称不超过 200 字。'))
+    if (title.length === 0 || title.length > MAX_TITLE_LENGTH || prompt.trim().length === 0 || prompt.length > MAX_PROMPT_LENGTH) {
+      sendJson(res, 400, failure('invalid-task', `请填写任务名称与内容，名称不超过 ${MAX_TITLE_LENGTH} 字。`))
       return
     }
     if (timing === undefined) {
@@ -927,8 +944,21 @@ export function createAutomationSurface(options) {
       return
     }
     const patch = {}
-    if (typeof body.title === 'string') patch.title = body.title.trim()
-    if (typeof body.prompt === 'string') patch.prompt = body.prompt
+    if (typeof body.title === 'string') {
+      const title = body.title.trim()
+      if (title.length === 0 || title.length > MAX_TITLE_LENGTH) {
+        sendJson(res, 400, failure('invalid-task', `任务名称不能为空，且不超过 ${MAX_TITLE_LENGTH} 字。`))
+        return
+      }
+      patch.title = title
+    }
+    if (typeof body.prompt === 'string') {
+      if (body.prompt.trim().length === 0 || body.prompt.length > MAX_PROMPT_LENGTH) {
+        sendJson(res, 400, failure('invalid-task', '任务内容不能为空。'))
+        return
+      }
+      patch.prompt = body.prompt
+    }
     if (typeof body.active === 'boolean') patch.active = body.active
     if (body.timing !== undefined) {
       const timing = sanitizeTiming(body.timing)
@@ -1140,60 +1170,74 @@ export function createAutomationSurface(options) {
       return
     }
 
-    let clone
+    // The clone branch below takes a while (create + 2 s delivery + remove), so
+    // two tabs clicking at once both passed the `executionActive` check before
+    // either clone existed. One in-flight delivery per task, plus the persisted
+    // mark for a clone whose delivery is still settling after a reload.
+    const settling = Object.values(state.ephemeral ?? {}).some(entry => entry?.sourceId === id)
+    if (cloneRuns.has(id) || settling) {
+      sendJson(res, 409, failure('schedule-run-busy', '该任务正在投递中，请稍后再试。'))
+      return
+    }
+    cloneRuns.add(id)
     try {
-      const target = targetRequestOf(task)
-      if (target === undefined) {
-        sendJson(res, 409, failure('schedule-run-failed', '该任务的执行位置无效，无法立即投递。'))
+      let clone
+      try {
+        const target = targetRequestOf(task)
+        if (target === undefined) {
+          sendJson(res, 409, failure('schedule-run-failed', '该任务的执行位置无效，无法立即投递。'))
+          return
+        }
+        clone = await service.create({
+          title: task.title,
+          prompt: task.prompt,
+          timing: { kind: 'at', at: new Date(Date.now() + RUN_DELAY_MS).toISOString() },
+          target,
+        })
+        state.ephemeral[clone.id] = { sourceId: task.id, createdAt: new Date().toISOString() }
+        save()
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        warn(`automation: run clone failed: ${message}`)
+        sendJson(res, 409, failure('schedule-run-failed', `创建临时投递任务失败：${message}`))
         return
       }
-      clone = await service.create({
-        title: task.title,
-        prompt: task.prompt,
-        timing: { kind: 'at', at: new Date(Date.now() + RUN_DELAY_MS).toISOString() },
-        target,
-      })
-      state.ephemeral[clone.id] = { sourceId: task.id, createdAt: new Date().toISOString() }
-      save()
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      warn(`automation: run clone failed: ${message}`)
-      sendJson(res, 409, failure('schedule-run-failed', `创建临时投递任务失败：${message}`))
-      return
-    }
 
-    let delivered = false
-    try {
-      delivered = await waitForDelivery(service, clone.id, undefined)
-    } catch (error) {
-      warn(`automation: waiting for the clone of ${id} failed: ${String(error)}`)
-    }
-    // The clone exists only for this one delivery: remove it before answering,
-    // whether or not the delivery was confirmed.
-    let removed = false
-    try {
-      const result = await deleteTask(service, clone.id)
-      removed = result.deleted || result.code === 'schedule_not_found'
-    } catch (error) {
-      warn(`automation: deleting the clone of ${id} failed: ${String(error)}`)
-    }
-    if (removed) {
-      delete state.ephemeral[clone.id]
-      save()
-    }
-    // Otherwise the mark stays so the reconciler can retry the removal; the
-    // clone stays hidden from the panel in the meantime.
+      let delivered = false
+      try {
+        delivered = await waitForDelivery(service, clone.id, undefined)
+      } catch (error) {
+        warn(`automation: waiting for the clone of ${id} failed: ${String(error)}`)
+      }
+      // The clone exists only for this one delivery: remove it before answering,
+      // whether or not the delivery was confirmed.
+      let removed = false
+      try {
+        const result = await deleteTask(service, clone.id)
+        removed = result.deleted || result.code === 'schedule_not_found'
+      } catch (error) {
+        warn(`automation: deleting the clone of ${id} failed: ${String(error)}`)
+      }
+      if (removed) {
+        delete state.ephemeral[clone.id]
+        save()
+      }
+      // Otherwise the mark stays so the reconciler can retry the removal; the
+      // clone stays hidden from the panel in the meantime.
 
-    if (!delivered) {
-      sendJson(res, 409, failure('schedule-run-failed', '任务未能在两秒后完成投递，请稍后重试。'))
-      return
-    }
-    try {
-      const refreshed = (await service.catalog()).find(candidate => candidate.id === id)
-      sendJson(res, 200, { ok: true, value: rowOf(refreshed ?? task) })
-    } catch (error) {
-      warn(`automation: refreshing ${id} after delivery failed: ${String(error)}`)
-      sendJson(res, 200, { ok: true, value: rowOf(task) })
+      if (!delivered) {
+        sendJson(res, 409, failure('schedule-run-failed', '任务未能在两秒后完成投递，请稍后重试。'))
+        return
+      }
+      try {
+        const refreshed = (await service.catalog()).find(candidate => candidate.id === id)
+        sendJson(res, 200, { ok: true, value: rowOf(refreshed ?? task) })
+      } catch (error) {
+        warn(`automation: refreshing ${id} after delivery failed: ${String(error)}`)
+        sendJson(res, 200, { ok: true, value: rowOf(task) })
+      }
+    } finally {
+      cloneRuns.delete(id)
     }
   }
 

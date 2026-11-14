@@ -118,6 +118,45 @@ test('undoing a retained deletion files the session again, cache included', asyn
   await rm(work, { recursive: true, force: true })
 })
 
+test('an undo and a purge racing the same token are serialised', async () => {
+  const { work, profileDir, projectDir, sessionDirectory } = await makeRemovedSession()
+  const retained = await retainDeletedSession({
+    profileDir,
+    sessionId: SESSION_ID,
+    projectDir,
+    name: SESSION_ID,
+    sourceDirectory: sessionDirectory,
+    header: HEADER,
+  })
+  const deps = {
+    profileDir,
+    workspaceRegistry: {
+      indexHeader: async () => undefined,
+      resolveByPath: async path => ({ id: 'ws-1', attachSession: async () => undefined }),
+    },
+    sessionPersistence: {
+      open: async () => ({ header: HEADER, read: async () => ({ events: EVENTS }), close: async () => undefined }),
+    },
+    sessionProjectionCache: { coldSnapshot: () => undefined },
+  }
+
+  // The receipt's countdown purge used to run concurrently with the undo: one
+  // was renaming the directory back while the other was `rm -rf`-ing it.
+  const [restored, purged] = await Promise.all([
+    restoreRetainedSession(deps, { token: retained.token }),
+    purgeRetainedSession({ profileDir }, { token: retained.token }),
+  ])
+
+  assert.equal(restored.ok, true, JSON.stringify(restored))
+  // The purge queued behind the undo finds the entry spent and touches nothing.
+  assert.equal(purged.ok, true)
+  assert.equal(purged.value.purged, false)
+  // The transcript is back in its project directory, intact.
+  assert.match(await readFile(join(projectDir, SESSION_ID, 'session.jsonl'), 'utf8'), /session-1234/)
+  assert.deepEqual((await readRetainedState(profileDir)).entries, {})
+  await rm(work, { recursive: true, force: true })
+})
+
 test('purging a retained deletion destroys the storage it kept', async () => {
   const { work, profileDir, projectDir, sessionDirectory } = await makeRemovedSession()
   const retained = await retainDeletedSession({

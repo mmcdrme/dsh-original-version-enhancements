@@ -119,6 +119,30 @@ const failure = (code, message, extra) => ({
 })
 
 /**
+ * One operation at a time per undo token.
+ *
+ * An undo (restore) and the receipt closing (purge) are two requests racing for
+ * the same directory: the restore is renaming it back while the purge is
+ * `rm -rf`-ing it, and both could report success while the data was already
+ * gone. Serialising them means the loser sees the entry gone from the index and
+ * answers accordingly, instead of touching the directory a second time.
+ * @param token - the undo token.
+ * @param work - the operation to run after any earlier one on this token.
+ * @returns the operation's result.
+ */
+const tokenQueues = new Map()
+const serializeToken = (token, work) => {
+  const previous = tokenQueues.get(token) ?? Promise.resolve()
+  const result = previous.then(work, work)
+  const tail = result.then(() => undefined, () => undefined)
+  tokenQueues.set(token, tail)
+  void tail.then(() => {
+    if (tokenQueues.get(token) === tail) tokenQueues.delete(token)
+  })
+  return result
+}
+
+/**
  * Take one removed session directory into the trash and record what is needed
  * to put it back: the project directory, the directory name, its header, and
  * the registry flags an undo has to restore.
@@ -187,7 +211,21 @@ export async function retainDeletedSession({
  * @param request - the undo token.
  * @returns a tagged result understood by the delete dialog.
  */
-export async function restoreRetainedSession(deps, { token }) {
+export async function restoreRetainedSession(deps, request) {
+  const token = typeof request?.token === 'string' ? request.token : ''
+  if (token.length === 0) return failure('undo-expired', '撤销期限已过，该会话已彻底删除。')
+  return serializeToken(token, () => restoreRetainedSessionOwned(deps, token))
+}
+
+/**
+ * The restore itself; runs with this token's queue held, so a concurrent purge
+ * either happened first (the entry is gone) or happens after it (a no-op).
+ * @param deps - profile directory, workspace registry, persistence, projection
+ *   cache, and the lifecycle reservation hooks the delete path also uses.
+ * @param token - the undo token.
+ * @returns a tagged result understood by the delete dialog.
+ */
+async function restoreRetainedSessionOwned(deps, token) {
   const {
     profileDir,
     workspaceRegistry,
@@ -300,7 +338,19 @@ export async function restoreRetainedSession(deps, { token }) {
  * @param request - the token to drop.
  * @returns a tagged result.
  */
-export async function purgeRetainedSession(deps, { token }) {
+export async function purgeRetainedSession(deps, request) {
+  const token = typeof request?.token === 'string' ? request.token : ''
+  if (token.length === 0) return { ok: true, value: { purged: false } }
+  return serializeToken(token, () => purgeRetainedSessionOwned(deps, token))
+}
+
+/**
+ * The purge itself; runs with this token's queue held.
+ * @param deps - profile directory and diagnostic sink.
+ * @param token - the token to drop.
+ * @returns a tagged result.
+ */
+async function purgeRetainedSessionOwned(deps, token) {
   const { profileDir, warn = () => undefined } = deps
   const state = await readRetainedState(profileDir, warn)
   const entry = typeof token === 'string' ? state.entries[token] : undefined

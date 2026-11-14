@@ -723,7 +723,12 @@ async function deleteReservedSession(deps, { sessionRoot, sessionId }, ownership
         throw error
       }
       detached = false
-      await rm(quarantineRoot, { recursive: true, force: true })
+      // The session is already out of the persistence root and filed in the undo
+      // trash. A failure to drop the now-empty quarantine folder (an AV scanner
+      // holding a handle, a permission quirk) must not turn that into "nothing
+      // was deleted": the receipt's undo token is the only way back, and it was
+      // already created. Leave the folder for the next start's sweep instead.
+      await rm(quarantineRoot, { recursive: true, force: true }).catch(() => undefined)
       return { ok: true, value: { deleted: true, retained } }
     }
 
@@ -951,6 +956,68 @@ export function sameOriginRequest(req) {
 export function hostRequestFence(connection) {
   if (typeof connection?.requestRejection !== 'function') return sameOriginRequest
   return req => connection.requestRejection(req) === undefined
+}
+
+/**
+ * Directory-name prefixes of the quarantine folders a delete, a move or a
+ * transfer rollback creates next to a session directory.
+ */
+const QUARANTINE_PREFIXES = ['.dsh-session-delete-', '.dsh-session-move-', '.ove-transfer-rollback-']
+
+/**
+ * Remove quarantine folders left behind by a crash.
+ *
+ * A delete or move renames the session directory into a `mkdtemp` folder and
+ * unlinks it once the operation settles. If the Host process dies in between,
+ * that folder survives with the only copy of the transcript inside it — and the
+ * id is no longer listed, so the startup reconciliation would also treat the
+ * session as removed. The folders are unclaimable (nothing records their
+ * paths), so the only safe rule is: drop them once they are old enough that no
+ * in-flight operation can own one.
+ * @param sessionRoot - the per-session JSONL root.
+ * @param options - age bound, clock, and diagnostic sink.
+ * @returns how many folders were removed.
+ */
+export async function sweepQuarantineDirectories(sessionRoot, options = {}) {
+  const { maxAgeMs = 60 * 60 * 1000, now = Date.now(), warn = () => undefined } = options
+  if (typeof sessionRoot !== 'string' || sessionRoot.length === 0) return 0
+  const sweepIn = async (parent) => {
+    let entries
+    try {
+      entries = await readdir(parent, { withFileTypes: true })
+    } catch {
+      return 0
+    }
+    let count = 0
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue
+      if (!QUARANTINE_PREFIXES.some(prefix => entry.name.startsWith(prefix))) continue
+      const target = join(parent, entry.name)
+      try {
+        const info = await lstat(target)
+        if (now - info.mtimeMs < maxAgeMs) continue
+        await rm(target, { recursive: true, force: true })
+        count += 1
+      } catch (error) {
+        warn(`original-version-enhancements: could not sweep ${target}: ${String(error)}`)
+      }
+    }
+    return count
+  }
+  // A real delete/move quarantines inside the project directory; the phantom
+  // path creates one directly under the root.
+  let removed = await sweepIn(sessionRoot)
+  let projects
+  try {
+    projects = await readdir(sessionRoot, { withFileTypes: true })
+  } catch {
+    return removed
+  }
+  for (const project of projects) {
+    if (!project.isDirectory() || project.isSymbolicLink()) continue
+    removed += await sweepIn(join(sessionRoot, project.name))
+  }
+  return removed
 }
 
 /**

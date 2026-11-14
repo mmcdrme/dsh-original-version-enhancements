@@ -41,10 +41,20 @@ test('a workday rule with clauses the guided form drops keeps the raw editor', (
   }
 })
 
+test('a monthly rule in the Host form opens in the guided form', () => {
+  // The Host's own "monthly" is "that day or the month's last day"; only this
+  // exact shape is claimed by the guided form.
+  assert.equal(editor.repeatKindOf({ kind: 'rrule', rrule: ruleOf('FREQ=MONTHLY;BYMONTHDAY=5,-1;BYSETPOS=1') }), 'monthly')
+  assert.equal(editor.repeatKindOf({ kind: 'rrule', rrule: ruleOf('FREQ=MONTHLY;BYMONTHDAY=31,-1;BYSETPOS=1') }), 'monthly')
+})
+
 test('a monthly rule with extra clauses keeps the raw editor', () => {
-  assert.equal(editor.repeatKindOf({ kind: 'rrule', rrule: ruleOf('FREQ=MONTHLY;BYMONTHDAY=5') }), 'monthly')
-  assert.equal(editor.repeatKindOf({ kind: 'rrule', rrule: ruleOf('FREQ=MONTHLY;INTERVAL=2;BYMONTHDAY=5') }), 'rrule')
-  assert.equal(editor.repeatKindOf({ kind: 'rrule', rrule: ruleOf('FREQ=MONTHLY;BYMONTHDAY=5;UNTIL=20261231T000000Z') }), 'rrule')
+  // The older plugin shape (a bare BYMONTHDAY) is not claimed: rewriting it into
+  // the month-end form on save would change when it fires.
+  assert.equal(editor.repeatKindOf({ kind: 'rrule', rrule: ruleOf('FREQ=MONTHLY;BYMONTHDAY=5') }), 'rrule')
+  assert.equal(editor.repeatKindOf({ kind: 'rrule', rrule: ruleOf('FREQ=MONTHLY;INTERVAL=2;BYMONTHDAY=5,-1;BYSETPOS=1') }), 'rrule')
+  assert.equal(editor.repeatKindOf({ kind: 'rrule', rrule: ruleOf('FREQ=MONTHLY;BYMONTHDAY=5,-1;BYSETPOS=1;UNTIL=20261231T000000Z') }), 'rrule')
+  assert.equal(editor.repeatKindOf({ kind: 'rrule', rrule: ruleOf('FREQ=MONTHLY;BYMONTHDAY=5,-1') }), 'rrule')
 })
 
 test('a rule with a second line the guided form cannot rebuild keeps the raw editor', () => {
@@ -77,6 +87,27 @@ test('an empty picker falls back to Monday, not the opening day', () => {
     })
     assert.deepEqual(timing.weekly.weekdays, [1])
   }
+})
+
+const { monthDayOf } = new Function(`${slice('    const monthDayOf = ', '    const WORKDAYS = ')}
+return { monthDayOf }`)()
+
+test('the monthly form writes the Host convention and reads it back', () => {
+  const timing = timingOfDraft({
+    kind: 'monthly', monthDay: '31', weekdays: [], weekday: 1, time: '09:00', interval: '1',
+    delayUnit: 'min', date: '2026-01-01', rrule: '', cron: '0 9 * * *',
+  })
+  assert.equal(timing.kind, 'rrule')
+  assert.match(timing.rrule, /RRULE:FREQ=MONTHLY;BYMONTHDAY=31,-1;BYSETPOS=1$/u)
+  assert.equal(monthDayOf(timing.rrule), 31)
+})
+
+test('a stored Sunday survives the editor round-trip', () => {
+  const timing = timingOfDraft({
+    kind: 'weekly', weekdays: [7], weekday: 7, time: '09:00', interval: '1',
+    delayUnit: 'min', date: '2026-01-01', monthDay: '1', rrule: '', cron: '0 9 * * *',
+  })
+  assert.deepEqual(timing.weekly.weekdays, [7])
 })
 
 const draftSource = slice('    const DRAFT_IDENTITY_FIELDS = ', '    const timingOfDraft = ')
@@ -116,12 +147,22 @@ test('the last selected weekday refuses to be removed', () => {
 test('adding a weekday keeps the selection sorted', () => {
   assert.deepEqual(toggleWeekday([5], 1), [1, 5])
   assert.deepEqual(toggleWeekday([], 2), [2])
-  assert.deepEqual(toggleWeekday([0, 6], 3), [0, 3, 6])
+  assert.deepEqual(toggleWeekday([6, 7], 3), [3, 6, 7])
+})
+
+test('Sunday is a real ISO weekday, not an out-of-range day', () => {
+  // The Host numbers weekdays 1 = Monday … 7 = Sunday; the panel used 0-based
+  // numbering, so Sunday could not be created and a stored one became Monday.
+  assert.deepEqual(toggleWeekday([1], 7), [1, 7])
+  assert.deepEqual(toggleWeekday([7], 1), [1, 7])
+  const onlySunday = [7]
+  assert.equal(toggleWeekday(onlySunday, 7), onlySunday, 'the last day is locked in place')
 })
 
 test('an out-of-range day changes nothing', () => {
   assert.deepEqual(toggleWeekday([1], -1), [1])
-  assert.deepEqual(toggleWeekday([1], 7), [1])
+  assert.deepEqual(toggleWeekday([1], 0), [1])
+  assert.deepEqual(toggleWeekday([1], 8), [1])
   assert.deepEqual(toggleWeekday([1], 1.5), [1])
   assert.deepEqual(toggleWeekday(undefined, 1), [1])
 })

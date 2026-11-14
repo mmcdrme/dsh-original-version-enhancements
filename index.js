@@ -9,6 +9,7 @@ import {
   installAgentHandleTracker,
   projectionCacheTable,
   purgeSessionAccounting,
+  sweepQuarantineDirectories,
 } from './host/delete-session.mjs'
 import {
   createArchiveSearchHandler,
@@ -35,6 +36,7 @@ import { createStyleHandler } from './host/css.mjs'
 import { createEmbedHandler } from './host/embed.mjs'
 import { createNativeWindows } from './host/native-window.mjs'
 import path from 'node:path'
+import { readdir } from 'node:fs/promises'
 
 const ROUTE_ROOT = '/plugins/original-version-enhancements'
 
@@ -201,6 +203,15 @@ export function apply(ctx) {
     return
   }
 
+  // A crash in the middle of a delete, move or transfer rollback leaves a
+  // quarantined folder holding the only copy of a transcript. Nothing indexes
+  // those folders, so the only safe cleanup is age-based and runs once per
+  // start; without it they accumulate for the lifetime of the profile.
+  ctx.effect(() => {
+    void sweepQuarantineDirectories(sessionRoot, { warn })
+    return () => {}
+  }, 'original-version-enhancements: quarantine sweep')
+
   // Drop accounting whose session storage no longer exists, including ids
   // removed before this reconciliation shipped. The transcript is the truth: an
   // id without a stored log can never reopen, so leaving it in the Workspace
@@ -224,8 +235,35 @@ export function apply(ctx) {
       } catch {
         return
       }
+      // An empty listing is what a missing, unmounted or unreadable session root
+      // looks like through this API (the JSONL backend answers ENOENT with an
+      // empty array rather than throwing). Treating that as "every session was
+      // deleted" wiped the workspace, archive, pin and title accounting for the
+      // whole profile, and the transcript on disk could not bring it back.
+      if (known.size === 0) return
+      // The listing itself may silently skip a session whose header is corrupt
+      // or written by a newer backend. Its directory still exists, though, and a
+      // session that is on disk is not a ghost: only an id with no storage at
+      // all may lose its accounting.
+      const onDisk = new Set()
+      const collect = async (directory, depth) => {
+        if (depth > 3) return
+        let entries
+        try {
+          entries = await readdir(directory, { withFileTypes: true })
+        } catch {
+          return
+        }
+        for (const entry of entries) {
+          if (!entry.isDirectory()) continue
+          onDisk.add(entry.name)
+          await collect(path.join(directory, entry.name), depth + 1)
+        }
+      }
+      await collect(sessionRoot, 0)
       const drop = async (id) => {
         if (cancelled) return
+        if (onDisk.has(String(id))) return
         await purgeSessionAccounting(accounting, id)
       }
       const archived = Array.isArray(registry.archivedSessionIds) ? [...registry.archivedSessionIds] : []
@@ -256,7 +294,9 @@ export function apply(ctx) {
       if (table !== undefined) {
         try {
           const stale = []
-          for (const id of table.keys()) if (!known.has(String(id))) stale.push(id)
+          for (const id of table.keys()) {
+            if (!known.has(String(id)) && !onDisk.has(String(id))) stale.push(id)
+          }
           if (stale.length > 0) await table.deleteMany(stale)
         } catch { /* the cache self-heals on its next write */ }
       }
