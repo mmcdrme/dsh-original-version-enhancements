@@ -3983,11 +3983,22 @@ window.__ModuleLoader__.load({
         // then pushes the conversation right instead of sliding left into the
         // row's edge (the marker's right edge is the name's left edge).
         row.style.paddingLeft = `${8 + Math.max(0, depth - 1) * 12}px`;
-        // One fixed lead column, packed against the name: caret (only when the
-        // row really expands), status marker (only while it has one) and the
-        // level dot, whose right edge is the name's left edge.
+        // One lead cluster, packed against the name. Left to right: the running
+        // animation (status marker, only while it has one), the expander (only
+        // when the row really expands), then the level dot — whose right edge is
+        // the name's left edge.
         const leadCluster = document.createElement('span');
         leadCluster.className = 'ove-sub-lead';
+        const lead = document.createElement('span');
+        lead.className = 'ove-sub-statusslot';
+        if (status.state !== 'idle') lead.append(statusNode(status.state));
+        if (status.aria.length > 0) {
+          const spoken = document.createElement('span');
+          spoken.className = 'ove-sub-sr';
+          spoken.textContent = status.aria;
+          lead.append(spoken);
+        }
+        leadCluster.append(lead);
         if (kids.length > 0) {
           row.setAttribute('aria-expanded', String(expanded));
           const caretButton = document.createElement('button');
@@ -4002,16 +4013,6 @@ window.__ModuleLoader__.load({
           });
           leadCluster.append(caretButton);
         }
-        const lead = document.createElement('span');
-        lead.className = 'ove-sub-statusslot';
-        if (status.state !== 'idle') lead.append(statusNode(status.state));
-        if (status.aria.length > 0) {
-          const spoken = document.createElement('span');
-          spoken.className = 'ove-sub-sr';
-          spoken.textContent = status.aria;
-          lead.append(spoken);
-        }
-        leadCluster.append(lead);
         // Depth marker: `●` for a direct child, `●<level>●` from the second
         // layer on, so the nesting stays readable without empty leading space.
         const level = document.createElement('span');
