@@ -2162,10 +2162,14 @@ window.__ModuleLoader__.load({
     const sessionTitleLine = (row, repeatedTitles) => h('div', { className: 'ove-arc-title' },
       h('span', { className: 'ove-arc-ws', title: row.workspace }, row.workspace),
       h('span', { className: 'ove-arc-sep', 'aria-hidden': 'true' }, '/'),
-      h('span', { className: 'ove-arc-name', title: row.title }, row.title),
-      h('span', {
-        className: `ove-arc-sid${repeatedTitles.has(row.title) ? ' is-shown' : ''}`,
-      }, `#${row.short}`));
+      // The name and its hover-only short id share one positioned box: the id
+      // hangs off the name's right edge out of flow, so revealing it never
+      // narrows the name and the row's text stays put.
+      h('span', { className: 'ove-arc-namewrap' },
+        h('span', { className: 'ove-arc-name', title: row.title }, row.title),
+        h('span', {
+          className: `ove-arc-sid${repeatedTitles.has(row.title) ? ' is-shown' : ''}`,
+        }, `#${row.short}`)));
 
     /**
      * The picked sessions listed inside a batch confirmation: the same tree as
@@ -3504,7 +3508,7 @@ window.__ModuleLoader__.load({
    element (the dot) touches the name and every name starts in the shipped
    conversation column, exactly on the parent name's first character. */
 .ove-sub-lead {
-  flex: none; width: 18px; display: flex; align-items: center;
+  flex: none; min-width: 18px; display: flex; align-items: center;
   justify-content: flex-end; gap: 1px; overflow: visible;
 }
 /* The lead cluster: caret or spacer, then the shipped status marker. The slot
@@ -3975,8 +3979,10 @@ window.__ModuleLoader__.load({
         row.dataset.oveSubagentRow = itemId;
         row.tabIndex = 0;
         row.setAttribute('role', 'treeitem');
-        // No space indentation any more: every level shares the row's own left
-        // padding and the depth is drawn by the `●` / `●2●` marker below.
+        // Each level indents the whole row by one step: a deeper `●2●` prefix
+        // then pushes the conversation right instead of sliding left into the
+        // row's edge (the marker's right edge is the name's left edge).
+        row.style.paddingLeft = `${8 + Math.max(0, depth - 1) * 12}px`;
         // One fixed lead column, packed against the name: caret (only when the
         // row really expands), status marker (only while it has one) and the
         // level dot, whose right edge is the name's left edge.

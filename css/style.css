@@ -173,20 +173,34 @@
 /* The name hugs its text instead of growing: the short id then sits directly
    after the name (left-aligned) instead of floating at the row's right edge,
    where the hover buttons used to drag it around. */
+.ove-arc-namewrap { position: relative; display: inline-flex; flex: 0 1 auto; min-width: 0; }
 .ove-arc-name { flex: 0 1 auto; min-width: 0; font-weight: 400; color: var(--dsw-alias-label-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The short id is out of flow, hung off the name's right edge: showing it on
+   hover no longer narrows the name (which used to re-truncate the text and
+   made the row's text jump as the pointer moved). */
 .ove-arc-sid {
-  display: none; flex: none; margin-left: 2px; font-size: 12px; color: #2563eb;
-  font-variant-numeric: tabular-nums;
+  position: absolute; left: 100%; top: 0; display: none; margin-left: 6px;
+  font-size: 12px; line-height: 22px; white-space: nowrap; color: #2563eb;
+  font-variant-numeric: tabular-nums; pointer-events: none;
 }
 .ove-arc-row:hover .ove-arc-sid,
-.ove-arc-sid.is-shown { display: inline; }
+.ove-pick-row:hover .ove-arc-sid,
+.ove-arc-sid.is-shown { display: block; }
 .ove-arc-when { margin-top: 2px; font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-tertiary); }
 /* Row actions take no room until the row is hovered (or focused by keyboard):
    the title keeps its full width at rest and only then shortens with an
    ellipsis to make room for the buttons. */
-.ove-arc-row .ove-actions { display: none; }
+.ove-arc-row { position: relative; }
+/* Row actions float above the row's right edge instead of joining the flow:
+   the title keeps its exact width at rest and while hovered, so nothing inside
+   the row moves when the pointer enters it. */
+.ove-arc-row .ove-actions {
+  position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
+  display: flex; visibility: hidden; pointer-events: none;
+  background: inherit; border-radius: 8px; padding: 2px;
+}
 .ove-arc-row:hover .ove-actions,
-.ove-arc-row:has(.ove-check:focus-visible) .ove-actions { display: flex; }
+.ove-arc-row:has(.ove-check:focus-visible) .ove-actions { visibility: visible; pointer-events: auto; }
 .ove-item-text { flex: 1 1 180px; min-width: 0; display: grid; gap: 2px; }
 .ove-item-title { font-size: 14px; line-height: 22px; overflow-wrap: anywhere; }
 .ove-item-sub { font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-tertiary); }
@@ -374,7 +388,6 @@
 .ove-pick-row { display: flex; align-items: center; gap: 10px; padding: 3px 6px 3px 20px; border-radius: 8px; }
 .ove-pick-row .ove-arc-title { flex: 1 1 auto; min-width: 0; font-size: 13px; line-height: 20px; }
 .ove-pick-row:hover { background: color-mix(in srgb, var(--dsw-alias-label-primary) 6%, transparent); }
-.ove-pick-row:hover .ove-arc-sid { display: inline; }
 /* The archive page keeps its title and intro on the left and puts the
    hidden-session manager against the title row's right edge. */
 .ove-head-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
