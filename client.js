@@ -375,9 +375,6 @@ window.__ModuleLoader__.load({
       && now - heartbeat <= DETACHED_STALE_MS
     );
 
-    /** Windows this page opened, so "bring back" can close them. */
-    const detachedHandles = new Map();
-
     const readDetachedBeat = (sessionId) => {
       try {
         const raw = JSON.parse(globalThis.localStorage?.getItem(detachedKeyOf(sessionId)) ?? 'null');
@@ -541,7 +538,8 @@ window.__ModuleLoader__.load({
     /** Opacity and backdrop live here; the page edits them, every window reads. */
     const WINDOW_KEY = 'original-version-enhancements.window.v1';
     const WINDOW_SIZE_IDS = ['compact', 'standard', 'wide'];
-    const DEFAULT_WINDOW = { opacity: 100, size: 'standard', mute: true };
+    const WINDOW_MODES = ['native', 'panel'];
+    const DEFAULT_WINDOW = { opacity: 100, size: 'standard', mute: true, mode: 'native' };
 
     const readWindow = () => {
       try {
@@ -552,6 +550,7 @@ window.__ModuleLoader__.load({
           opacity: Number.isFinite(opacity) ? Math.min(100, Math.max(30, Math.round(opacity))) : DEFAULT_WINDOW.opacity,
           size: WINDOW_SIZE_IDS.includes(saved.size) ? saved.size : DEFAULT_WINDOW.size,
           mute: saved.mute !== false,
+          mode: WINDOW_MODES.includes(saved.mode) ? saved.mode : DEFAULT_WINDOW.mode,
         };
       } catch {
         return { ...DEFAULT_WINDOW };
@@ -575,11 +574,19 @@ window.__ModuleLoader__.load({
         opacity: Number.isFinite(opacity) ? Math.min(100, Math.max(30, Math.round(opacity))) : DEFAULT_WINDOW.opacity,
         size: WINDOW_SIZE_IDS.includes(next.size) ? next.size : windowState.size,
         mute: next.mute !== false,
+        mode: WINDOW_MODES.includes(next.mode) ? next.mode : windowState.mode,
       };
       try {
         globalThis.localStorage?.setItem(WINDOW_KEY, JSON.stringify(windowState));
       } catch { /* the setting is best-effort */ }
       for (const listener of windowListeners) listener();
+      // Open windows read a shared file: opacity and mute apply immediately,
+      // size is the geometry they were created with.
+      void fetch(`${ROUTE_ROOT}/window/native/appearance`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ opacity: windowState.opacity, mute: windowState.mute }),
+      }).catch(() => { /* no native windows, or the Host is restarting */ });
     };
 
     /** True inside the page the detached panel hosts: it shows one conversation only. */
@@ -588,20 +595,6 @@ window.__ModuleLoader__.load({
         return globalThis.__OVE_EMBED__ === true;
       } catch {
         return false;
-      }
-    })();
-
-    /**
-     * The conversation the native window was opened for. The companion host
-     * plants a one-shot cookie before the client boots; reading it here is what
-     * makes the window land on the right conversation instead of the last one.
-     */
-    const NATIVE_SESSION = (() => {
-      try {
-        const match = /(?:^|;\s*)ove-window-session=([^;]*)/u.exec(document.cookie);
-        return match === null ? '' : decodeURIComponent(match[1]);
-      } catch {
-        return '';
       }
     })();
 
@@ -622,11 +615,6 @@ window.__ModuleLoader__.load({
       try {
         globalThis.localStorage?.removeItem(detachedKeyOf(sessionId));
       } catch { /* already gone */ }
-      const handle = detachedHandles.get(sessionId);
-      detachedHandles.delete(sessionId);
-      if (handle !== null && handle !== undefined) {
-        try { handle.close(); } catch { /* the browser may refuse */ }
-      }
       if (hostWindows.delete(sessionId)) refreshDetached();
       void closeNativeWindow(sessionId);
       refreshDetached();
@@ -689,10 +677,6 @@ window.__ModuleLoader__.load({
           for (const id of ids) storage.removeItem(detachedKeyOf(id));
         }
       } catch { /* a blocked storage is already empty */ }
-      for (const handle of detachedHandles.values()) {
-        try { handle?.close(); } catch { /* already gone */ }
-      }
-      detachedHandles.clear();
       hostWindows = new Map();
       publishPanels(new Set());
       refreshDetached();
@@ -713,7 +697,10 @@ window.__ModuleLoader__.load({
      * @returns a promise resolving to true when the window is up.
      */
     const detachSession = async (ctx, sessionId, labels) => {
-      void labels;
+      const note = (key) => {
+        const text = typeof labels?.t === 'function' ? labels.t(key) : '';
+        if (text.length > 0) flashDetachedNote(text);
+      };
       if (typeof sessionId !== 'string' || sessionId.length === 0) return false;
       const already = readDetachedBeat(sessionId) > 0;
       // Only one window may host a client document at a time: the Host gives a
@@ -731,17 +718,35 @@ window.__ModuleLoader__.load({
       // its own minimise/restore, and keeps running while this window is
       // minimised. It is the normal outcome on Windows.
       const appearance = getWindow();
-      if (await openNativeWindow(sessionId, appearance)) {
-        if (await waitForNativeWindow(sessionId, 12000)) {
-          if (!already) {
-            const current = ctx?.uiWorkspace?.mainReference?.sessionId ?? '';
-            if (current === sessionId) leaveRemovedSession(ctx, sessionId);
+      if (appearance.mode !== 'panel') {
+        const opened = await openNativeWindow(sessionId, appearance);
+        if (opened) {
+          // A slow window is not a broken one: give it far longer than the old
+          // 12 seconds, and never turn a window the user closed into an in-app
+          // panel (that is what made "close immediately" spawn a second shape).
+          const ready = await waitForNativeWindow(sessionId, 45000);
+          if (ready) {
+            if (!already) {
+              const current = ctx?.uiWorkspace?.mainReference?.sessionId ?? '';
+              if (current === sessionId) leaveRemovedSession(ctx, sessionId);
+            }
+            return true;
           }
-          return true;
+          const state = await pullHostWindows();
+          const alive = (state?.windows ?? []).some(item => String(item?.sessionId) === sessionId);
+          if (alive) {
+            // It is up but never finished loading: close it and say so rather
+            // than silently swapping the window type.
+            await closeNativeWindow(sessionId);
+            note('detachedLoadFailed');
+          }
+          return false;
         }
-        // The companion window did not come up (no WebView2 runtime, no
-        // `connection` service): drop it and use the in-app window instead.
-        await closeNativeWindow(sessionId);
+        // The companion window could not be started at all.
+        if (appearance.mode === 'native') {
+          note('detachedNativeFailed');
+          return false;
+        }
       }
       // 2) The in-app window, which cannot leave the main window.
       openDetachedPanel(sessionId);
@@ -1798,6 +1803,18 @@ window.__ModuleLoader__.load({
               h('div', { className: 'ove-card' },
                 h('div', { className: 'ove-row' },
                   h('div', { className: 'ove-row-text' },
+                    h('div', { className: 'ove-row-title' }, tr('window.mode')),
+                    h('div', { className: 'ove-row-desc' }, tr('window.mode.desc'))),
+                  h('div', { className: 'ove-size-group', role: 'group', 'aria-label': tr('window.mode') },
+                    ['native', 'panel'].map(id => h('button', {
+                      key: id,
+                      type: 'button',
+                      className: `ove-size${appearance.mode === id ? ' is-on' : ''}`,
+                      'aria-pressed': appearance.mode === id,
+                      onClick: () => setWindow({ mode: id }),
+                    }, tr(`window.mode.${id}`))))),
+                h('div', { className: 'ove-row' },
+                  h('div', { className: 'ove-row-text' },
                     h('div', { className: 'ove-row-title' }, tr('window.opacity')),
                     h('div', { className: 'ove-row-desc' }, tr('window.opacity.desc'))),
                   h('div', { className: 'ove-window-opacity' },
@@ -2151,7 +2168,7 @@ window.__ModuleLoader__.load({
           releaseDetached(sessionId);
           return;
         }
-        void detachSession(ctx, sessionId, { title: tr('detachedWindowTitle') });
+        void detachSession(ctx, sessionId, { title: tr('detachedWindowTitle'), t: tr });
       };
 
       if (uiPrimitives?.MenuItemButton) {
@@ -2205,6 +2222,8 @@ window.__ModuleLoader__.load({
       const [place, setPlace] = React.useState(() => initialPanelPlace(index));
       const [minimized, setMinimized] = React.useState(false);
       const [loaded, setLoaded] = React.useState(false);
+      const [failed, setFailed] = React.useState(false);
+      const loadedRef = React.useRef(false);
       const [title, setTitle] = React.useState('');
       const [dragging, setDragging] = React.useState(false);
       const rootRef = React.useRef(null);
@@ -2231,6 +2250,7 @@ window.__ModuleLoader__.load({
           if (data === null || typeof data !== 'object' || data.source !== 'ove-detached') return;
           if (data.sessionId !== sessionId) return;
           if (data.type !== 'ready') return;
+          loadedRef.current = true;
           setLoaded(true);
         };
         window.addEventListener('message', onMessage);
@@ -2261,9 +2281,9 @@ window.__ModuleLoader__.load({
         const timer = window.setInterval(follow, 600);
         titlePoll.current?.();
         titlePoll.current = () => window.clearInterval(timer);
-        // A document that never posts (an older Host, or a boot that failed)
-        // must not spin forever: the frame loaded, so show it.
-        window.setTimeout(() => setLoaded(true), 3000);
+        // A document that never announces itself is not "loaded": say so after
+        // a generous wait instead of lifting the veil over a stuck page.
+        window.setTimeout(() => { if (!loadedRef.current) setFailed(true); }, 20000);
       };
 
       const beginDrag = (event) => {
@@ -2370,9 +2390,9 @@ window.__ModuleLoader__.load({
           src: `${ROUTE_ROOT}/window?session=${encodeURIComponent(sessionId)}`,
           onLoad: onFrameLoad,
         }),
-        loaded ? null : h('div', { className: 'ove-detached-loading', role: 'status' },
+        loaded ? null : h('div', { className: `ove-detached-loading${failed ? ' is-failed' : ''}`, role: 'status' },
           h('span', { className: 'ove-detached-spinner', 'aria-hidden': 'true' }),
-          h('span', null, tr('detachedLoading')))));
+          h('span', null, failed ? tr('detachedLoadFailed') : tr('detachedLoading')))));
 
       if (!minimized) return panel;
 
@@ -2466,36 +2486,6 @@ window.__ModuleLoader__.load({
       });
       const detached = useDetached();
       const panels = usePanels();
-
-      // The native window is a full client opened for one conversation: select
-      // it, drop the one-shot cookie, and tell the Host the window is ready.
-      React.useEffect(() => {
-        if (NATIVE_SESSION.length === 0) return undefined;
-        try { document.cookie = 'ove-window-session=; Max-Age=0; path=/'; } catch { /* cosmetic */ }
-        let ready = false;
-        let settled = 0;
-        const timer = window.setInterval(() => {
-          const current = ctx?.uiWorkspace?.mainReference?.sessionId ?? '';
-          if (current === NATIVE_SESSION) {
-            settled += 1;
-            if (settled >= 2 && !ready) {
-              ready = true;
-              window.clearInterval(timer);
-              void fetch(`${ROUTE_ROOT}/window/native/ready`, {
-                method: 'POST',
-                headers: { 'content-type': 'application/json' },
-                body: JSON.stringify({ sessionId: NATIVE_SESSION }),
-              }).catch(() => { /* the Host may be restarting */ });
-            }
-            return;
-          }
-          settled = 0;
-          try {
-            ctx?.uiWorkspace?.openSession?.(NATIVE_SESSION);
-          } catch { /* the catalogue may still be loading */ }
-        }, 400);
-        return () => { window.clearInterval(timer); };
-      }, [ctx]);
 
       // The Host owns the independent OS windows, so its report is the only
       // place their liveness can come from: mirror it while this page lives.
@@ -2609,7 +2599,7 @@ window.__ModuleLoader__.load({
           if (row === null) return '';
           const id = String(row.getAttribute('data-row-key') ?? '').slice('session:'.length);
           // This window *is* that conversation: its own row must stay usable.
-          if (!detachedSet.has(id) || id === NATIVE_SESSION) return '';
+          if (!detachedSet.has(id)) return '';
           return id;
         };
         const onClick = (event) => {
@@ -2674,7 +2664,7 @@ window.__ModuleLoader__.load({
           // A drop on a real target keeps its own meaning (reorder, file, …).
           if (event.dataTransfer !== null && event.dataTransfer.dropEffect !== 'none') return;
           if (detachedSet.has(state.id)) return;
-          void detachSession(ctx, state.id, { title: tr('detachedWindowTitle') });
+          void detachSession(ctx, state.id, { title: tr('detachedWindowTitle'), t: tr });
         };
         document.addEventListener('dragstart', onDragStart, true);
         document.addEventListener('dragleave', onDragLeave, true);

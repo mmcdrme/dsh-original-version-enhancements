@@ -28,19 +28,26 @@ test('the left sidebar is hidden but the right rail is left alone', () => {
   assert.doesNotMatch(embed, /\[data-rightbar-col\]/u)
   assert.doesNotMatch(embed, /grid-template-columns:0 minmax\(0,1fr\) 0/u)
   // The frame's column template belongs to the app; only the first track is
-  // rewritten, and only at runtime.
-  assert.match(embed, /const next = template\.replace\(\/\^\\s\*\[\\d\.\]\+px\/u, '0px'\)/u)
+  // rewritten, and only at runtime. It must not assume a `px` unit.
+  assert.match(embed, /const firstTrack = \(template\) =>/u)
+  assert.match(embed, /token\[0\] !== '\['/u)
 })
 
 test('the loading state is reported to the companion window, not doubled', () => {
   // The exe paints the one loading state; the page only says when it is done.
   assert.match(embed, /window\.chrome && window\.chrome\.webview/u)
-  assert.match(embed, /postMessage\('ove-ready'\)/u)
+  assert.match(embed, /postMessage\(reason === 'timeout' \? 'ove-timeout' : 'ove-ready'\)/u)
   // The in-page spinner survives only for the browser fallback.
   assert.match(embed, /if \(!native\) \{/u)
   assert.match(embed, /id = 'ove-embed-loading'/u)
   assert.match(embed, /@keyframes ove-load-spin/u)
   assert.match(embed, /conversation\.composer/u)
+})
+
+test('the page never reports success when it only timed out', () => {
+  assert.match(embed, /reason === 'timeout' \? 'ove-timeout' : 'ove-ready'/u)
+  assert.match(embed, /if \(timer !== null\) \{ window\.clearInterval\(timer\); timer = null \}/u)
+  assert.match(embed, /finish\('timeout'\)/u)
 })
 
 test('the boot chime of a fresh window is rebased instead of replayed', () => {

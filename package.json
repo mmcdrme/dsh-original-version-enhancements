@@ -1,6 +1,6 @@
 {
   "name": "@local/dsh-original-version-enhancements",
-  "version": "1.25.0",
+  "version": "1.26.0",
   "private": true,
   "description": "原版功能增强：四档工作详情切换、已归档会话管理（搜索/恢复/确认删除）、自动化任务增强、发送历史回溯，以及由自带 exe（WebView2）承载、可最小化与调透明度的独立会话窗口。",
   "type": "module",

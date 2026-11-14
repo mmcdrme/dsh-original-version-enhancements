@@ -25,17 +25,40 @@ const EMBED_CSS = [
 /**
  * The app owns the window frame's column template and rewrites it whenever the
  * right rail opens, closes or resizes, so the left track cannot be pinned in
- * CSS without freezing the rail too. This script zeroes only the first track,
- * in place, each time the app writes a new template.
+ * CSS without freezing the rail too. This script zeroes only the first track
+ * (whatever unit the app used), in place, each time the app writes a template.
  */
 const SIDEBAR_TRACK_SCRIPT = `(() => {
+  const firstTrack = (template) => {
+    const spans = []
+    let depth = 0
+    let start = 0
+    for (let index = 0; index < template.length; index += 1) {
+      const char = template[index]
+      if (char === '(') depth += 1
+      else if (char === ')') depth = Math.max(0, depth - 1)
+      else if (char === ' ' && depth === 0) {
+        spans.push([start, index])
+        start = index + 1
+      }
+    }
+    spans.push([start, template.length])
+    for (const [from, to] of spans) {
+      const token = template.slice(from, to).trim()
+      if (token.length > 0 && token[0] !== '[') return [from, to]
+    }
+    return null
+  }
   const fix = () => {
     for (const el of document.querySelectorAll('[style*="grid-template-columns"]')) {
       if (el.querySelector('[data-slot="sidebar"]') === null) continue
       const template = el.style.gridTemplateColumns
       if (!template) continue
-      const next = template.replace(/^\\s*[\\d.]+px/u, '0px')
-      if (next !== template) el.style.gridTemplateColumns = next
+      const span = firstTrack(template)
+      if (span === null) continue
+      const token = template.slice(span[0], span[1]).trim()
+      if (token === '0px' || token === '0') continue
+      el.style.gridTemplateColumns = template.slice(0, span[0]) + '0px' + template.slice(span[1])
     }
   }
   fix()
@@ -43,7 +66,8 @@ const SIDEBAR_TRACK_SCRIPT = `(() => {
   observer.observe(document.documentElement, { subtree: true, childList: true, attributes: true, attributeFilter: ['style'] })
   document.addEventListener('DOMContentLoaded', fix, { once: true })
   window.addEventListener('load', fix, { once: true })
-})()`
+})()
+`
 
 /**
  * A conversation needs a moment to mount, and the app's own skeleton is not
@@ -68,13 +92,16 @@ const LOADING_SCRIPT = `(() => {
   }
   let done = false
   let overlay = null
-  const finish = () => {
+  let timer = null
+  const finish = (reason) => {
     if (done) return
     done = true
+    if (timer !== null) { window.clearInterval(timer); timer = null }
     doc.removeEventListener('DOMContentLoaded', check)
     window.removeEventListener('load', check)
     if (native) {
-      try { bridge.postMessage('ove-ready') } catch (error) { /* the host has its own timeout */ }
+      // A timeout is not success: the host may show its own failure state.
+      try { bridge.postMessage(reason === 'timeout' ? 'ove-timeout' : 'ove-ready') } catch (error) { /* the host has its own timeout */ }
       return
     }
     if (overlay === null) return
@@ -99,7 +126,7 @@ const LOADING_SCRIPT = `(() => {
   }
   const fonts = doc.fonts && typeof doc.fonts.ready === 'object' ? doc.fonts.ready.catch(() => {}) : Promise.resolve()
   const reveal = () => {
-    fonts.then(() => requestAnimationFrame(() => requestAnimationFrame(finish)))
+    fonts.then(() => requestAnimationFrame(() => requestAnimationFrame(() => finish('ready'))))
   }
   const check = () => {
     if (done || doc.readyState !== 'complete' || !mounted()) return
@@ -107,8 +134,8 @@ const LOADING_SCRIPT = `(() => {
   }
   doc.addEventListener('DOMContentLoaded', check)
   window.addEventListener('load', check)
-  const timer = window.setInterval(check, 80)
-  window.setTimeout(() => { window.clearInterval(timer); finish() }, 20000)
+  timer = window.setInterval(check, 80)
+  window.setTimeout(() => { finish('timeout') }, 20000)
 })()`
 
 /**

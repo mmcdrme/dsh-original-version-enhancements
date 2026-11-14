@@ -269,7 +269,7 @@
     "detachedRestore": "还原窗口",
     "detachedLoading": "正在载入会话…",
     "window.title": "独立窗口外观",
-    "window.desc": "这些设置同时用于独立窗口和应用内的备用浮动窗口：不透明度与默认大小在打开时生效；独立窗口只显示对话、无侧边栏，可以拖动、缩放、最小化到任务栏，也可以同时开多个。",
+    "window.desc": "这些设置同时用于独立窗口和应用内的备用浮动窗口：窗口形态决定用自带 exe 还是页内窗口，不透明度与静音对已打开的窗口立即生效，默认大小在打开时生效。独立窗口只显示对话、无侧边栏，可以拖动、缩放、最小化到任务栏，也可以同时开多个。",
     "window.opacity": "窗口不透明度",
     "window.opacity.desc": "整个窗口（含内容）的不透明度，30%–100%；太高会看不清内容，建议 85% 以上。",
     "window.size": "默认窗口大小",
@@ -279,7 +279,13 @@
     "window.size.wide": "宽大",
     "window.mute": "静音独立窗口",
     "window.mute.desc": "独立窗口默认不播放提示音与音效，避免不合时宜的错误提示音；想听完成提醒时可以关掉。",
-    "detachedRestored": "已移回主界面并打开会话"
+    "detachedRestored": "已移回主界面并打开会话",
+    "window.mode": "窗口形态",
+    "window.mode.desc": "选择独立窗口的形态：自带 exe 的独立窗口可以最小化、调透明度，页内窗口则贴在主界面里。对之后打开的窗口生效。",
+    "window.mode.native": "独立 exe",
+    "window.mode.panel": "页内窗口",
+    "detachedNativeFailed": "独立窗口启动失败；可在「原版功能增强 → 独立窗口外观」把窗口形态改为页内窗口",
+    "detachedLoadFailed": "窗口内容未能载入，请关闭后重试"
   },
   "en": {
     "group": "Work details",
@@ -551,7 +557,7 @@
     "detachedRestore": "Restore window",
     "detachedLoading": "Loading the conversation…",
     "window.title": "Independent window appearance",
-    "window.desc": "These settings apply to the independent window and to the in-app fallback: opacity and default size are used when a window opens. The independent window shows the conversation only (no sidebar), can be dragged, resized and minimised to the taskbar, and several can be open at once.",
+    "window.desc": "These settings apply to the independent window and to the in-app fallback: Window kind picks the bundled exe or the in-page frame, opacity and mute apply to open windows immediately, and the default size is used when a window opens. The independent window shows the conversation only (no sidebar), can be dragged, resized and minimised to the taskbar, and several can be open at once.",
     "window.opacity": "Window opacity",
     "window.opacity.desc": "Opacity of the whole window, content included, from 30% to 100%. Keep it above 85% for comfortable reading.",
     "window.size": "Default window size",
@@ -561,6 +567,12 @@
     "window.size.wide": "Wide",
     "window.mute": "Mute independent windows",
     "window.mute.desc": "Independent windows start muted so a background conversation cannot chime unexpectedly. Turn this off to hear completion sounds there.",
-    "detachedRestored": "Brought back and opened in the main window"
+    "detachedRestored": "Brought back and opened in the main window",
+    "window.mode": "Window kind",
+    "window.mode.desc": "Pick the detached window shape: the bundled exe window can be minimised and made translucent, the in-page window floats inside the main UI. Applies to windows opened from now on.",
+    "window.mode.native": "Desktop exe",
+    "window.mode.panel": "In-page",
+    "detachedNativeFailed": "The desktop window could not start; switch Window kind to In-page on the plugin page",
+    "detachedLoadFailed": "The window content could not load; close it and try again"
   }
 }
