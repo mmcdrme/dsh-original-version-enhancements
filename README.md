@@ -566,6 +566,10 @@ Host 半侧由 `host/css.mjs` 通过 `/plugins/original-version-enhancements/sty
 
 测试用 Node 内置 runner：`node --test test/*.test.mjs`（或 `npm test`）。
 
+## 更新记录（v1.37.7）
+
+- **管理隐藏会话弹窗的行距**：勾选框与会话名之间补上和归档页一样的 10px 间距，不再贴在一起。
+
 ## 更新记录（v1.37.6）
 
 - **管理隐藏会话**：已归档会话页标题行的最右边新增「管理隐藏会话（N）」按钮。弹窗沿用归档页

@@ -369,7 +369,9 @@
 }
 .ove-pick-group.ove-pick-day { padding-left: 20px; font-weight: 500; color: var(--dsw-alias-label-tertiary); }
 .ove-pick-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ove-pick-row { display: flex; align-items: center; padding: 3px 6px 3px 20px; border-radius: 8px; }
+/* Same 10px gutter between the checkbox and the title as the archive page, so
+   a picked row reads as one line instead of the text hugging the box. */
+.ove-pick-row { display: flex; align-items: center; gap: 10px; padding: 3px 6px 3px 20px; border-radius: 8px; }
 .ove-pick-row .ove-arc-title { flex: 1 1 auto; min-width: 0; font-size: 13px; line-height: 20px; }
 .ove-pick-row:hover { background: color-mix(in srgb, var(--dsw-alias-label-primary) 6%, transparent); }
 .ove-pick-row:hover .ove-arc-sid { display: inline; }
