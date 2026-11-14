@@ -3463,7 +3463,7 @@ window.__ModuleLoader__.load({
 .ove-sub-toggle {
   position: relative;
   display: inline-flex; align-items: center; justify-content: center; gap: 0;
-  height: 18px; margin: 0 0 0 6px; padding: 0 6px 0 0;
+  height: 18px; margin: 0; padding: 0 6px; border-radius: 6px;
   border: 0; border-radius: 5px; background: transparent;
   color: var(--dsw-alias-label-tertiary);
   font: inherit; font-size: 10px; line-height: 18px; font-variant-numeric: tabular-nums;
