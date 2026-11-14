@@ -568,6 +568,11 @@ Host 半侧由 `host/css.mjs` 通过 `/plugins/original-version-enhancements/sty
 
 测试用 Node 内置 runner：`node --test test/*.test.mjs`（或 `npm test`）。
 
+## 更新记录（v1.37.13）
+
+- **管理隐藏会话弹窗**：说明文字下面补一行提示——清理后若列表里仍能看到已删除的会话，可能需要
+  重新启动客户端才能完全生效。
+
 ## 更新记录（v1.37.12）
 
 - **子智能体行首的顺序**：展开箭头挪到运行状态动画的右边、层级圆点的左边，行首从左到右固定为

@@ -2919,6 +2919,9 @@ window.__ModuleLoader__.load({
             h('h2', { className: 'ove-dialog-title' }, tr('hiddenManageTitle')),
             h('p', { className: 'ove-dialog-desc' },
               tr('hiddenManageDesc').replace('{n}', String(hiddenRows.length))),
+            // The Host keeps a loaded parent's catalogue in memory, so a removed
+            // conversation can keep showing up until the client is restarted.
+            h('p', { className: 'ove-dialog-note' }, tr('hiddenManageRestart')),
             hiddenError && h('p', { className: 'ove-error', role: 'alert' }, hiddenError),
             h('div', { className: 'ove-toolbar' },
               h('label', { className: 'ove-check-all' },
