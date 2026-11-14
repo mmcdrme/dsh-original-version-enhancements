@@ -3502,10 +3502,11 @@ window.__ModuleLoader__.load({
 .ove-sub-row.is-active { background: color-mix(in srgb, #3b82f6 12%, transparent); }
 .ove-sub-row:focus-visible { outline: 2px solid #3b82f6; outline-offset: -2px; }
 .ove-sub-caret-btn {
-  flex: none; display: inline-flex; align-items: center; justify-content: center;
-  width: 10px; height: 16px; padding: 0; border: 0; background: transparent;
+  flex: none; display: inline-flex; align-items: center; justify-content: center; gap: 1px;
+  min-width: 10px; height: 16px; padding: 0; border: 0; background: transparent;
   color: var(--dsw-alias-label-tertiary); cursor: pointer;
 }
+.ove-sub-caret-count { flex: none; margin-right: 2px; font-size: 10px; line-height: 16px; font-variant-numeric: tabular-nums; opacity: .9; }
 /* The lead cluster owns one fixed 18px column before the name: the caret,
    status marker and level dot are packed against its right edge, so the deepest
    element (the dot) touches the name and every name starts in the shipped
@@ -3977,6 +3978,7 @@ window.__ModuleLoader__.load({
         const expanded = subagentTreeOpen.has(itemId);
         const workspaceText = workspaceTranslator();
         const status = statusOf(item, workspaceText);
+        const settings2 = getSubagentTreeSettings();
         const row = document.createElement('div');
         row.className = 'ove-sub-row';
         row.dataset.oveSubagentRow = itemId;
@@ -4009,6 +4011,14 @@ window.__ModuleLoader__.load({
           caretButton.className = 'ove-sub-caret-btn';
           caretButton.setAttribute('aria-label', tr(expanded ? 'subagentTree.collapse' : 'subagentTree.expand'));
           caretButton.append(caretOf(expanded));
+          // The inline expander carries the same count as the top-level one,
+          // and stays bare when this branch has a single child.
+          if (settings2.showCount === true && kids.length > 1) {
+            const badge = document.createElement('span');
+            badge.className = 'ove-sub-caret-count';
+            badge.textContent = String(kids.length);
+            caretButton.append(badge);
+          }
           caretButton.addEventListener('click', (event) => {
             event.preventDefault();
             event.stopPropagation();
@@ -4168,7 +4178,8 @@ window.__ModuleLoader__.load({
           ? tr('subagentTree.toggleTitle').replace('{n}', String(count))
           : tr('subagentTree.toggleTitleBare');
         button.replaceChildren(caretOf(open));
-        if (settings.showCount === true) {
+        // One child needs no number: the arrow alone already says "expand me".
+        if (settings.showCount === true && count > 1) {
           const badge = document.createElement('span');
           badge.className = 'ove-sub-toggle-count';
           badge.textContent = String(count);
