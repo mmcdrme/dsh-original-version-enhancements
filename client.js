@@ -3457,30 +3457,16 @@ window.__ModuleLoader__.load({
     const SUBAGENT_TREE_CSS = `
 /* The expander sits at the row's own left edge: a caret plus the direct
    subagent count, before the status dot and the title. */
-/* Out of flow on purpose: the arrow is right-packed against the title's left
-   edge (34px into the row), so every conversation name stays in the same
-   column while the arrow reads as part of that name. */
+/* In flow right before the title: the arrow+count+name group starts on the
+   normal conversation-name column (42px), so the shipped leading icon column
+   (20-36px) stays free for the original icons. The parts touch: no gaps. */
 .ove-sub-toggle {
-  /* Same left edge as a normal conversation's leading icon (20px from the
-     row box at 8px), so the arrow+count sits in that column and leaves the
-     original icon a place instead of squeezing the title. */
-  position: absolute; left: 9px; top: 50%; transform: translateY(-50%); z-index: 1;
-  display: inline-flex; align-items: center; justify-content: center; gap: 1px;
-  min-width: 0; height: 18px; margin: 0; padding: 0 1px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 0;
+  height: 18px; margin: 0 0 0 6px; padding: 0;
   border: 0; border-radius: 5px; background: transparent;
   color: var(--dsw-alias-label-tertiary);
   font: inherit; font-size: 10px; line-height: 18px; font-variant-numeric: tabular-nums;
   cursor: pointer; transition: background-color .12s ease, color .12s ease;
-}
-/* With a leading icon present the expander joins the row flow, so the original
-   icon keeps its column and the title moves right instead of being covered. */
-.ove-sub-toggle.is-inline {
-  position: static; left: auto; right: auto; top: auto; transform: none;
-  /* In flow the box is wider than the caret + count it draws (16px box,
-     ~11px content), so its right edge pushes the name away. Cancel the
-     title's own 6px left margin instead of leaving that dead space: the
-     arrow then sits as close to the name as it does without a leading icon. */
-  margin: 0 -4px 0 0; padding: 0 1px;
 }
 .ove-sub-toggle:hover { background: color-mix(in srgb, var(--dsw-alias-label-primary) 9%, transparent); color: var(--dsw-alias-label-secondary); }
 .ove-sub-toggle:focus-visible { outline: 2px solid #3b82f6; outline-offset: -1px; }
@@ -3504,23 +3490,18 @@ window.__ModuleLoader__.load({
 .ove-sub-row:hover { background: color-mix(in srgb, var(--dsw-alias-label-primary) 6%, transparent); }
 .ove-sub-row.is-active { background: color-mix(in srgb, #3b82f6 12%, transparent); }
 .ove-sub-row:focus-visible { outline: 2px solid #3b82f6; outline-offset: -2px; }
-/* The arrow owns a fixed column that already includes the count badge, so a
-   row with two children and one with a single child start the level number and
-   the name at exactly the same x. */
+/* The inline expander and its count touch: no padding or gap between them. */
 .ove-sub-caret-btn {
-  flex: none; display: inline-flex; align-items: center; justify-content: flex-start; gap: 1px;
-  width: 20px; height: 16px; padding: 0; margin-right: 6px; border: 0; background: transparent;
+  flex: none; display: inline-flex; align-items: center; justify-content: flex-start; gap: 0;
+  height: 16px; padding: 0; margin: 0; border: 0; background: transparent;
   color: var(--dsw-alias-label-tertiary); cursor: pointer;
 }
-.ove-sub-caret-count { flex: none; font-size: 10px; line-height: 16px; font-variant-numeric: tabular-nums; opacity: .9; }
-.ove-sub-caret-slot { flex: none; width: 20px; height: 16px; margin-right: 6px; }
-/* The lead cluster owns one fixed 18px column before the name: the caret,
-   status marker and level dot are packed against its right edge, so the deepest
-   element (the dot) touches the name and every name starts in the shipped
-   conversation column, exactly on the parent name's first character. */
+.ove-sub-caret-count { flex: none; margin: 0; font-size: 10px; line-height: 16px; font-variant-numeric: tabular-nums; opacity: .9; }
+/* The lead cluster: status marker, blue level number, expander and its count,
+   all touching so the group stays compact. */
 .ove-sub-lead {
   flex: none; display: flex; align-items: center;
-  justify-content: flex-start; gap: 1px;
+  justify-content: flex-start; gap: 0;
 }
 /* The lead cluster: caret or spacer, then the shipped status marker. The slot
    width is fixed so every title starts in the same column. */
@@ -3570,15 +3551,12 @@ window.__ModuleLoader__.load({
 }
 /* Depth marker before the name: a dot for direct children, dot-level-dot below
    them, so nesting stays readable now that the rows share one indentation. */
-/* The level is drawn as a blue number instead of a dot prefix; one blank
-   column (6px) separates it from the conversation name. A row without any
-   subagent shows no number, but keeps the column so its name still lines up. */
+/* The level is drawn as a blue number right before the expander, touching it. */
 .ove-sub-level {
-  flex: none; min-width: 8px; margin-right: 2px;
+  flex: none; margin: 0 1px 0 0;
   font-size: 11px; line-height: 12px; font-weight: 600;
   color: #2563eb; font-variant-numeric: tabular-nums;
 }
-.ove-sub-level.is-empty { visibility: hidden; }
 /* Sibling rows that would read identically carry the catalogue's unique name. */
 .ove-sub-suffix {
   flex: none; margin-left: 2px; font-size: 11px; color: #2563eb;
@@ -3993,15 +3971,11 @@ window.__ModuleLoader__.load({
         row.dataset.oveSubagentRow = itemId;
         row.tabIndex = 0;
         row.setAttribute('role', 'treeitem');
-        // The first level starts on the top-level arrow's own column (20px),
-        // and each deeper level starts where the previous level's arrow starts:
-        // the blue number column is 11px wide, so one step is exactly that and
-        // the tree nests without extra blank gaps.
-        row.style.paddingLeft = `${4 + Math.max(0, depth - 1) * 11}px`;
-        // One lead cluster, packed against the name. Left to right: the running
-        // animation (status marker, only while it has one), the expander (only
-        // when the row really expands), then the level dot — whose right edge is
-        // the name's left edge.
+        // The left edge is placed by layoutBlock(): the row starts exactly on
+        // its parent conversation's name column.
+        // Lead cluster, left to right: the running animation (only while the
+        // row has one), the blue level number, the expander and its count. All
+        // of it touches, and a leaf row has none of it.
         const leadCluster = document.createElement('span');
         leadCluster.className = 'ove-sub-lead';
         const lead = document.createElement('span');
@@ -4014,14 +3988,12 @@ window.__ModuleLoader__.load({
           lead.append(spoken);
         }
         leadCluster.append(lead);
-        // The blue level number sits before the arrow, so the expander always
-        // starts at the same x for every row of one level.
-        const level = document.createElement('span');
-        level.className = `ove-sub-level${kids.length === 0 ? ' is-empty' : ''}`;
-        level.setAttribute('aria-hidden', 'true');
-        level.textContent = String(depth);
-        leadCluster.append(level);
         if (kids.length > 0) {
+          const level = document.createElement('span');
+          level.className = 'ove-sub-level';
+          level.setAttribute('aria-hidden', 'true');
+          level.textContent = String(depth);
+          leadCluster.append(level);
           row.setAttribute('aria-expanded', String(expanded));
           const caretButton = document.createElement('button');
           caretButton.type = 'button';
@@ -4042,14 +4014,6 @@ window.__ModuleLoader__.load({
             toggle(itemId);
           });
           leadCluster.append(caretButton);
-        } else {
-          // Leaves keep the same arrow column: every row of one level then
-          // starts its blue level number at the same x instead of the leaves
-          // sliding left.
-          const slot = document.createElement('span');
-          slot.className = 'ove-sub-caret-slot';
-          slot.setAttribute('aria-hidden', 'true');
-          leadCluster.append(slot);
         }
         row.append(leadCluster);
         const label = document.createElement('span');
@@ -4124,6 +4088,44 @@ window.__ModuleLoader__.load({
        * the DIRECT child count (nested descendants are not counted here).
        */
       /** The stock row's title span (the element the expander sits next to). */
+      /** The title element of one of our own subagent rows. */
+      const ownTitleOf = (row) => {
+        for (const child of row.children) {
+          const className = typeof child.className === 'string' ? child.className : '';
+          if (className.includes('ove-sub-title')) return child;
+        }
+        return null;
+      };
+
+      /**
+       * Place every subagent row on its parent conversation's *name* column.
+       * The first level starts where the top-level row's name starts (the arrow
+       * group begins on the shipped name column), and each deeper level starts
+       * where its parent row's name starts, so nesting follows the text.
+       * @param host - the block of rows, already in the document.
+       * @param stockRow - the shipped parent row (or undefined).
+       */
+      const layoutBlock = (host, stockRow) => {
+        const stockTitle = stockRow === undefined ? null : rowTitleOf(stockRow, null);
+        const base = stockTitle === null ? null : stockTitle.getBoundingClientRect().left;
+        if (base === null || base <= 0) return;
+        const place = (branch, parentLeft) => {
+          const row = branch.firstElementChild;
+          if (row === null || !row.classList.contains('ove-sub-row')) return;
+          const boxLeft = row.getBoundingClientRect().left;
+          if (boxLeft > 0) row.style.paddingLeft = `${Math.max(0, parentLeft - boxLeft)}px`;
+          const title = ownTitleOf(row);
+          const nameLeft = title === null ? parentLeft : title.getBoundingClientRect().left;
+          for (let index = 1; index < branch.children.length; index += 1) {
+            const child = branch.children[index];
+            if (child.classList !== undefined && child.classList.contains('ove-sub-branch')) place(child, nameLeft);
+          }
+        };
+        for (const child of host.children) {
+          if (child.classList !== undefined && child.classList.contains('ove-sub-branch')) place(child, base);
+        }
+      };
+
       const rowTitleOf = (row, button) => {
         for (const child of row.children) {
           if (child === button) continue;
@@ -4131,24 +4133,6 @@ window.__ModuleLoader__.load({
           if (className.includes('title')) return child;
         }
         return null;
-      };
-
-      /**
-       * Whether the stock leading slot already shows an icon (running spinner,
-       * scheduled-task mark, any decoration). Those originals keep their place;
-       * our expander then steps to the right of them and the title shifts.
-       */
-      const leadingIconOf = (row, button) => {
-        const leading = row.firstElementChild;
-        if (leading === null || leading === button) return false;
-        const className = typeof leading.className === 'string' ? leading.className : '';
-        if (!className.includes('slot')) return false;
-        // The slot always carries one empty `[data-slot]` placeholder, so the
-        // icon test is "anything besides that placeholder, or content inside
-        // it": the running spinner sits beside it, decorations nest inside it.
-        const holder = leading.querySelector(':scope > [data-slot]');
-        const icons = [...leading.children].some((child) => child !== holder);
-        return icons || (holder !== null && holder.children.length > 0);
       };
 
       const paintToggle = (row, parentId) => {
@@ -4166,28 +4150,20 @@ window.__ModuleLoader__.load({
             event.stopPropagation();
             toggle(parentId);
           });
-          // The stock row is static; absolute positioning needs it as the
-          // containing block. It is restored when the toggle goes away.
-          row.style.position = 'relative';
           row.dataset.oveSubagentHost = 'true';
           row.append(button);
           toggles.set(parentId, button);
         }
-        // Keep the original leading icons where they are: when one is shown,
-        // the expander becomes an in-flow row item right before the title and
-        // the title moves right; with an empty slot it stays tight against the
-        // title as before.
-        const inline = leadingIconOf(row, button);
-        button.dataset.inline = String(inline);
-        if (inline) {
-          button.classList.add('is-inline');
-          const title = rowTitleOf(row, button);
-          if (title !== null && button.nextElementSibling !== title) row.insertBefore(button, title);
-        } else {
-          button.classList.remove('is-inline');
-          if (button.nextElementSibling !== null || button.parentElement !== row) row.append(button);
+        // The expander always sits in flow right before the title: the whole
+        // arrow+count+name group then begins on the conversation-name column
+        // while the shipped leading icons keep their own column untouched.
+        const title = rowTitleOf(row, button);
+        if (title !== null) {
+          if (button.nextElementSibling !== title) row.insertBefore(button, title);
+          // No gap between the arrow/count and the name.
+          if (title.style.marginLeft !== '0px') title.style.marginLeft = '0px';
         }
-        const signature = `${count}|${open}|${settings.showCount === true}|${inline}`;
+        const signature = `${count}|${open}|${settings.showCount === true}`;
         if (button.dataset.signature === signature) return;
         button.dataset.signature = signature;
         button.setAttribute('aria-expanded', String(open));
@@ -4354,6 +4330,7 @@ window.__ModuleLoader__.load({
               host = fresh;
             }
             if (host.previousElementSibling !== wrapper) wrapper.after(host);
+            layoutBlock(host, row);
           }
         } finally {
           observe();
