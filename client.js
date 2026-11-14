@@ -3204,6 +3204,12 @@ window.__ModuleLoader__.load({
   font: inherit; font-size: 10px; line-height: 18px; font-variant-numeric: tabular-nums;
   cursor: pointer; transition: background-color .12s ease, color .12s ease;
 }
+/* With a leading icon present the expander joins the row flow, so the original
+   icon keeps its column and the title moves right instead of being covered. */
+.ove-sub-toggle.is-inline {
+  position: static; right: auto; top: auto; transform: none;
+  margin: 0 1px 0 0; padding: 0 1px;
+}
 .ove-sub-toggle:hover { background: color-mix(in srgb, var(--dsw-alias-label-primary) 9%, transparent); color: var(--dsw-alias-label-secondary); }
 .ove-sub-toggle:focus-visible { outline: 2px solid #3b82f6; outline-offset: -1px; }
 .ove-sub-host { display: block; }
@@ -3792,11 +3798,38 @@ window.__ModuleLoader__.load({
        * The expander lives inside the stock row, at its left edge: caret plus
        * the DIRECT child count (nested descendants are not counted here).
        */
+      /** The stock row's title span (the element the expander sits next to). */
+      const rowTitleOf = (row, button) => {
+        for (const child of row.children) {
+          if (child === button) continue;
+          const className = typeof child.className === 'string' ? child.className : '';
+          if (className.includes('title')) return child;
+        }
+        return null;
+      };
+
+      /**
+       * Whether the stock leading slot already shows an icon (running spinner,
+       * scheduled-task mark, any decoration). Those originals keep their place;
+       * our expander then steps to the right of them and the title shifts.
+       */
+      const leadingIconOf = (row, button) => {
+        const leading = row.firstElementChild;
+        if (leading === null || leading === button) return false;
+        const className = typeof leading.className === 'string' ? leading.className : '';
+        if (!className.includes('slot')) return false;
+        // The slot always carries one empty `[data-slot]` placeholder, so the
+        // icon test is "anything besides that placeholder, or content inside
+        // it": the running spinner sits beside it, decorations nest inside it.
+        const holder = leading.querySelector(':scope > [data-slot]');
+        const icons = [...leading.children].some((child) => child !== holder);
+        return icons || (holder !== null && holder.children.length > 0);
+      };
+
       const paintToggle = (row, parentId) => {
         const count = (children.get(parentId) ?? []).length;
         const open = subagentTreeOpen.has(parentId);
         const settings = getSubagentTreeSettings();
-        const signature = `${count}|${open}|${settings.showCount === true}`;
         let button = toggles.get(parentId);
         if (button === undefined || !button.isConnected || button.parentElement !== row) {
           button?.remove();
@@ -3815,6 +3848,21 @@ window.__ModuleLoader__.load({
           row.append(button);
           toggles.set(parentId, button);
         }
+        // Keep the original leading icons where they are: when one is shown,
+        // the expander becomes an in-flow row item right before the title and
+        // the title moves right; with an empty slot it stays tight against the
+        // title as before.
+        const inline = leadingIconOf(row, button);
+        button.dataset.inline = String(inline);
+        if (inline) {
+          button.classList.add('is-inline');
+          const title = rowTitleOf(row, button);
+          if (title !== null && button.nextElementSibling !== title) row.insertBefore(button, title);
+        } else {
+          button.classList.remove('is-inline');
+          if (button.nextElementSibling !== null || button.parentElement !== row) row.append(button);
+        }
+        const signature = `${count}|${open}|${settings.showCount === true}|${inline}`;
         if (button.dataset.signature === signature) return;
         button.dataset.signature = signature;
         button.setAttribute('aria-expanded', String(open));
@@ -6515,10 +6563,15 @@ window.__ModuleLoader__.load({
       // Whether the open draft holds an edit the human made. Only an untouched
       // draft may adopt a newer revision from the polling list.
       const [draftDirty, setDraftDirty] = React.useState(false);
+      // Identity of the open drawer instance. A new-task draft has no task id
+      // at all, so its id cannot tell the drawer that was saved from another
+      // drawer opened while the request was in flight; this token can.
+      const draftSeq = React.useRef(0);
+      const stampDraft = (next) => ({ ...next, seq: (draftSeq.current += 1) });
       const [bindTasks, setBindTasks] = React.useState([]);
       const [bindPicks, setBindPicks] = React.useState(() => new Set());
       // Scope of the bind picker; only offered by the experimental switch.
-      const [bindScope, setBindScope] = React.useState('all');
+      const [bindScope, setBindScope] = React.useState('visible');
       const [cleanPending, setCleanPending] = React.useState(false);
       const [detailTab, setDetailTab] = React.useState('edit');
       const [records, setRecords] = React.useState([]);
@@ -6631,7 +6684,7 @@ window.__ModuleLoader__.load({
       };
 
       const openNew = () => {
-        setDraft(draftOf(null));
+        setDraft(stampDraft(draftOf(null)));
         setDetailTab('edit');
         setRecords([]);
         setRecordsError('');
@@ -6655,7 +6708,7 @@ window.__ModuleLoader__.load({
       };
 
       const openEdit = (task) => {
-        setDraft(draftOf(task, autoClean));
+        setDraft(stampDraft(draftOf(task, autoClean)));
         setDetailTab('edit');
         setRecords([]);
         setRecordsError('');
@@ -6745,6 +6798,9 @@ window.__ModuleLoader__.load({
       const saveDraft = async (options) => {
         const force = options?.force === true;
         if (draft === null || busy !== '') return;
+        // The drawer this save belongs to; a drawer opened while the request is
+        // in flight keeps its own edits and must stay open.
+        const savedToken = draft.seq;
         const timing = timingOfDraft(draft);
         const target = targetOfDraft(draft);
         if (draft.title.trim().length === 0) {
@@ -6814,7 +6870,7 @@ window.__ModuleLoader__.load({
         // Only close the drawer the save belongs to: the human may have opened
         // another task while the request was in flight, and that one holds
         // their own unsaved edits.
-        setDraft((current) => (current !== null && current.id === savedId ? null : current));
+        setDraft((current) => (current !== null && current.seq === savedToken ? null : current));
         if (draftRef.current !== null && draftRef.current.id === savedId) {
           setRecords([]);
           setRecordsError('');
@@ -6978,7 +7034,7 @@ window.__ModuleLoader__.load({
         const list = Array.isArray(tasks) ? tasks.filter((task) => task !== null && task !== undefined) : [];
         setBindTasks(list);
         setBindPicks(new Set());
-        setBindScope('all');
+        setBindScope('visible');
         setActionError('');
         setNotice(null);
       };
@@ -6986,7 +7042,7 @@ window.__ModuleLoader__.load({
       const closeBind = () => {
         setBindTasks([]);
         setBindPicks(new Set());
-        setBindScope('all');
+        setBindScope('visible');
       };
 
       const confirmBind = async () => {
@@ -7078,10 +7134,10 @@ window.__ModuleLoader__.load({
             workspace: workspaceTitleOf(owner),
             workspaceId: owner === undefined ? '' : String(owner.workspaceId ?? ''),
             stamp: stampOf(id),
-            // A Session outside every workspace's own list (a subagent, or a
-            // conversation the sidebar hides) is the "hidden" half of the
-            // experimental bind scope.
-            hidden: true,
+            // The client hides exactly the subagent-origin Sessions: everything
+            // else (even a conversation no workspace lists) is a visible row in
+            // the sidebar's ungrouped bucket.
+            hidden: recordOf(id).origin === 'subagent',
           });
         }
         // Duplicate names are kept: the workspace half tells them apart, and
@@ -7136,9 +7192,10 @@ window.__ModuleLoader__.load({
         }
         return sessionOptions.filter((session) => {
           if (bound.has(session.id)) return false;
-          if (!flags.bindScopes || bindScope === 'all') return true;
-          if (bindScope === 'visible') return session.hidden !== true;
-          return session.hidden === true;
+          // The experimental switch turns the picker into an explicit choice:
+          // show what the client can see, or what it cannot see.
+          if (!flags.bindScopes) return true;
+          return bindScope === 'hidden' ? session.hidden === true : session.hidden !== true;
         });
       }, [sessionOptions, bindTasks, flags.bindScopes, bindScope]);
 
@@ -7977,7 +8034,7 @@ window.__ModuleLoader__.load({
               flags.bindScopes
                 ? h('div', { className: 'ove-bind-scope' },
                   h('div', { className: 'ove-size-group', role: 'group', 'aria-label': tr('auto.bindScope') },
-                    ['all', 'visible', 'hidden'].map((scope) => h('button', {
+                    ['visible', 'hidden'].map((scope) => h('button', {
                       key: scope,
                       type: 'button',
                       className: `ove-size${bindScope === scope ? ' is-on' : ''}`,
@@ -7987,7 +8044,7 @@ window.__ModuleLoader__.load({
                   h('p', { className: 'ove-bind-scope-tip' }, tr('auto.bindScope.tip')))
                 : null,
               bindCandidates.length === 0
-                ? h('p', { className: 'ove-muted' }, flags.bindScopes && bindScope !== 'all'
+                ? h('p', { className: 'ove-muted' }, flags.bindScopes
                   ? tr(bindScope === 'hidden' ? 'auto.bindScope.hiddenEmpty' : 'auto.bindScope.visibleEmpty')
                   : tr('auto.bindEmpty'))
                 : h('div', { className: 'ove-session-pick' }, bindCandidates.map((session) => h('label', {
