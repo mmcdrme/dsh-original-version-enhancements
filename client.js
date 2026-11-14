@@ -3507,13 +3507,14 @@ window.__ModuleLoader__.load({
   color: var(--dsw-alias-label-tertiary); cursor: pointer;
 }
 .ove-sub-caret-count { flex: none; margin-right: 2px; font-size: 10px; line-height: 16px; font-variant-numeric: tabular-nums; opacity: .9; }
+.ove-sub-caret-slot { flex: none; width: 10px; height: 16px; }
 /* The lead cluster owns one fixed 18px column before the name: the caret,
    status marker and level dot are packed against its right edge, so the deepest
    element (the dot) touches the name and every name starts in the shipped
    conversation column, exactly on the parent name's first character. */
 .ove-sub-lead {
-  flex: none; min-width: 18px; display: flex; align-items: center;
-  justify-content: flex-end; gap: 1px; overflow: visible;
+  flex: none; display: flex; align-items: center;
+  justify-content: flex-start; gap: 1px;
 }
 /* The lead cluster: caret or spacer, then the shipped status marker. The slot
    width is fixed so every title starts in the same column. */
@@ -3563,12 +3564,12 @@ window.__ModuleLoader__.load({
 }
 /* Depth marker before the name: a dot for direct children, dot-level-dot below
    them, so nesting stays readable now that the rows share one indentation. */
-/* Right-aligned inside the lead cluster: its right edge is the name's left
-   edge, so the dot reads as the name's own prefix with no space between. */
+/* The level is drawn as a blue number instead of a dot prefix; one blank
+   column (6px) separates it from the conversation name. */
 .ove-sub-level {
-  flex: none; text-align: right;
-  font-size: 9px; line-height: 12px; letter-spacing: .2px;
-  color: var(--dsw-alias-label-secondary); font-variant-numeric: tabular-nums;
+  flex: none; margin-right: 6px;
+  font-size: 11px; line-height: 12px; font-weight: 600;
+  color: #2563eb; font-variant-numeric: tabular-nums;
 }
 /* Sibling rows that would read identically carry the catalogue's unique name. */
 .ove-sub-suffix {
@@ -4025,13 +4026,21 @@ window.__ModuleLoader__.load({
             toggle(itemId);
           });
           leadCluster.append(caretButton);
+        } else {
+          // Leaves keep the same arrow column: every row of one level then
+          // starts its blue level number at the same x instead of the leaves
+          // sliding left.
+          const slot = document.createElement('span');
+          slot.className = 'ove-sub-caret-slot';
+          slot.setAttribute('aria-hidden', 'true');
+          leadCluster.append(slot);
         }
-        // Depth marker: `●` for a direct child, `●<level>●` from the second
-        // layer on, so the nesting stays readable without empty leading space.
+        // The level is a blue number before the name (no dot prefix), so the
+        // nesting reads as a number and same-level rows line up from the left.
         const level = document.createElement('span');
         level.className = 'ove-sub-level';
         level.setAttribute('aria-hidden', 'true');
-        level.textContent = depth <= 1 ? '●' : `●${depth}●`;
+        level.textContent = String(depth);
         leadCluster.append(level);
         row.append(leadCluster);
         const label = document.createElement('span');
