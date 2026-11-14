@@ -3208,7 +3208,11 @@ window.__ModuleLoader__.load({
    icon keeps its column and the title moves right instead of being covered. */
 .ove-sub-toggle.is-inline {
   position: static; right: auto; top: auto; transform: none;
-  margin: 0 1px 0 0; padding: 0 1px;
+  /* In flow the box is wider than the caret + count it draws (16px box,
+     ~11px content), so its right edge pushes the name away. Cancel the
+     title's own 6px left margin instead of leaving that dead space: the
+     arrow then sits as close to the name as it does without a leading icon. */
+  margin: 0 -4px 0 0; padding: 0 1px;
 }
 .ove-sub-toggle:hover { background: color-mix(in srgb, var(--dsw-alias-label-primary) 9%, transparent); color: var(--dsw-alias-label-secondary); }
 .ove-sub-toggle:focus-visible { outline: 2px solid #3b82f6; outline-offset: -1px; }
