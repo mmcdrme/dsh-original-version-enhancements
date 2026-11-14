@@ -3461,12 +3461,18 @@ window.__ModuleLoader__.load({
    normal conversation-name column (42px), so the shipped leading icon column
    (20-36px) stays free for the original icons. The parts touch: no gaps. */
 .ove-sub-toggle {
+  position: relative;
   display: inline-flex; align-items: center; justify-content: center; gap: 0;
   height: 18px; margin: 0 0 0 6px; padding: 0;
   border: 0; border-radius: 5px; background: transparent;
   color: var(--dsw-alias-label-tertiary);
   font: inherit; font-size: 10px; line-height: 18px; font-variant-numeric: tabular-nums;
   cursor: pointer; transition: background-color .12s ease, color .12s ease;
+}
+/* The drawn arrow is tiny; the hit area extends a little further right (over
+   the very start of the name) without moving anything in the row. */
+.ove-sub-toggle::after {
+  content: ""; position: absolute; top: -5px; bottom: -5px; left: 0; right: -8px;
 }
 .ove-sub-toggle:hover { background: color-mix(in srgb, var(--dsw-alias-label-primary) 9%, transparent); color: var(--dsw-alias-label-secondary); }
 .ove-sub-toggle:focus-visible { outline: 2px solid #3b82f6; outline-offset: -1px; }
@@ -4045,7 +4051,16 @@ window.__ModuleLoader__.load({
           row.append(trailing);
         }
         if (itemId === active) row.classList.add('is-active');
-        row.addEventListener('click', () => openChild(itemId));
+        // A row that is already the open conversation acts as its own expander:
+        // clicking it again folds/unfolds its children instead of reloading it.
+        const openOrToggle = () => {
+          if (itemId === active && kids.length > 0) {
+            toggle(itemId);
+            return;
+          }
+          openChild(itemId);
+        };
+        row.addEventListener('click', openOrToggle);
         // The row is injected markup, so it owns its own menu gesture: the
         // shipped overlay is opened for this exact child conversation.
         row.addEventListener('contextmenu', (event) => {
@@ -4063,7 +4078,8 @@ window.__ModuleLoader__.load({
           }
           if (event.key !== 'Enter' && event.key !== ' ') return;
           event.preventDefault();
-          openChild(itemId);
+          if (itemId === active && kids.length > 0) toggle(itemId);
+          else openChild(itemId);
         });
         branch.append(row);
         if (kids.length > 0 && expanded) {
