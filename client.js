@@ -3083,6 +3083,478 @@ window.__ModuleLoader__.load({
       return null;
     }
 
+    /* ------------------------------------------------------------------ */
+    /* Subagent sessions under their parent row                            */
+    /* ------------------------------------------------------------------ */
+
+    /**
+     * Which conversations currently show their subagent children.
+     *
+     * Subagent sessions are real sessions (`origin: 'subagent'`) with a
+     * `parentSessionId`, but the stock Workspace browser filters them out of the
+     * sidebar entirely, so the only way to reach one is the header catalogue.
+     * This set remembers which parent rows the human expanded.
+     */
+    const SUBAGENT_TREE_KEY = 'original-version-enhancements.subagent-tree.expanded.v1';
+    const readSubagentTreeOpen = () => {
+      try {
+        const raw = JSON.parse(globalThis.localStorage?.getItem(SUBAGENT_TREE_KEY) ?? '[]');
+        return new Set(Array.isArray(raw) ? raw.filter((id) => typeof id === 'string' && id.length > 0) : []);
+      } catch {
+        return new Set();
+      }
+    };
+    const subagentTreeOpen = readSubagentTreeOpen();
+    const saveSubagentTreeOpen = () => {
+      try {
+        globalThis.localStorage?.setItem(SUBAGENT_TREE_KEY, JSON.stringify([...subagentTreeOpen]));
+      } catch { /* a blocked storage keeps the expansion for this page only */ }
+    };
+
+    /** Styles for the injected sidebar rows (they live outside any plugin surface). */
+    const SUBAGENT_TREE_CSS = `
+.ove-sub-host { display: block; margin: 0 0 2px; }
+.ove-sub-head {
+  display: flex; align-items: center; gap: 6px; width: 100%; box-sizing: border-box;
+  height: 22px; padding: 0 8px 0 24px; margin: 0;
+  border: 0; border-radius: 8px; background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+  font: inherit; font-size: 12px; font-weight: 500; line-height: 22px;
+  text-align: left; cursor: pointer;
+  transition: background-color .12s ease, color .12s ease;
+}
+.ove-sub-head:hover { background: color-mix(in srgb, var(--dsw-alias-label-primary) 6%, transparent); color: var(--dsw-alias-label-secondary); }
+.ove-sub-head:focus-visible { outline: 2px solid #3b82f6; outline-offset: -2px; }
+.ove-sub-caret {
+  flex: none; width: 0; height: 0;
+  border-left: 4px solid currentColor;
+  border-top: 3.5px solid transparent; border-bottom: 3.5px solid transparent;
+  transition: transform .12s ease;
+}
+.ove-sub-caret.is-open { transform: rotate(90deg); }
+.ove-sub-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ove-sub-count {
+  flex: none; min-width: 16px; height: 16px; padding: 0 5px; border-radius: 8px;
+  background: color-mix(in srgb, var(--dsw-alias-label-primary) 8%, transparent);
+  font-size: 11px; line-height: 16px; text-align: center; font-variant-numeric: tabular-nums;
+}
+.ove-sub-branch { display: block; }
+.ove-sub-row {
+  display: flex; align-items: center; gap: 6px;
+  height: 30px; margin: 0 8px; padding: 0 8px; box-sizing: border-box;
+  border-radius: 10px; color: var(--dsw-alias-label-primary);
+  font-size: 13px; line-height: 30px; cursor: pointer;
+  transition: background-color .12s ease;
+}
+.ove-sub-row:hover { background: color-mix(in srgb, var(--dsw-alias-label-primary) 6%, transparent); }
+.ove-sub-row.is-active { background: color-mix(in srgb, #3b82f6 12%, transparent); }
+.ove-sub-row:focus-visible { outline: 2px solid #3b82f6; outline-offset: -2px; }
+.ove-sub-caret-btn {
+  flex: none; display: inline-flex; align-items: center; justify-content: center;
+  width: 12px; height: 16px; padding: 0; border: 0; background: transparent;
+  color: var(--dsw-alias-label-tertiary); cursor: pointer;
+}
+.ove-sub-spacer { flex: none; width: 12px; }
+.ove-sub-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: color-mix(in srgb, var(--dsw-alias-label-primary) 28%, transparent); }
+.ove-sub-dot.is-running { background: #22c55e; animation: ove-sub-pulse 1.3s ease-in-out infinite; }
+@keyframes ove-sub-pulse { 50% { opacity: .35; } }
+.ove-sub-title {
+  flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* Sibling rows that would read identically carry the catalogue's unique name. */
+.ove-sub-suffix {
+  flex: none; margin-left: 2px; font-size: 11px; color: #2563eb;
+  font-variant-numeric: tabular-nums;
+}
+`;
+
+    /**
+     * Draw the subagent tree under each conversation row in the stock sidebar.
+     *
+     * The browser renders its rows as `[data-row-key="session:<id>"]` inside a
+     * per-row wrapper; each row that has subagent sessions gets one injected
+     * strip right after its wrapper. Collapsed, the strip is a single "子智能体
+     * · N" line; expanded, the children render as indented rows (recursively,
+     * because a subagent may run its own subagents), and clicking a row opens
+     * that conversation through the same Workspace navigation the stock
+     * catalogue uses.
+     *
+     * The injected nodes live outside React's control, so a MutationObserver
+     * re-attaches them when the browser re-renders, folds a group, or scrolls a
+     * row away. Rendering is skipped when the visible tree has not changed.
+     * @param ctx - the Client plugin context.
+     * @param translate - current translator.
+     * @returns a disposer.
+     */
+    const installSubagentTree = (ctx, translate) => {
+      if (typeof document === 'undefined' || typeof MutationObserver !== 'function') return () => {};
+      const rowSelector = '[data-row-key^="session:"]';
+      const hosts = new Map();
+      const store = ctx?.sessions?.list;
+      /** Child metadata per parent, from the catalogue projection when loaded. */
+      let catalogs = new Map();
+      let children = new Map();
+      let active = '';
+      let scheduled = 0;
+      let stopped = false;
+      let observer = null;
+      let unsubscribe = null;
+      let watchedArea = null;
+      const refreshed = new Set();
+
+      const tr = (key) => {
+        const value = translate(key);
+        return typeof value === 'string' && value.length > 0 ? value : key;
+      };
+
+      const schedule = () => {
+        if (stopped || scheduled !== 0) return;
+        scheduled = globalThis.requestAnimationFrame?.(() => {
+          scheduled = 0;
+          paint();
+        }) ?? globalThis.setTimeout(() => { scheduled = 0; paint(); }, 16);
+      };
+
+      const activeSessionId = () => {
+        const reference = ctx?.uiWorkspace?.mainReference;
+        const id = reference?.sessionId;
+        return typeof id === 'string' ? id : '';
+      };
+
+      const idOf = (item) => (typeof item?.id === 'string'
+        ? item.id
+        : (typeof item?.sessionId === 'string' ? item.sessionId : ''));
+
+      /** Load one parent's subagent catalogue so labels/names become available. */
+      const ensureCatalog = (parentId) => {
+        if (refreshed.has(parentId) || typeof ctx?.sessions?.refreshProjections !== 'function') return;
+        refreshed.add(parentId);
+        try { void ctx.sessions.refreshProjections(parentId); } catch { /* the store retries */ }
+      };
+
+      const titleOf = (item, parentId) => {
+        const catalog = catalogs.get(parentId)?.get(idOf(item)) ?? catalogs.get(parentId)?.get(item?.sessionId);
+        for (const candidate of [catalog?.label, catalog?.name, item?.displayTitle, item?.title]) {
+          const title = typeof candidate === 'string' ? candidate.trim() : '';
+          if (title.length > 0) return title;
+        }
+        const id = idOf(item).replace(/^session-/u, '');
+        return id.length === 0 ? tr('subagentTree.untitled') : id.slice(0, 8);
+      };
+
+      /** Name or short id shown when sibling rows share one label. */
+      const suffixOf = (item, parentId) => {
+        const catalog = catalogs.get(parentId)?.get(idOf(item)) ?? catalogs.get(parentId)?.get(item?.sessionId);
+        const name = typeof catalog?.name === 'string' ? catalog.name.trim() : '';
+        if (name.length > 0) return name;
+        return idOf(item).replace(/^session-/u, '').slice(0, 8);
+      };
+
+      const openChild = (sessionId) => {
+        const address = typeof ctx?.sessions?.subagentAddress === 'function'
+          ? ctx.sessions.subagentAddress(sessionId)
+          : undefined;
+        try {
+          ctx?.uiWorkspace?.openSession?.(address ?? sessionId);
+        } catch { /* the catalogue may still be loading */ }
+      };
+
+      const caretOf = (open) => {
+        const caret = document.createElement('span');
+        caret.className = `ove-sub-caret${open ? ' is-open' : ''}`;
+        caret.setAttribute('aria-hidden', 'true');
+        return caret;
+      };
+
+      const toggle = (sessionId) => {
+        if (subagentTreeOpen.has(sessionId)) {
+          subagentTreeOpen.delete(sessionId);
+        } else {
+          subagentTreeOpen.add(sessionId);
+          // The collapsed strip can be drawn from the session list alone; the
+          // human labels and sibling names come from the catalogue projection.
+          ensureCatalog(sessionId);
+        }
+        saveSubagentTreeOpen();
+        paint();
+      };
+
+      const buildRow = (item, depth, parentId) => {
+        const branch = document.createElement('div');
+        branch.className = 'ove-sub-branch';
+        const itemId = idOf(item);
+        const kids = children.get(itemId) ?? [];
+        const expanded = subagentTreeOpen.has(itemId);
+        const row = document.createElement('div');
+        row.className = 'ove-sub-row';
+        row.dataset.oveSubagentRow = itemId;
+        row.tabIndex = 0;
+        row.setAttribute('role', 'treeitem');
+        row.style.paddingLeft = `${10 + depth * 14}px`;
+        if (kids.length > 0) {
+          row.setAttribute('aria-expanded', String(expanded));
+          const caretButton = document.createElement('button');
+          caretButton.type = 'button';
+          caretButton.className = 'ove-sub-caret-btn';
+          caretButton.setAttribute('aria-label', tr(expanded ? 'subagentTree.collapse' : 'subagentTree.expand'));
+          caretButton.append(caretOf(expanded));
+          caretButton.addEventListener('click', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            toggle(itemId);
+          });
+          row.append(caretButton);
+        } else {
+          const spacer = document.createElement('span');
+          spacer.className = 'ove-sub-spacer';
+          row.append(spacer);
+        }
+        const dot = document.createElement('span');
+        dot.className = `ove-sub-dot${item.running === true ? ' is-running' : ''}`;
+        dot.setAttribute('aria-hidden', 'true');
+        row.append(dot);
+        const label = document.createElement('span');
+        label.className = 'ove-sub-title';
+        label.textContent = titleOf(item, parentId);
+        row.append(label);
+        // Two "旁问专家" rows are only distinguishable by their sibling name.
+        const siblings = children.get(parentId) ?? [];
+        const repeated = siblings.filter((sibling) => titleOf(sibling, parentId) === titleOf(item, parentId)).length > 1;
+        if (repeated) {
+          const suffix = document.createElement('span');
+          suffix.className = 'ove-sub-suffix';
+          suffix.textContent = `#${suffixOf(item, parentId)}`;
+          row.append(suffix);
+          row.title = `${titleOf(item, parentId)} #${suffixOf(item, parentId)}`;
+        } else {
+          row.title = titleOf(item, parentId);
+        }
+        if (itemId === active) row.classList.add('is-active');
+        row.addEventListener('click', () => openChild(itemId));
+        row.addEventListener('keydown', (event) => {
+          if (event.key !== 'Enter' && event.key !== ' ') return;
+          event.preventDefault();
+          openChild(itemId);
+        });
+        branch.append(row);
+        if (kids.length > 0 && expanded) {
+          for (const kid of kids) branch.append(buildRow(kid, depth + 1, itemId));
+        }
+        return branch;
+      };
+
+      const buildHost = (parentId) => {
+        const kids = children.get(parentId) ?? [];
+        const host = document.createElement('div');
+        host.className = 'ove-sub-host';
+        host.dataset.oveSubagentFor = parentId;
+        if (kids.length === 0) return host;
+        const open = subagentTreeOpen.has(parentId);
+        const head = document.createElement('button');
+        head.type = 'button';
+        head.className = 'ove-sub-head';
+        head.setAttribute('aria-expanded', String(open));
+        head.append(caretOf(open));
+        const label = document.createElement('span');
+        label.className = 'ove-sub-label';
+        label.textContent = `${tr('subagentTree.label')} · ${kids.length}`;
+        head.append(label);
+        head.addEventListener('click', (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          toggle(parentId);
+        });
+        host.append(head);
+        if (open) {
+          for (const kid of kids) host.append(buildRow(kid, 1, parentId));
+        }
+        return host;
+      };
+
+      /** Stable description of everything a host renders, to skip no-op repaints. */
+      const signatureOf = (parentId) => {
+        const walk = (id, parent) => {
+          const kids = children.get(id) ?? [];
+          return kids.map((kid) => [
+            idOf(kid),
+            titleOf(kid, parent),
+            kid.running === true,
+            subagentTreeOpen.has(idOf(kid)) ? walk(idOf(kid), idOf(kid)) : [],
+          ]);
+        };
+        return JSON.stringify([parentId, active, subagentTreeOpen.has(parentId), walk(parentId, parentId)]);
+      };
+
+      const paint = () => {
+        if (stopped) return;
+        observer?.disconnect();
+        try {
+          const snapshot = typeof store?.getSnapshot === 'function' ? store.getSnapshot() : undefined;
+          // The public list snapshot is keyed by id (plus `ids` in list order);
+          // each entry carries `parentId` for a subagent conversation.
+          const entries = snapshot?.byId !== null && typeof snapshot?.byId === 'object'
+            ? Object.values(snapshot.byId)
+            : (Array.isArray(snapshot?.items) ? snapshot.items : []);
+          const order = Array.isArray(snapshot?.ids) ? snapshot.ids : [];
+          const position = new Map();
+          order.forEach((id, index) => position.set(id, index));
+          // Catalogue projections carry the human label and the sibling-unique
+          // name; the session list only knows the generated title.
+          catalogs = new Map();
+          for (const [sessionId, projection] of Object.entries(snapshot?.projectionsBySession ?? {})) {
+            const catalog = projection?.values?.subagentCatalog;
+            if (!Array.isArray(catalog) || catalog.length === 0) continue;
+            const byChild = new Map();
+            for (const entry of catalog) {
+              const childId = typeof entry?.id === 'string' ? entry.id : '';
+              if (childId.length > 0) byChild.set(childId, entry);
+            }
+            catalogs.set(sessionId, byChild);
+          }
+          const nextChildren = new Map();
+          for (const entry of entries) {
+            if (entry === null || typeof entry !== 'object') continue;
+            if (entry.origin !== 'subagent') continue;
+            const parent = typeof entry.parentId === 'string'
+              ? entry.parentId
+              : (typeof entry.parentSessionId === 'string' ? entry.parentSessionId : '');
+            if (parent.length === 0) continue;
+            const list = nextChildren.get(parent) ?? [];
+            list.push(entry);
+            nextChildren.set(parent, list);
+          }
+          // When the catalogue knows a parent, it is the authority on its direct
+          // children (including ones the list has not caught up with yet).
+          for (const [parentId, byChild] of catalogs) {
+            const list = nextChildren.get(parentId) ?? [];
+            const known = new Set(list.map((entry) => idOf(entry)));
+            for (const childId of byChild.keys()) {
+              if (known.has(childId)) continue;
+              list.push({ id: childId });
+            }
+            if (list.length > 0) nextChildren.set(parentId, list);
+          }
+          // Children follow the catalogue's own order (the parent is followed by
+          // its lineage), never a re-sort by mutable timestamps.
+          for (const [parentId, list] of nextChildren) {
+            const catalogOrder = catalogs.get(parentId);
+            list.sort((left, right) => {
+              if (catalogOrder !== undefined) {
+                const leftEntry = catalogOrder.get(idOf(left));
+                const rightEntry = catalogOrder.get(idOf(right));
+                const leftAt = typeof leftEntry?.createdAt === 'number' ? leftEntry.createdAt : undefined;
+                const rightAt = typeof rightEntry?.createdAt === 'number' ? rightEntry.createdAt : undefined;
+                if (leftAt !== undefined && rightAt !== undefined && leftAt !== rightAt) return leftAt - rightAt;
+              }
+              return (position.get(idOf(left)) ?? Number.MAX_SAFE_INTEGER)
+                - (position.get(idOf(right)) ?? Number.MAX_SAFE_INTEGER);
+            });
+          }
+          children = nextChildren;
+          active = activeSessionId();
+          // Expansion of a conversation that no longer has children (deleted,
+          // or moved out of the list) would otherwise accumulate forever. Only a
+          // loaded list may prove that: a snapshot taken while the catalogue is
+          // still loading is empty and must not drop the remembered expansion.
+          if (order.length > 0) {
+            let pruned = false;
+            for (const id of [...subagentTreeOpen]) {
+              if (children.has(id)) continue;
+              subagentTreeOpen.delete(id);
+              pruned = true;
+            }
+            if (pruned) saveSubagentTreeOpen();
+          }
+
+          const rows = [...document.querySelectorAll(rowSelector)];
+          const wanted = new Map();
+          for (const row of rows) {
+            const key = row.getAttribute('data-row-key') ?? '';
+            const id = key.slice('session:'.length);
+            if (id.length === 0 || !children.has(id)) continue;
+            wanted.set(id, row);
+            if (subagentTreeOpen.has(id)) ensureCatalog(id);
+          }
+          for (const [id, host] of [...hosts]) {
+            if (wanted.has(id)) continue;
+            host.remove();
+            hosts.delete(id);
+          }
+          for (const [id, row] of wanted) {
+            const wrapper = row.parentElement;
+            if (wrapper === null) continue;
+            const signature = signatureOf(id);
+            let host = hosts.get(id);
+            if (host === undefined || host.dataset.signature !== signature) {
+              const fresh = buildHost(id);
+              fresh.dataset.signature = signature;
+              if (host !== undefined) host.replaceWith(fresh);
+              hosts.set(id, fresh);
+              host = fresh;
+            }
+            if (host.previousElementSibling !== wrapper) wrapper.after(host);
+          }
+        } finally {
+          observe();
+        }
+      };
+
+      const observe = () => {
+        if (stopped) return;
+        const area = document.querySelector('[data-sidebar-list-area]');
+        const target = area ?? document.body;
+        if (observer === null) observer = new MutationObserver((mutations) => {
+          const inside = mutations.some((mutation) => {
+            const target = mutation.target instanceof Element ? mutation.target : mutation.target?.parentElement;
+            if (target?.closest?.('[data-sidebar-list-area]') !== null) return true;
+            return [...mutation.addedNodes, ...mutation.removedNodes].some((node) => node instanceof Element
+              && (node.matches?.('[data-row-key]') === true || node.querySelector?.('[data-row-key]') !== null));
+          });
+          if (inside) schedule();
+        });
+        if (watchedArea !== target) {
+          observer.disconnect();
+          watchedArea = target;
+        }
+        observer.observe(target, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'data-row-key'] });
+      };
+
+      if (typeof store?.subscribe === 'function') unsubscribe = store.subscribe(schedule);
+      observe();
+      schedule();
+      // Catalogue projections and running state arrive through the store; a slow
+      // sweep covers a replaced store or a missed notification.
+      const sweeper = globalThis.setInterval(schedule, 4000);
+
+      return () => {
+        stopped = true;
+        if (scheduled !== 0) {
+          globalThis.cancelAnimationFrame?.(scheduled);
+          globalThis.clearTimeout?.(scheduled);
+          scheduled = 0;
+        }
+        globalThis.clearInterval(sweeper);
+        try { unsubscribe?.(); } catch { /* the store is already gone */ }
+        try { observer?.disconnect(); } catch { /* already detached */ }
+        for (const host of hosts.values()) host.remove();
+        hosts.clear();
+      };
+    };
+
+    /**
+     * Mounts the sidebar subagent tree. It lives on the shell overlay because
+     * the sidebar has no slot for content below a session row.
+     * @param props - plugin context and translator.
+     * @returns the stylesheet for the injected rows.
+     */
+    function SubagentTreeBridge({ ctx, t }) {
+      const tr = typeof t === 'function' ? t : (key) => key;
+      const trRef = React.useRef(tr);
+      trRef.current = tr;
+      React.useEffect(() => installSubagentTree(ctx, (key) => trRef.current(key)), [ctx]);
+      return h('style', { 'data-plugin-css': `${NS}-subagent-tree` }, SUBAGENT_TREE_CSS);
+    }
+
     function DetachedSessionsBridge({ ctx, t }) {
       // The embedded document is one conversation and nothing else: no rows to
       // decorate, nothing to drag, no window to open.
@@ -7144,6 +7616,15 @@ window.__ModuleLoader__.load({
           id: 'original-version-enhancements.archive-times',
           inject: () => ({ ctx }),
         }, ArchiveTimesBridge)), 'original-version-enhancements: archive times');
+
+        // Subagent conversations are hidden from the stock sidebar, so their
+        // expandable rows under the parent conversation are injected by a shell
+        // bridge; it has to exist in every window, switch or not.
+        ctx.effect(() => ctx.slots.inject('shell.overlay', () => ctx.slots.register({
+          name: 'shell.overlay',
+          id: 'original-version-enhancements.subagent-tree',
+          inject: () => ({ ctx, t: translator }),
+        }, SubagentTreeBridge)), 'original-version-enhancements: subagent tree');
 
         // Independent windows have their own switch: the menu row and the
         // cross-window bridge exist only while it is on. Turning it off brings
