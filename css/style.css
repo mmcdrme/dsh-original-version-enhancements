@@ -153,6 +153,17 @@
 .ove-arc-caret.is-folded { transform: rotate(-45deg); }
 .ove-arc-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ove-arc-count { margin-left: auto; flex: none; font-weight: 400; color: var(--dsw-alias-label-tertiary); }
+.ove-arc-title { display: flex; align-items: baseline; gap: 6px; min-width: 0; font-size: 14px; line-height: 22px; color: var(--dsw-alias-label-primary); }
+.ove-arc-ws { flex: none; max-width: 40%; font-weight: 600; color: var(--dsw-alias-label-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ove-arc-sep { flex: none; color: var(--dsw-alias-label-tertiary); }
+.ove-arc-name { min-width: 0; font-weight: 400; color: var(--dsw-alias-label-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ove-arc-sid {
+  flex: none; margin-left: 2px; font-size: 12px; color: #2563eb;
+  font-variant-numeric: tabular-nums; opacity: 0; transition: opacity .12s ease;
+}
+.ove-arc-row:hover .ove-arc-sid,
+.ove-arc-sid.is-shown { opacity: 1; }
+.ove-arc-when { margin-top: 2px; font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-tertiary); }
 /* Row actions stay out of the way until the row is hovered or focused. */
 .ove-arc-row .ove-actions { opacity: 0; pointer-events: none; transition: opacity .12s ease; }
 .ove-arc-row:hover .ove-actions,

@@ -303,7 +303,9 @@
     "archiveMonth": "{y}年{m}月",
     "archiveDay": "{m}月{d}日",
     "archiveUnknownDate": "未标注日期",
-    "archiveCount": "{n} 个"
+    "archiveCount": "{n} 个",
+    "archiveAt": "归档于 {t}",
+    "archiveActiveAt": "最后活动 {t}"
   },
   "en": {
     "group": "Work details",
@@ -609,6 +611,8 @@
     "archiveMonth": "{y}-{m}",
     "archiveDay": "{m}-{d}",
     "archiveUnknownDate": "Unknown date",
-    "archiveCount": "{n}"
+    "archiveCount": "{n}",
+    "archiveAt": "Archived {t}",
+    "archiveActiveAt": "Last active {t}"
   }
 }

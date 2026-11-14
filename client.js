@@ -1868,6 +1868,40 @@ window.__ModuleLoader__.load({
 
     /** Where the archived page remembers how its rows are ordered. */
     const ARCHIVE_SORT_KEY = 'original-version-enhancements.archives.sort.v1';
+    /** When each Session entered the archive set (the store keeps no times). */
+    const ARCHIVE_TIME_KEY = 'original-version-enhancements.archives.times.v1';
+    const readArchiveTimes = () => {
+      try {
+        const raw = JSON.parse(globalThis.localStorage?.getItem(ARCHIVE_TIME_KEY) ?? '{}');
+        return raw !== null && typeof raw === 'object' ? raw : {};
+      } catch {
+        return {};
+      }
+    };
+    const writeArchiveTimes = (times) => {
+      try { globalThis.localStorage?.setItem(ARCHIVE_TIME_KEY, JSON.stringify(times)); } catch { /* best effort */ }
+    };
+    /** The archive action happens elsewhere; remember the moment we see it. */
+    const rememberArchiveTimes = (ids) => {
+      const times = readArchiveTimes();
+      const now = Date.now();
+      let changed = false;
+      for (const id of ids) {
+        if (typeof times[id] !== 'number') { times[id] = now; changed = true; }
+      }
+      if (changed) writeArchiveTimes(times);
+    };
+    const pruneArchiveTimes = (ids) => {
+      const times = readArchiveTimes();
+      const keep = new Set(ids);
+      let changed = false;
+      for (const id of Object.keys(times)) {
+        if (keep.has(id)) continue;
+        delete times[id];
+        changed = true;
+      }
+      if (changed) writeArchiveTimes(times);
+    };
     const readArchiveSort = () => {
       try {
         return globalThis.localStorage?.getItem(ARCHIVE_SORT_KEY) === 'workspace' ? 'workspace' : 'time';
@@ -1954,14 +1988,22 @@ window.__ModuleLoader__.load({
         if (typeof raw === 'number' && Number.isFinite(raw)) return raw;
         return Date.parse(String(raw)) || 0;
       };
-      const rows = archivedIds.map((id, index) => ({
+      const allRows = archivedIds.map((id, index) => ({
         id,
         order: index,
         stamp: stampOf(id),
         title: sessions?.byId?.[id]?.displayTitle || id,
         workspace: owners.get(id) || tr('ungrouped'),
+        short: id.replace(/^session-/u, '').slice(0, 8),
         snippet: matches.get(id),
-      })).filter((row) => normalized.length === 0
+      }));
+      // A duplicated title needs its id on screen; a unique one shows it on hover.
+      const titleCount = new Map();
+      for (const row of allRows) titleCount.set(row.title, (titleCount.get(row.title) ?? 0) + 1);
+      const repeatedTitles = new Set(
+        [...titleCount.entries()].filter(([, count]) => count > 1).map(([title]) => title),
+      );
+      const rows = allRows.filter((row) => normalized.length === 0
         || `${row.title} ${row.workspace}`.toLowerCase().includes(normalized.toLowerCase())
         || row.snippet !== undefined);
       // Newest first; rows without a timestamp keep the archive list's order.
@@ -2170,6 +2212,22 @@ window.__ModuleLoader__.load({
         if (done > 0) setNotice(tr('batchDeleted').replace('{n}', String(done)));
       };
 
+      const archiveTimes = readArchiveTimes();
+      const timeText = (stamp) => {
+        if (!stamp) return tr('archiveUnknownDate');
+        const date = new Date(stamp);
+        if (Number.isNaN(date.getTime())) return tr('archiveUnknownDate');
+        const pad = (value) => String(value).padStart(2, '0');
+        return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+      };
+      const whenTextOf = (row) => {
+        const recorded = archiveTimes[row.id];
+        if (typeof recorded === 'number' && Number.isFinite(recorded)) {
+          return tr('archiveAt').replace('{t}', timeText(recorded));
+        }
+        return tr('archiveActiveAt').replace('{t}', timeText(row.stamp));
+      };
+
       const groupHead = (key, label, ids, depth) => {
         const state = groupState(ids);
         const folded = collapsed.has(key);
@@ -2212,8 +2270,14 @@ window.__ModuleLoader__.load({
         }),
         h('div', { className: 'ove-arc-main', style: { paddingLeft: `${depth * 16}px` } },
           h('div', { className: 'ove-item-text' },
-            h('div', { className: 'ove-item-title' }, row.title),
-            h('div', { className: 'ove-item-sub' }, row.workspace),
+            h('div', { className: 'ove-arc-title' },
+              h('span', { className: 'ove-arc-ws', title: row.workspace }, row.workspace),
+              h('span', { className: 'ove-arc-sep', 'aria-hidden': 'true' }, '/'),
+              h('span', { className: 'ove-arc-name', title: row.title }, row.title),
+              h('span', {
+                className: `ove-arc-sid${repeatedTitles.has(row.title) ? ' is-shown' : ''}`,
+              }, `#${row.short}`)),
+            h('div', { className: 'ove-arc-when' }, whenTextOf(row)),
             row.snippet !== undefined && h('p', { className: 'ove-snippet' }, row.snippet)),
           h('div', { className: 'ove-actions' },
             h('button', {
@@ -2759,6 +2823,27 @@ window.__ModuleLoader__.load({
       });
       const detached = useDetached();
       const panels = usePanels();
+
+      // The archive action lives in the stock menu, so this is where a new
+      // archive can be timestamped. The first snapshot only seeds the set:
+      // sessions archived before this build keep their last-activity time.
+      const workspaceSnapshot = useWorkspaceSnapshot(ctx);
+      const archivedKey = Array.isArray(workspaceSnapshot?.archivedSessionIds)
+        ? workspaceSnapshot.archivedSessionIds.join(',')
+        : '';
+      const seenArchive = React.useRef(null);
+      React.useEffect(() => {
+        const ids = Array.isArray(workspaceSnapshot?.archivedSessionIds) ? workspaceSnapshot.archivedSessionIds : [];
+        if (seenArchive.current === null) {
+          seenArchive.current = new Set(ids);
+          return;
+        }
+        const previous = seenArchive.current;
+        seenArchive.current = new Set(ids);
+        const added = ids.filter((id) => !previous.has(id));
+        if (added.length > 0) rememberArchiveTimes(added);
+        pruneArchiveTimes(ids);
+      }, [archivedKey]);
 
       // The Host owns the independent OS windows, so its report is the only
       // place their liveness can come from: mirror it while this page lives.
