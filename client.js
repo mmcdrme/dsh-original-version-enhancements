@@ -3481,7 +3481,7 @@ window.__ModuleLoader__.load({
 .ove-sub-caret.is-open { transform: rotate(90deg); }
 .ove-sub-branch { display: block; }
 .ove-sub-row {
-  display: flex; align-items: center; gap: 4px;
+  display: flex; align-items: center; gap: 0;
   height: 30px; margin: 0 8px; padding: 0 8px; box-sizing: border-box;
   border-radius: 10px; color: var(--dsw-alias-label-primary);
   font-size: 13px; line-height: 30px; cursor: pointer;
@@ -3495,8 +3495,14 @@ window.__ModuleLoader__.load({
   width: 10px; height: 16px; padding: 0; border: 0; background: transparent;
   color: var(--dsw-alias-label-tertiary); cursor: pointer;
 }
-/* A leaf row has no expander, so it starts at the level marker instead of
-   reserving an empty caret column: no leading blank space before the name. */
+/* The lead cluster owns one fixed 18px column before the name: the caret,
+   status marker and level dot are packed against its right edge, so the deepest
+   element (the dot) touches the name and every name starts in the shipped
+   conversation column, exactly on the parent name's first character. */
+.ove-sub-lead {
+  flex: none; width: 18px; display: flex; align-items: center;
+  justify-content: flex-end; gap: 1px; overflow: visible;
+}
 /* The lead cluster: caret or spacer, then the shipped status marker. The slot
    width is fixed so every title starts in the same column. */
 .ove-sub-statusslot {
@@ -3545,10 +3551,10 @@ window.__ModuleLoader__.load({
 }
 /* Depth marker before the name: a dot for direct children, dot-level-dot below
    them, so nesting stays readable now that the rows share one indentation. */
-/* A fixed slot keeps the names in the shipped conversation column (42px)
-   whatever the marker says, so a deeper level marker does not shift it. */
+/* Right-aligned inside the lead cluster: its right edge is the name's left
+   edge, so the dot reads as the name's own prefix with no space between. */
 .ove-sub-level {
-  flex: none; min-width: 14px; text-align: center;
+  flex: none; text-align: right;
   font-size: 9px; line-height: 12px; letter-spacing: .2px;
   color: var(--dsw-alias-label-secondary); font-variant-numeric: tabular-nums;
 }
@@ -3967,8 +3973,11 @@ window.__ModuleLoader__.load({
         row.setAttribute('role', 'treeitem');
         // No space indentation any more: every level shares the row's own left
         // padding and the depth is drawn by the `●` / `●2●` marker below.
-        // Only a row that really expands gets a caret column: a leaf row must
-        // not reserve an empty one, which used to look like leading indentation.
+        // One fixed lead column, packed against the name: caret (only when the
+        // row really expands), status marker (only while it has one) and the
+        // level dot, whose right edge is the name's left edge.
+        const leadCluster = document.createElement('span');
+        leadCluster.className = 'ove-sub-lead';
         if (kids.length > 0) {
           row.setAttribute('aria-expanded', String(expanded));
           const caretButton = document.createElement('button');
@@ -3981,10 +3990,8 @@ window.__ModuleLoader__.load({
             event.stopPropagation();
             toggle(itemId);
           });
-          row.append(caretButton);
+          leadCluster.append(caretButton);
         }
-        // A fixed lead slot keeps every title in one column whether or not the
-        // row carries a status marker.
         const lead = document.createElement('span');
         lead.className = 'ove-sub-statusslot';
         if (status.state !== 'idle') lead.append(statusNode(status.state));
@@ -3994,14 +4001,15 @@ window.__ModuleLoader__.load({
           spoken.textContent = status.aria;
           lead.append(spoken);
         }
-        row.append(lead);
+        leadCluster.append(lead);
         // Depth marker: `●` for a direct child, `●<level>●` from the second
         // layer on, so the nesting stays readable without empty leading space.
         const level = document.createElement('span');
         level.className = 'ove-sub-level';
         level.setAttribute('aria-hidden', 'true');
         level.textContent = depth <= 1 ? '●' : `●${depth}●`;
-        row.append(level);
+        leadCluster.append(level);
+        row.append(leadCluster);
         const label = document.createElement('span');
         label.className = 'ove-sub-title';
         label.textContent = titleOf(item, parentId);
