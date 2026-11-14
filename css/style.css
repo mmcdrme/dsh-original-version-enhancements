@@ -767,8 +767,11 @@
 .ove-window-opacity { display: flex; align-items: center; gap: 10px; }
 .ove-range { width: 156px; accent-color: #3b82f6; }
 .ove-range-value { min-width: 40px; text-align: right; font-size: 12px; font-variant-numeric: tabular-nums; color: var(--dsw-alias-label-secondary); }
-.ove-size-group { display: flex; gap: 6px; }
+.ove-size-group { display: flex; flex: none; flex-wrap: nowrap; justify-content: flex-end; gap: 6px; }
 .ove-size {
+  /* A label is one line: a squeezed flex row must not fold 「独立窗口」 into a
+     vertical column of characters. */
+  flex: none; white-space: nowrap; box-sizing: border-box;
   padding: 4px 12px; border-radius: 999px; cursor: pointer; font-size: 12px; line-height: 18px;
   border: 1px solid color-mix(in srgb, var(--dsw-alias-label-primary) 18%, transparent);
   background: transparent; color: var(--dsw-alias-label-secondary);

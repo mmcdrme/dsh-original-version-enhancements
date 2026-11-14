@@ -282,7 +282,7 @@
     "detachedRestored": "已移回主界面并打开会话",
     "window.mode": "窗口形态",
     "window.mode.desc": "选择独立窗口的形态：自带 exe 的独立窗口可以最小化、调透明度，页内窗口则贴在主界面里。对之后打开的窗口生效。",
-    "window.mode.native": "独立 exe",
+    "window.mode.native": "独立窗口",
     "window.mode.panel": "页内窗口",
     "detachedNativeFailed": "独立窗口启动失败；可在「原版功能增强 → 独立窗口外观」把窗口形态改为页内窗口",
     "detachedLoadFailed": "窗口内容未能载入，请关闭后重试"
@@ -570,8 +570,8 @@
     "detachedRestored": "Brought back and opened in the main window",
     "window.mode": "Window kind",
     "window.mode.desc": "Pick the detached window shape: the bundled exe window can be minimised and made translucent, the in-page window floats inside the main UI. Applies to windows opened from now on.",
-    "window.mode.native": "Desktop exe",
-    "window.mode.panel": "In-page",
+    "window.mode.native": "Desktop window",
+    "window.mode.panel": "In-page window",
     "detachedNativeFailed": "The desktop window could not start; switch Window kind to In-page on the plugin page",
     "detachedLoadFailed": "The window content could not load; close it and try again"
   }
