@@ -763,6 +763,8 @@
   display: flex; align-items: baseline; padding: 6px 8px; border-radius: 8px;
   font-size: 13px; line-height: 20px; white-space: nowrap; overflow: hidden; cursor: pointer;
 }
+.ove-combo-option.is-hidden { background: color-mix(in srgb, var(--dsw-alias-label-primary) 8%, transparent); }
+.ove-combo-option.is-hidden:hover { background: color-mix(in srgb, var(--dsw-alias-label-primary) 12%, transparent); }
 .ove-combo-option[data-active="true"] { background: color-mix(in srgb, #2563eb 12%, transparent); }
 .ove-combo-option[aria-selected="true"] { font-weight: 500; }
 .ove-combo-empty { margin: 0; padding: 8px; font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-tertiary); }

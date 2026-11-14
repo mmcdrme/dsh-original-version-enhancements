@@ -6231,7 +6231,10 @@ window.__ModuleLoader__.load({
                 key: option.id,
                 id: optionId(index),
                 'data-index': index,
-                className: 'ove-combo-option',
+                // A conversation the client cannot see is listed only because
+                // the experimental switch is on; the grey layer says so.
+                className: `ove-combo-option${option.hidden === true ? ' is-hidden' : ''}`,
+                'data-hidden': option.hidden === true ? 'true' : undefined,
                 role: 'option',
                 'aria-selected': option.id === value,
                 'data-active': index === cursor,
@@ -6570,8 +6573,6 @@ window.__ModuleLoader__.load({
       const stampDraft = (next) => ({ ...next, seq: (draftSeq.current += 1) });
       const [bindTasks, setBindTasks] = React.useState([]);
       const [bindPicks, setBindPicks] = React.useState(() => new Set());
-      // Scope of the bind picker; only offered by the experimental switch.
-      const [bindScope, setBindScope] = React.useState('visible');
       const [cleanPending, setCleanPending] = React.useState(false);
       const [detailTab, setDetailTab] = React.useState('edit');
       const [records, setRecords] = React.useState([]);
@@ -7034,7 +7035,6 @@ window.__ModuleLoader__.load({
         const list = Array.isArray(tasks) ? tasks.filter((task) => task !== null && task !== undefined) : [];
         setBindTasks(list);
         setBindPicks(new Set());
-        setBindScope('visible');
         setActionError('');
         setNotice(null);
       };
@@ -7042,7 +7042,6 @@ window.__ModuleLoader__.load({
       const closeBind = () => {
         setBindTasks([]);
         setBindPicks(new Set());
-        setBindScope('visible');
       };
 
       const confirmBind = async () => {
@@ -7144,10 +7143,14 @@ window.__ModuleLoader__.load({
         // hiding one would hide the conversation the human wants to pick.
         return candidates
           .map((session) => ({ ...session, archived: false, label: session.title, hidden: session.hidden === true }))
+          // The experimental switch decides whether conversations the client
+          // cannot see are offered at all; off keeps every picker to the
+          // sessions the sidebar shows.
+          .filter((session) => flags.bindScopes || session.hidden !== true)
           .sort((a, b) => a.label.localeCompare(b.label)
             || a.workspace.localeCompare(b.workspace)
             || b.stamp - a.stamp);
-      }, [sessions, workspaces]);
+      }, [sessions, workspaces, flags.bindScopes]);
 
       /** Sessions a task may point at, plus its own archived target when it has one. */
       const targetSessions = React.useMemo(() => {
@@ -7160,7 +7163,18 @@ window.__ModuleLoader__.load({
         const owner = items.find((item) => Array.isArray(item.sessionIds) && item.sessionIds.includes(current));
         const workspace = owner === undefined ? '' : String(owner.title || owner.path || '').trim();
         const workspaceId = owner === undefined ? '' : String(owner.workspaceId ?? '');
-        return [{ id: current, title, workspace, workspaceId, label: title, archived: true, stamp: 0 }, ...sessionOptions];
+        return [{
+          id: current,
+          title,
+          workspace,
+          workspaceId,
+          label: title,
+          archived: true,
+          stamp: 0,
+          // An already-configured target the client cannot see stays listed
+          // (a save must not silently lose it); it carries the grey marker too.
+          hidden: record?.origin === 'subagent',
+        }, ...sessionOptions];
       }, [sessionOptions, draft?.sessionId, sessions, workspaces]);
 
       /** One conversation by id, qualified with its workspace when known. */
@@ -7190,14 +7204,8 @@ window.__ModuleLoader__.load({
           // copies it created rather than by a title match.
           for (const id of Array.isArray(task?.copySessionIds) ? task.copySessionIds : []) bound.add(id);
         }
-        return sessionOptions.filter((session) => {
-          if (bound.has(session.id)) return false;
-          // The experimental switch turns the picker into an explicit choice:
-          // show what the client can see, or what it cannot see.
-          if (!flags.bindScopes) return true;
-          return bindScope === 'hidden' ? session.hidden === true : session.hidden !== true;
-        });
-      }, [sessionOptions, bindTasks, flags.bindScopes, bindScope]);
+        return sessionOptions.filter((session) => !bound.has(session.id));
+      }, [sessionOptions, bindTasks]);
 
       /** Rows in the bind picker that need their short id to stay distinct. */
       const bindDuplicates = React.useMemo(() => duplicateIdsOf(bindCandidates), [bindCandidates]);
@@ -8029,24 +8037,8 @@ window.__ModuleLoader__.load({
             children: h(React.Fragment, null,
               h('p', { className: 'ove-dialog-target' }, tr('auto.bindTasks')
                 .replace('{names}', bindTasks.map((task) => task.title).join('、'))),
-              // Experimental: restrict the picker to the sidebar's visible
-              // conversations, or to the ones it hides (subagents and the like).
-              flags.bindScopes
-                ? h('div', { className: 'ove-bind-scope' },
-                  h('div', { className: 'ove-size-group', role: 'group', 'aria-label': tr('auto.bindScope') },
-                    ['visible', 'hidden'].map((scope) => h('button', {
-                      key: scope,
-                      type: 'button',
-                      className: `ove-size${bindScope === scope ? ' is-on' : ''}`,
-                      'aria-pressed': bindScope === scope,
-                      onClick: () => setBindScope(scope),
-                    }, tr(`auto.bindScope.${scope}`)))),
-                  h('p', { className: 'ove-bind-scope-tip' }, tr('auto.bindScope.tip')))
-                : null,
               bindCandidates.length === 0
-                ? h('p', { className: 'ove-muted' }, flags.bindScopes
-                  ? tr(bindScope === 'hidden' ? 'auto.bindScope.hiddenEmpty' : 'auto.bindScope.visibleEmpty')
-                  : tr('auto.bindEmpty'))
+                ? h('p', { className: 'ove-muted' }, tr('auto.bindEmpty'))
                 : h('div', { className: 'ove-session-pick' }, bindCandidates.map((session) => h('label', {
                   className: 'ove-session-option',
                   key: session.id,
