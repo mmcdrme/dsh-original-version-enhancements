@@ -124,6 +124,15 @@
 .ove-muted { margin: 0; font-size: 14px; line-height: 22px; color: var(--dsw-alias-label-tertiary); }
 .ove-error { margin: 0; font-size: 13px; line-height: 20px; color: var(--dsw-alias-state-error-primary); }
 .ove-row-item { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 14px 0; }
+.ove-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 0 0 10px; }
+.ove-check-all { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--dsw-alias-label-secondary); cursor: pointer; }
+.ove-check { width: 14px; height: 14px; margin: 0; flex: none; accent-color: #3b82f6; cursor: pointer; }
+.ove-sort { display: flex; gap: 6px; }
+.ove-row-item.is-selected { background: color-mix(in srgb, #3b82f6 6%, transparent); border-radius: 8px; }
+/* Row actions stay out of the way until the row is hovered or focused. */
+.ove-row-item .ove-actions { opacity: 0; pointer-events: none; transition: opacity .12s ease; }
+.ove-row-item:hover .ove-actions,
+.ove-row-item:focus-within .ove-actions { opacity: 1; pointer-events: auto; }
 .ove-row-item + .ove-row-item { border-top: .5px solid var(--dsw-alias-border-l1); }
 .ove-item-text { flex: 1 1 180px; min-width: 0; display: grid; gap: 2px; }
 .ove-item-title { font-size: 14px; line-height: 22px; overflow-wrap: anywhere; }

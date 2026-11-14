@@ -285,7 +285,21 @@
     "window.mode.native": "独立窗口",
     "window.mode.panel": "页内窗口",
     "detachedNativeFailed": "独立窗口启动失败；可在「原版功能增强 → 独立窗口外观」把窗口形态改为页内窗口",
-    "detachedLoadFailed": "窗口内容未能载入，请关闭后重试"
+    "detachedLoadFailed": "窗口内容未能载入，请关闭后重试",
+    "archiveSort": "排序方式",
+    "archiveSort.time": "时间排序",
+    "archiveSort.workspace": "工作区排序",
+    "selectAll": "全选",
+    "selectRow": "选择会话",
+    "selectedCount": "已选 {n} 个",
+    "batchRestore": "取消归档",
+    "batchDelete": "删除",
+    "batchRestoring": "正在取消归档…",
+    "batchDeleting": "正在删除…",
+    "batchRestored": "已取消归档 {n} 个会话",
+    "batchDeleted": "已永久删除 {n} 个会话",
+    "batchDeleteTitle": "批量永久删除",
+    "batchDeleteDesc": "将永久删除选中的 {n} 个会话，删除后无法撤销。"
   },
   "en": {
     "group": "Work details",
@@ -573,6 +587,20 @@
     "window.mode.native": "Desktop window",
     "window.mode.panel": "In-page window",
     "detachedNativeFailed": "The desktop window could not start; switch Window kind to In-page on the plugin page",
-    "detachedLoadFailed": "The window content could not load; close it and try again"
+    "detachedLoadFailed": "The window content could not load; close it and try again",
+    "archiveSort": "Sort by",
+    "archiveSort.time": "Time",
+    "archiveSort.workspace": "Workspace",
+    "selectAll": "Select all",
+    "selectRow": "Select conversation",
+    "selectedCount": "{n} selected",
+    "batchRestore": "Unarchive",
+    "batchDelete": "Delete",
+    "batchRestoring": "Unarchiving…",
+    "batchDeleting": "Deleting…",
+    "batchRestored": "Unarchived {n} conversations",
+    "batchDeleted": "Permanently deleted {n} conversations",
+    "batchDeleteTitle": "Delete permanently",
+    "batchDeleteDesc": "This permanently deletes the {n} selected conversations and cannot be undone."
   }
 }

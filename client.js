@@ -1866,8 +1866,18 @@ window.__ModuleLoader__.load({
     /* Archived sessions page                                              */
     /* ------------------------------------------------------------------ */
 
+    /** Where the archived page remembers how its rows are ordered. */
+    const ARCHIVE_SORT_KEY = 'original-version-enhancements.archives.sort.v1';
+    const readArchiveSort = () => {
+      try {
+        return globalThis.localStorage?.getItem(ARCHIVE_SORT_KEY) === 'workspace' ? 'workspace' : 'time';
+      } catch {
+        return 'time';
+      }
+    };
+
     /**
-     * Archived-session search, unarchive, and permanent deletion.
+     * Archived-session search, sorting, batch unarchive, and permanent deletion.
      * @param props - standard settings props, translator, and the plugin context.
      * @returns the archived sessions page.
      */
@@ -1889,6 +1899,10 @@ window.__ModuleLoader__.load({
       const [deleteError, setDeleteError] = React.useState('');
       const [deleteCode, setDeleteCode] = React.useState('');
       const deleteBusyRef = React.useRef(false);
+      const [sort, setSort] = React.useState(readArchiveSort);
+      const [selected, setSelected] = React.useState(() => new Set());
+      const [batchBusy, setBatchBusy] = React.useState(false);
+      const [batchConfirm, setBatchConfirm] = React.useState(false);
 
       const normalized = query.trim();
 
@@ -1933,14 +1947,36 @@ window.__ModuleLoader__.load({
       for (const workspace of workspaces?.items ?? []) {
         for (const id of workspace.sessionIds ?? []) owners.set(id, workspace.title);
       }
-      const rows = [...archivedIds].reverse().map((id) => ({
+      const rows = archivedIds.map((id, index) => ({
         id,
+        order: index,
+        stamp: Date.parse(sessions?.byId?.[id]?.updatedAt ?? sessions?.byId?.[id]?.createdAt ?? '') || 0,
         title: sessions?.byId?.[id]?.displayTitle || id,
         workspace: owners.get(id) || tr('ungrouped'),
         snippet: matches.get(id),
       })).filter((row) => normalized.length === 0
         || `${row.title} ${row.workspace}`.toLowerCase().includes(normalized.toLowerCase())
         || row.snippet !== undefined);
+      // Newest first; rows without a timestamp keep the archive list's order.
+      rows.sort((left, right) => (right.stamp - left.stamp) || (right.order - left.order));
+      if (sort === 'workspace') {
+        rows.sort((left, right) => left.workspace.localeCompare(right.workspace, 'zh-Hans-CN')
+          || (right.stamp - left.stamp) || (right.order - left.order));
+      }
+      const selectedRows = rows.filter((row) => selected.has(row.id));
+      const allSelected = rows.length > 0 && selectedRows.length === rows.length;
+      const toggleSelected = (id) => {
+        setSelected((current) => {
+          const next = new Set(current);
+          if (next.has(id)) next.delete(id);
+          else next.add(id);
+          return next;
+        });
+      };
+      const changeSort = (next) => {
+        setSort(next);
+        try { globalThis.localStorage?.setItem(ARCHIVE_SORT_KEY, next); } catch { /* best effort */ }
+      };
 
       const restore = async (row) => {
         if (busy !== null) return;
@@ -2008,6 +2044,50 @@ window.__ModuleLoader__.load({
         }
       };
 
+      const restoreMany = async () => {
+        const targets = rows.filter((row) => selected.has(row.id));
+        if (targets.length === 0 || batchBusy) return;
+        const service = ctx.workspaces;
+        if (typeof service?.unarchiveSession !== 'function') {
+          setActionError(tr('loadFailed') + 'workspaces.unarchiveSession');
+          return;
+        }
+        setBatchBusy(true);
+        setActionError('');
+        setNotice('');
+        let done = 0;
+        for (const row of targets) {
+          try {
+            await service.unarchiveSession(row.id);
+            done += 1;
+          } catch (error) {
+            if (done === 0) setActionError(String(error?.message ?? error));
+          }
+        }
+        await refreshStores(ctx);
+        setSelected(new Set());
+        setBatchBusy(false);
+        if (done > 0) setNotice(tr('batchRestored').replace('{n}', String(done)));
+      };
+
+      const deleteMany = async () => {
+        const targets = rows.filter((row) => selected.has(row.id));
+        if (targets.length === 0 || batchBusy) return;
+        setBatchBusy(true);
+        setActionError('');
+        setNotice('');
+        let done = 0;
+        for (const row of targets) {
+          const result = await requestDelete(ctx, { id: row.id, title: row.title }, false, false);
+          if (result.ok) done += 1;
+          else if (done === 0) setActionError(result.error);
+        }
+        setBatchConfirm(false);
+        setSelected(new Set());
+        setBatchBusy(false);
+        if (done > 0) setNotice(tr('batchDeleted').replace('{n}', String(done)));
+      };
+
       return h(React.Fragment, null,
         h('style', { key: 'styles', 'data-plugin-css': `${NS}-archives` }, CSS),
         h('div', { className: 'ove-page' },
@@ -2031,8 +2111,52 @@ window.__ModuleLoader__.load({
           notice && h('p', { className: 'ove-muted', role: 'status' }, notice),
           rows.length === 0 && h('p', { className: 'ove-muted' },
             archivedIds.length === 0 ? tr('noArchives') : tr('noRows')),
+          rows.length > 0 && h('div', { className: 'ove-toolbar' },
+            h('label', { className: 'ove-check-all' },
+              h('input', {
+                type: 'checkbox',
+                className: 'ove-check',
+                checked: allSelected,
+                ref: (el) => { if (el !== null) el.indeterminate = !allSelected && selectedRows.length > 0; },
+                onChange: () => setSelected(allSelected ? new Set() : new Set(rows.map((row) => row.id))),
+              }),
+              h('span', null, tr('selectAll'))),
+            selectedRows.length > 0 && h('span', { className: 'ove-muted' },
+              tr('selectedCount').replace('{n}', String(selectedRows.length))),
+            h('div', { className: 'ove-sort', role: 'group', 'aria-label': tr('archiveSort') },
+              ['time', 'workspace'].map((id) => h('button', {
+                key: id,
+                type: 'button',
+                className: `ove-size${sort === id ? ' is-on' : ''}`,
+                'aria-pressed': sort === id,
+                onClick: () => changeSort(id),
+              }, tr(`archiveSort.${id}`)))),
+            h('div', { className: 'ove-actions' },
+              h('button', {
+                type: 'button',
+                className: 'ove-btn',
+                disabled: selectedRows.length === 0 || batchBusy,
+                onClick: restoreMany,
+              }, batchBusy ? tr('batchRestoring') : tr('batchRestore')),
+              h('button', {
+                type: 'button',
+                className: 'ove-btn ove-btn-danger',
+                disabled: selectedRows.length === 0 || batchBusy,
+                onClick: () => setBatchConfirm(true),
+              }, tr('batchDelete')))),
+
           rows.length > 0 && h('div', { className: 'ove-card' },
-            rows.map((row) => h('div', { key: row.id, className: 'ove-row-item' },
+            rows.map((row) => h('div', {
+              key: row.id,
+              className: `ove-row-item${selected.has(row.id) ? ' is-selected' : ''}`,
+            },
+              h('input', {
+                type: 'checkbox',
+                className: 'ove-check',
+                checked: selected.has(row.id),
+                'aria-label': `${tr('selectRow')} ${row.title}`,
+                onChange: () => toggleSelected(row.id),
+              }),
               h('div', { className: 'ove-item-text' },
                 h('div', { className: 'ove-item-title' }, row.title),
                 h('div', { className: 'ove-item-sub' }, row.workspace),
@@ -2041,19 +2165,44 @@ window.__ModuleLoader__.load({
                 h('button', {
                   type: 'button',
                   className: 'ove-btn',
-                  disabled: busy !== null,
+                  disabled: busy !== null || batchBusy,
                   onClick: () => restore(row),
                 }, busy === row.id ? tr('restoring') : tr('restore')),
                 h('button', {
                   type: 'button',
                   className: 'ove-btn ove-btn-danger',
-                  disabled: busy !== null,
+                  disabled: busy !== null || batchBusy,
                   onClick: () => {
                     openDelete(row);
                   },
                 }, tr('delete')))))),
 
           h('p', { className: 'ove-footnote' }, tr('footnote'))),
+
+        // Batch deletion is final: unlike the single row it keeps no undo
+        // copy, so the dialog says so before anything is removed.
+        batchConfirm && overlayPortal(h('div', {
+          className: 'ove-overlay ove-overlay-top',
+          onMouseDown: (event) => {
+            if (event.target === event.currentTarget && !batchBusy) setBatchConfirm(false);
+          },
+        },
+          h('div', { className: 'ove-dialog', role: 'dialog', 'aria-modal': 'true', 'aria-label': tr('batchDeleteTitle') },
+            h('h2', { className: 'ove-dialog-title' }, tr('batchDeleteTitle')),
+            h('p', { className: 'ove-dialog-desc' }, tr('batchDeleteDesc').replace('{n}', String(selectedRows.length))),
+            h('div', { className: 'ove-dialog-actions' },
+              h('button', {
+                type: 'button',
+                className: 'ove-btn',
+                disabled: batchBusy,
+                onClick: () => setBatchConfirm(false),
+              }, tr('cancel')),
+              h('button', {
+                type: 'button',
+                className: 'ove-btn ove-btn-danger',
+                disabled: batchBusy,
+                onClick: deleteMany,
+              }, batchBusy ? tr('batchDeleting') : tr('confirmDelete')))))),
 
         // Rendered inside the settings panel so the confirmation stays above
         // the page instead of falling behind the settings modal.
