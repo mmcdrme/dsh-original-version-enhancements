@@ -137,9 +137,11 @@
   transition: background-color .14s ease;
 }
 .ove-arc-main { display: flex; align-items: center; gap: 12px; flex: 1 1 auto; min-width: 0; }
+.ove-arc-row { cursor: pointer; }
 .ove-arc-row:hover { background: color-mix(in srgb, var(--dsw-alias-label-primary) 6%, transparent); }
 .ove-arc-row.is-selected { background: color-mix(in srgb, #3b82f6 10%, transparent); }
 .ove-arc-row.is-selected:hover { background: color-mix(in srgb, #3b82f6 16%, transparent); }
+.ove-arc-row:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: -2px; }
 .ove-arc-group {
   cursor: pointer; font-size: 12px; font-weight: 600; letter-spacing: .02em;
   color: var(--dsw-alias-label-secondary);
@@ -335,6 +337,27 @@
 }
 .ove-dialog-title { margin: 0; font-size: 16px; line-height: 24px; font-weight: 600; }
 .ove-dialog-desc { margin: 0; font-size: 13px; line-height: 20px; color: var(--dsw-alias-label-tertiary); }
+/* The batch confirmation carries the picked sessions; its list scrolls on its
+   own so the dialog keeps its buttons reachable on a short window. */
+.ove-dialog-wide { width: min(560px, 100%); max-height: min(88vh, 720px); overflow: auto; }
+.ove-pick { display: grid; gap: 8px; min-height: 0; }
+.ove-pick-head { display: flex; align-items: center; gap: 10px; }
+.ove-pick-total { font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-tertiary); }
+.ove-pick-list {
+  display: grid; align-content: start; gap: 1px;
+  max-height: 264px; overflow-y: auto; overflow-x: hidden;
+  padding: 6px; border-radius: 10px; background: var(--dsw-alias-bg-base);
+}
+.ove-pick-group {
+  display: flex; align-items: center; gap: 6px; padding: 5px 6px 3px;
+  font-size: 12px; font-weight: 600; color: var(--dsw-alias-label-secondary);
+}
+.ove-pick-group.ove-pick-day { padding-left: 20px; font-weight: 500; color: var(--dsw-alias-label-tertiary); }
+.ove-pick-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ove-pick-row { display: flex; align-items: center; padding: 3px 6px 3px 20px; border-radius: 8px; }
+.ove-pick-row .ove-arc-title { flex: 1 1 auto; min-width: 0; font-size: 13px; line-height: 20px; }
+.ove-pick-row:hover { background: color-mix(in srgb, var(--dsw-alias-label-primary) 6%, transparent); }
+.ove-pick-row:hover .ove-arc-sid { display: inline; }
 .ove-dialog-target {
   margin: 0;
   padding: 8px 10px;

@@ -297,9 +297,10 @@
     "batchRestoring": "正在取消归档…",
     "batchDeleting": "正在删除…",
     "batchRestored": "已取消归档 {n} 个会话",
-    "batchDeleted": "已永久删除 {n} 个会话",
-    "batchDeleteTitle": "批量永久删除",
-    "batchDeleteDesc": "将永久删除选中的 {n} 个会话，删除后无法撤销。",
+    "batchDeleted": "已删除 {n} 个会话",
+    "batchDeleteTitle": "删除所选会话",
+    "batchDeleteDesc": "将删除选中的 {n} 个会话，删除后 10 秒内可撤销。",
+    "batchDeleteConfirm": "确认删除",
     "archiveMonth": "{y}年{m}月",
     "archiveDay": "{m}月{d}日",
     "archiveUnknownDate": "未标注日期",
@@ -307,7 +308,9 @@
     "archiveAt": "归档于 {t}",
     "archiveActiveAt": "最后活动 {t}",
     "batchRestoreTitle": "批量取消归档",
-    "batchRestoreDesc": "将把选中的 {n} 个会话移出归档，放回各自工作区。"
+    "batchRestoreDesc": "将把选中的 {n} 个会话移出归档，放回各自工作区。",
+    "batchListCount": "本次共 {n} 个会话",
+    "batchListLabel": "待处理的会话清单"
   },
   "en": {
     "group": "Work details",
@@ -607,9 +610,10 @@
     "batchRestoring": "Unarchiving…",
     "batchDeleting": "Deleting…",
     "batchRestored": "Unarchived {n} conversations",
-    "batchDeleted": "Permanently deleted {n} conversations",
-    "batchDeleteTitle": "Delete permanently",
-    "batchDeleteDesc": "This permanently deletes the {n} selected conversations and cannot be undone.",
+    "batchDeleted": "Deleted {n} conversations",
+    "batchDeleteTitle": "Delete selected",
+    "batchDeleteDesc": "This deletes the {n} selected conversations; you can undo within 10s.",
+    "batchDeleteConfirm": "Delete now",
     "archiveMonth": "{y}-{m}",
     "archiveDay": "{m}-{d}",
     "archiveUnknownDate": "Unknown date",
@@ -617,6 +621,8 @@
     "archiveAt": "Archived {t}",
     "archiveActiveAt": "Last active {t}",
     "batchRestoreTitle": "Unarchive selected",
-    "batchRestoreDesc": "Move the {n} selected conversations out of the archive, back to their workspaces."
+    "batchRestoreDesc": "Move the {n} selected conversations out of the archive, back to their workspaces.",
+    "batchListCount": "{n} conversations in this batch",
+    "batchListLabel": "Sessions in this batch"
   }
 }

@@ -796,9 +796,17 @@ window.__ModuleLoader__.load({
       for (const listener of deleteNoticeListeners) listener();
     };
 
+    /** The undo tokens a receipt owns: one per deleted session. */
+    const noticeTokens = (notice) => {
+      if (Array.isArray(notice?.tokens)) {
+        return notice.tokens.filter((token) => typeof token === 'string' && token.length > 0);
+      }
+      return typeof notice?.token === 'string' && notice.token.length > 0 ? [notice.token] : [];
+    };
+
     /** Drop one receipt's retained copy, if it still owns one. */
     const abandonDeleteNotice = (notice) => {
-      if (typeof notice?.token === 'string' && notice.token.length > 0) void requestPurge(notice.token);
+      for (const token of noticeTokens(notice)) void requestPurge(token);
     };
 
     const pushDeleteNotice = (notice) => {
@@ -1910,6 +1918,116 @@ window.__ModuleLoader__.load({
       }
     };
 
+    /** Month / day parts of one archive stamp; null when it has no usable date. */
+    const archiveCalendarOf = (stamp, tr) => {
+      if (!stamp) return null;
+      const date = new Date(stamp);
+      if (Number.isNaN(date.getTime())) return null;
+      const month = date.getMonth() + 1;
+      const day = date.getDate();
+      return {
+        monthKey: `${date.getFullYear()}-${String(month).padStart(2, '0')}`,
+        monthLabel: tr('archiveMonth').replace('{y}', String(date.getFullYear())).replace('{m}', String(month)),
+        dayKey: `${date.getFullYear()}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`,
+        dayLabel: tr('archiveDay').replace('{m}', String(month)).replace('{d}', String(day)),
+      };
+    };
+
+    /**
+     * Two-level grouping shared by the archive page and its confirmation list.
+     * Workspace order is one level sorted by name; time order is month -> day.
+     * @param rows - rows carrying `workspace` and `stamp`.
+     * @param sort - 'workspace' or 'time'.
+     * @param tr - translator.
+     * @returns workspace groups `{key,label,rows}` or month groups `{key,label,days}`.
+     */
+    const buildArchiveGroups = (rows, sort, tr) => {
+      if (sort === 'workspace') {
+        const byName = new Map();
+        for (const row of rows) {
+          const key = `w:${row.workspace}`;
+          const group = byName.get(key) ?? { key, label: row.workspace, rows: [] };
+          group.rows.push(row);
+          byName.set(key, group);
+        }
+        return [...byName.values()]
+          .sort((left, right) => left.label.localeCompare(right.label, 'zh-Hans-CN'));
+      }
+      const byMonth = new Map();
+      for (const row of rows) {
+        const parts = archiveCalendarOf(row.stamp, tr);
+        const monthKey = parts === null ? 'unknown' : parts.monthKey;
+        let month = byMonth.get(monthKey);
+        if (month === undefined) {
+          month = { key: `m:${monthKey}`, label: parts === null ? tr('archiveUnknownDate') : parts.monthLabel, days: [] };
+          byMonth.set(monthKey, month);
+        }
+        const dayKey = parts === null ? 'unknown' : parts.dayKey;
+        let day = month.days.find((entry) => entry.key === `d:${dayKey}`);
+        if (day === undefined) {
+          day = { key: `d:${dayKey}`, label: parts === null ? tr('archiveUnknownDate') : parts.dayLabel, rows: [] };
+          month.days.push(day);
+        }
+        day.rows.push(row);
+      }
+      return [...byMonth.values()];
+    };
+
+    /**
+     * The title line shared by an archive row and the confirmation list:
+     * workspace (bold) / name (plain) #short-id (blue, always for duplicates).
+     * @param row - the archive row.
+     * @param repeatedTitles - titles that occur more than once.
+     * @returns the title element.
+     */
+    const sessionTitleLine = (row, repeatedTitles) => h('div', { className: 'ove-arc-title' },
+      h('span', { className: 'ove-arc-ws', title: row.workspace }, row.workspace),
+      h('span', { className: 'ove-arc-sep', 'aria-hidden': 'true' }, '/'),
+      h('span', { className: 'ove-arc-name', title: row.title }, row.title),
+      h('span', {
+        className: `ove-arc-sid${repeatedTitles.has(row.title) ? ' is-shown' : ''}`,
+      }, `#${row.short}`));
+
+    /**
+     * The picked sessions listed inside a batch confirmation: the same tree as
+     * the archive page, its own time/workspace toggle, the same title rule.
+     * @param props - the rows, the current sort, its setter, translator and the
+     *   duplicated titles of the archive set.
+     * @returns the sortable list.
+     */
+    function ArchivePicker({ rows, sort, onSort, tr, repeatedTitles }) {
+      const groups = buildArchiveGroups(rows, sort, tr);
+      const line = (row) => h('div', { key: row.id, className: 'ove-pick-row' },
+        sessionTitleLine(row, repeatedTitles));
+      const head = (key, label, isDay) => h('div', {
+        key,
+        className: `ove-pick-group${isDay ? ' ove-pick-day' : ''}`,
+      }, h('span', { className: 'ove-pick-label' }, label));
+      return h('div', { className: 'ove-pick' },
+        h('div', { className: 'ove-pick-head' },
+          h('span', { className: 'ove-pick-total' }, tr('batchListCount').replace('{n}', String(rows.length))),
+          h('div', { className: 'ove-sort', role: 'group', 'aria-label': tr('archiveSort') },
+            ['time', 'workspace'].map((id) => h('button', {
+              key: id,
+              type: 'button',
+              className: `ove-size${sort === id ? ' is-on' : ''}`,
+              'aria-pressed': sort === id,
+              onClick: () => onSort(id),
+            }, tr(`archiveSort.${id}`))))),
+        rows.length === 0
+          ? h('p', { className: 'ove-muted' }, tr('noRows'))
+          : h('div', { className: 'ove-pick-list', role: 'tree', 'aria-label': tr('batchListLabel') },
+            sort === 'workspace'
+              ? groups.map((group) => h(React.Fragment, { key: group.key },
+                head(group.key, group.label, false),
+                group.rows.map(line)))
+              : groups.map((month) => h(React.Fragment, { key: month.key },
+                head(month.key, month.label, false),
+                month.days.map((day) => h(React.Fragment, { key: day.key },
+                  head(day.key, day.label, true),
+                  day.rows.map(line)))))));
+    }
+
     /**
      * Archived-session search, sorting, batch unarchive, and permanent deletion.
      * @param props - standard settings props, translator, and the plugin context.
@@ -1932,6 +2050,7 @@ window.__ModuleLoader__.load({
       const [selected, setSelected] = React.useState(() => new Set());
       const [batchBusy, setBatchBusy] = React.useState(false);
       const [batchKind, setBatchKind] = React.useState(null);
+      const [batchSort, setBatchSort] = React.useState(readArchiveSort);
       const [collapsed, setCollapsed] = React.useState(() => new Set());
 
       const normalized = query.trim();
@@ -2041,53 +2160,8 @@ window.__ModuleLoader__.load({
         return { checked: ids.length > 0 && marked === ids.length, mixed: marked > 0 && marked < ids.length };
       };
 
-      /** Month / day labels for the time tree; missing stamps group at the end. */
-      const calendarOf = (stamp) => {
-        if (!stamp) return null;
-        const date = new Date(stamp);
-        if (Number.isNaN(date.getTime())) return null;
-        const month = date.getMonth() + 1;
-        const day = date.getDate();
-        return {
-          monthKey: `${date.getFullYear()}-${String(month).padStart(2, '0')}`,
-          monthLabel: tr('archiveMonth').replace('{y}', String(date.getFullYear())).replace('{m}', String(month)),
-          dayKey: `${date.getFullYear()}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`,
-          dayLabel: tr('archiveDay').replace('{m}', String(month)).replace('{d}', String(day)),
-        };
-      };
-
       // Two levels for both orders: a workspace, or month -> day.
-      const groups = (() => {
-        if (sort === 'workspace') {
-          const byName = new Map();
-          for (const row of rows) {
-            const key = `w:${row.workspace}`;
-            const group = byName.get(key) ?? { key, label: row.workspace, rows: [] };
-            group.rows.push(row);
-            byName.set(key, group);
-          }
-          return [...byName.values()]
-            .sort((left, right) => left.label.localeCompare(right.label, 'zh-Hans-CN'));
-        }
-        const byMonth = new Map();
-        for (const row of rows) {
-          const parts = calendarOf(row.stamp);
-          const monthKey = parts === null ? 'unknown' : parts.monthKey;
-          let month = byMonth.get(monthKey);
-          if (month === undefined) {
-            month = { key: `m:${monthKey}`, label: parts === null ? tr('archiveUnknownDate') : parts.monthLabel, days: [] };
-            byMonth.set(monthKey, month);
-          }
-          const dayKey = parts === null ? 'unknown' : parts.dayKey;
-          let day = month.days.find((entry) => entry.key === `d:${dayKey}`);
-          if (day === undefined) {
-            day = { key: `d:${dayKey}`, label: parts === null ? tr('archiveUnknownDate') : parts.dayLabel, rows: [] };
-            month.days.push(day);
-          }
-          day.rows.push(row);
-        }
-        return [...byMonth.values()];
-      })();
+      const groups = buildArchiveGroups(rows, sort, tr);
       const idsOf = (group) => (sort === 'workspace'
         ? group.rows.map((row) => row.id)
         : group.days.reduce((all, day) => all.concat(day.rows.map((row) => row.id)), []));
@@ -2177,16 +2251,30 @@ window.__ModuleLoader__.load({
         setBatchBusy(true);
         setActionError('');
         setNotice('');
+        const tokens = [];
         let done = 0;
         for (const row of targets) {
-          const result = await requestDelete(ctx, { id: row.id, title: row.title }, false, false);
-          if (result.ok) done += 1;
-          else if (done === 0) setActionError(result.error);
+          // Retain every removal so the single receipt below can hand the whole
+          // batch back within its 10s window.
+          let result = await requestDelete(ctx, { id: row.id, title: row.title }, false, true);
+          if (!result.ok && (result.code === 'lifecycle-unavailable' || result.code === 'lifecycle-error')) {
+            result = await requestDelete(ctx, { id: row.id, title: row.title }, true, true);
+          }
+          if (result.ok) {
+            done += 1;
+            if (typeof result.token === 'string' && result.token.length > 0) tokens.push(result.token);
+          } else if (done === 0) {
+            setActionError(result.error);
+          }
         }
         setBatchKind(null);
         setSelected(new Set());
         setBatchBusy(false);
-        if (done > 0) setNotice(tr('batchDeleted').replace('{n}', String(done)));
+        if (done > 0) {
+          const text = tr('batchDeleted').replace('{n}', String(done));
+          setNotice(text);
+          pushDeleteNotice({ text, tone: 'success', tokens, seconds: 10 });
+        }
       };
 
       const archiveTimes = readArchiveTimes();
@@ -2237,6 +2325,20 @@ window.__ModuleLoader__.load({
         key: row.id,
         className: `ove-arc-item ove-arc-row${selected.has(row.id) ? ' is-selected' : ''}`,
         role: 'treeitem',
+        'aria-selected': selected.has(row.id),
+        tabIndex: 0,
+        // A click anywhere on the row toggles it, like clicking its checkbox;
+        // the row's own buttons and the checkbox keep their own behaviour.
+        onClick: (event) => {
+          if (event.target instanceof Element && event.target.closest('.ove-actions, .ove-check') !== null) return;
+          toggleSelected(row.id);
+        },
+        onKeyDown: (event) => {
+          if (event.target !== event.currentTarget) return;
+          if (event.key !== 'Enter' && event.key !== ' ') return;
+          event.preventDefault();
+          toggleSelected(row.id);
+        },
       },
         h('input', {
           type: 'checkbox',
@@ -2247,13 +2349,7 @@ window.__ModuleLoader__.load({
         }),
         h('div', { className: 'ove-arc-main', style: { paddingLeft: `${depth * 16}px` } },
           h('div', { className: 'ove-item-text' },
-            h('div', { className: 'ove-arc-title' },
-              h('span', { className: 'ove-arc-ws', title: row.workspace }, row.workspace),
-              h('span', { className: 'ove-arc-sep', 'aria-hidden': 'true' }, '/'),
-              h('span', { className: 'ove-arc-name', title: row.title }, row.title),
-              h('span', {
-                className: `ove-arc-sid${repeatedTitles.has(row.title) ? ' is-shown' : ''}`,
-              }, `#${row.short}`)),
+            sessionTitleLine(row, repeatedTitles),
             h('div', { className: 'ove-arc-when' }, whenTextOf(row)),
             row.snippet !== undefined && h('p', { className: 'ove-snippet' }, row.snippet)),
           h('div', { className: 'ove-actions' },
@@ -2318,13 +2414,13 @@ window.__ModuleLoader__.load({
                 type: 'button',
                 className: 'ove-btn',
                 disabled: selectedRows.length === 0 || batchBusy,
-                onClick: () => setBatchKind('restore'),
+                onClick: () => { setBatchSort(sort); setBatchKind('restore'); },
               }, tr('batchRestore')),
               h('button', {
                 type: 'button',
                 className: 'ove-btn ove-btn-danger',
                 disabled: selectedRows.length === 0 || batchBusy,
-                onClick: () => setBatchKind('delete'),
+                onClick: () => { setBatchSort(sort); setBatchKind('delete'); },
               }, tr('batchDelete')))),
 
           rows.length > 0 && h('div', {
@@ -2352,7 +2448,7 @@ window.__ModuleLoader__.load({
           },
         },
           h('div', {
-            className: 'ove-dialog',
+            className: 'ove-dialog ove-dialog-wide',
             role: 'dialog',
             'aria-modal': 'true',
             'aria-label': batchKind === 'restore' ? tr('batchRestoreTitle') : tr('batchDeleteTitle'),
@@ -2363,6 +2459,13 @@ window.__ModuleLoader__.load({
               batchKind === 'restore'
                 ? tr('batchRestoreDesc').replace('{n}', String(selectedRows.length))
                 : tr('batchDeleteDesc').replace('{n}', String(selectedRows.length))),
+            h(ArchivePicker, {
+              rows: selectedRows,
+              sort: batchSort,
+              onSort: setBatchSort,
+              tr,
+              repeatedTitles,
+            }),
             h('div', { className: 'ove-dialog-actions' },
               h('button', {
                 type: 'button',
@@ -2377,7 +2480,7 @@ window.__ModuleLoader__.load({
                 onClick: () => { void (batchKind === 'restore' ? restoreMany() : deleteMany()); },
               }, batchBusy
                 ? (batchKind === 'restore' ? tr('batchRestoring') : tr('batchDeleting'))
-                : (batchKind === 'restore' ? tr('batchRestore') : tr('confirmDelete'))))))),
+                : (batchKind === 'restore' ? tr('batchRestore') : tr('batchDeleteConfirm'))))))),
 
       );
     }
@@ -3518,42 +3621,47 @@ window.__ModuleLoader__.load({
       const tr = typeof t === 'function' ? t : (key) => key;
       const [busy, setBusy] = React.useState(false);
       const [remaining, setRemaining] = React.useState(typeof notice.seconds === 'number' ? notice.seconds : 10);
-      const token = typeof notice.token === 'string' ? notice.token : '';
+      // A batch deletion retains one token per session; a single one retains one.
+      const tokens = noticeTokens(notice);
+      const tokenKey = tokens.join(',');
       const seconds = typeof notice.seconds === 'number' ? notice.seconds : 10;
 
       React.useEffect(() => {
-        if (token.length === 0) return undefined;
+        if (tokenKey.length === 0) return undefined;
         setRemaining(seconds);
         const tick = window.setInterval(() => {
           setRemaining(value => (value > 0 ? value - 1 : 0));
         }, 1000);
         const timer = window.setTimeout(() => {
-          void requestPurge(token);
+          for (const token of tokens) void requestPurge(token);
           dismissDeleteNotice(notice.seq);
         }, seconds * 1000);
         return () => {
           window.clearInterval(tick);
           window.clearTimeout(timer);
         };
-      }, [notice.seq, token, seconds]);
+      }, [notice.seq, tokenKey, seconds]);
 
       // A receipt without an undo (the outcome of an undo, or a failure) is a
       // plain notice and clears itself.
       React.useEffect(() => {
-        if (token.length > 0) return undefined;
+        if (tokenKey.length > 0) return undefined;
         const timer = window.setTimeout(() => dismissDeleteNotice(notice.seq), 4000);
         return () => window.clearTimeout(timer);
-      }, [notice.seq, token]);
+      }, [notice.seq, tokenKey]);
 
       const undo = async () => {
-        if (busy || token.length === 0) return;
+        if (busy || tokens.length === 0) return;
         setBusy(true);
-        const outcome = await requestRestore(ctx, token);
+        const outcomes = await Promise.all(tokens.map((token) => requestRestore(ctx, token)));
+        const failed = outcomes.find((outcome) => !outcome.ok);
         setBusy(false);
         dismissDeleteNotice(notice.seq);
         pushDeleteNotice({
-          text: outcome.ok ? tr('deleteUndone') : `${tr('deleteUndoFailed')}${outcome.error}`,
-          tone: outcome.ok ? 'success' : 'warning',
+          text: failed === undefined
+            ? tr('deleteUndone')
+            : `${tr('deleteUndoFailed')}${failed.error}`,
+          tone: failed === undefined ? 'success' : 'warning',
           token: '',
           seconds: 0,
         });
@@ -3566,9 +3674,9 @@ window.__ModuleLoader__.load({
         role: 'status',
       },
         h('span', { className: 'ove-toast-text' }, notice.text),
-        token.length > 0 && h('span', { className: 'ove-toast-count' },
+        tokenKey.length > 0 && h('span', { className: 'ove-toast-count' },
           tr('deleteUndoSeconds').replace('{n}', String(remaining))),
-        token.length > 0 && h('button', {
+        tokenKey.length > 0 && h('button', {
           type: 'button',
           className: 'ove-toast-action',
           disabled: busy,
@@ -3581,7 +3689,7 @@ window.__ModuleLoader__.load({
           // Closing the receipt means "do not undo this": the retained copy is
           // dropped now instead of waiting for the Host's sweep.
           onClick: () => {
-            if (token.length > 0) void requestPurge(token);
+            for (const token of tokens) void requestPurge(token);
             dismissDeleteNotice(notice.seq);
           },
         }, '×'));
