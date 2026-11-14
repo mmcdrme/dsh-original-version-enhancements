@@ -127,6 +127,16 @@
 .ove-check-all { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--dsw-alias-label-secondary); cursor: pointer; }
 .ove-check { width: 14px; height: 14px; margin: 0; flex: none; accent-color: #3b82f6; cursor: pointer; }
 .ove-sort { display: flex; gap: 6px; }
+/* Clear the current selection; reads as a quiet link until hovered, when it
+   turns blue like the selected sort pill. */
+.ove-clear {
+  flex: none; margin-left: 2px; padding: 3px 8px; border: 0; border-radius: 7px;
+  background: transparent; color: var(--dsw-alias-label-tertiary);
+  font: inherit; font-size: 12px; line-height: 18px; white-space: nowrap; cursor: pointer;
+  transition: background-color .12s ease, color .12s ease;
+}
+.ove-clear:hover { color: #2563eb; background: color-mix(in srgb, #3b82f6 12%, transparent); }
+.ove-clear:focus-visible { outline: 2px solid #3b82f6; outline-offset: 1px; }
 .ove-arc-card { padding-top: 6px; padding-bottom: 6px; }
 /* One row shape for groups and sessions: a fixed checkbox column so every
    level (and the select-all box) lines up, with the tree indent applied to
@@ -158,7 +168,10 @@
 .ove-arc-title { display: flex; align-items: baseline; gap: 6px; min-width: 0; font-size: 14px; line-height: 22px; color: var(--dsw-alias-label-primary); }
 .ove-arc-ws { flex: 0 1 auto; min-width: 0; font-weight: 600; color: var(--dsw-alias-label-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ove-arc-sep { flex: none; color: var(--dsw-alias-label-tertiary); }
-.ove-arc-name { flex: 1 1 auto; min-width: 0; font-weight: 400; color: var(--dsw-alias-label-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The name hugs its text instead of growing: the short id then sits directly
+   after the name (left-aligned) instead of floating at the row's right edge,
+   where the hover buttons used to drag it around. */
+.ove-arc-name { flex: 0 1 auto; min-width: 0; font-weight: 400; color: var(--dsw-alias-label-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ove-arc-sid {
   display: none; flex: none; margin-left: 2px; font-size: 12px; color: #2563eb;
   font-variant-numeric: tabular-nums;

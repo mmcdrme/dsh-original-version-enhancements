@@ -2409,6 +2409,11 @@ window.__ModuleLoader__.load({
                 'aria-pressed': sort === id,
                 onClick: () => changeSort(id),
               }, tr(`archiveSort.${id}`)))),
+            selectedRows.length > 0 && h('button', {
+              type: 'button',
+              className: 'ove-clear',
+              onClick: () => setSelected(new Set()),
+            }, tr('clearSelection')),
             h('div', { className: 'ove-actions' },
               h('button', {
                 type: 'button',
