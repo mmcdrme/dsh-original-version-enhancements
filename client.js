@@ -2174,10 +2174,47 @@ window.__ModuleLoader__.load({
      *   duplicated titles of the archive set.
      * @returns the sortable list.
      */
-    function ArchivePicker({ rows, sort, onSort, tr, repeatedTitles }) {
+    function ArchivePicker({ rows, sort, onSort, tr, repeatedTitles, selected, onToggle }) {
       const groups = buildArchiveGroups(rows, sort, tr);
-      const line = (row) => h('div', { key: row.id, className: 'ove-pick-row' },
-        sessionTitleLine(row, repeatedTitles));
+      // A `selected` set turns the same list into a checklist (the hidden-session
+      // manager reuses this look); the archive confirmation keeps it read-only.
+      const selectable = selected instanceof Set && typeof onToggle === 'function';
+      const line = (row) => {
+        const checked = selectable && selected.has(row.id);
+        return h('div', {
+          key: row.id,
+          className: `ove-pick-row${selectable ? ' is-selectable' : ''}${checked ? ' is-selected' : ''}`,
+          ...(selectable
+            ? {
+              role: 'treeitem',
+              'aria-selected': checked,
+              tabIndex: 0,
+              onClick: (event) => {
+                if (event.target instanceof Element && event.target.closest('.ove-check') !== null) return;
+                onToggle(row.id);
+              },
+              onKeyDown: (event) => {
+                if (event.target !== event.currentTarget) return;
+                if (event.key !== 'Enter' && event.key !== ' ') return;
+                event.preventDefault();
+                onToggle(row.id);
+              },
+            }
+            : {}),
+        },
+          selectable ? h('input', {
+            type: 'checkbox',
+            className: 'ove-check',
+            checked,
+            'aria-label': `${tr('selectRow')} ${row.title}`,
+            onChange: () => onToggle(row.id),
+          }) : null,
+          h('div', { className: 'ove-pick-main' },
+            sessionTitleLine(row, repeatedTitles),
+            typeof row.note === 'string' && row.note.length > 0
+              ? h('div', { className: 'ove-pick-when' }, row.note)
+              : null));
+      };
       const head = (key, label, isDay) => h('div', {
         key,
         className: `ove-pick-group${isDay ? ' ove-pick-day' : ''}`,
@@ -2231,6 +2268,22 @@ window.__ModuleLoader__.load({
       const [batchKind, setBatchKind] = React.useState(null);
       const [batchSort, setBatchSort] = React.useState(readArchiveSort);
       const [collapsed, setCollapsed] = React.useState(() => new Set());
+      // Hidden-session manager, opened from the card under the page header.
+      const [hiddenOpen, setHiddenOpen] = React.useState(false);
+      const [hiddenSelected, setHiddenSelected] = React.useState(() => new Set());
+      const [hiddenSort, setHiddenSort] = React.useState(readArchiveSort);
+      const [hiddenBusy, setHiddenBusy] = React.useState(false);
+      const [hiddenError, setHiddenError] = React.useState('');
+      // The Host keeps a loaded parent's subagent catalogue in memory, so a
+      // deleted child can stay listed until the parent is reopened. Remember
+      // what this page just removed and drop those rows immediately.
+      const [hiddenCleaned, setHiddenCleaned] = React.useState(() => new Set());
+      const deleteNotices = React.useSyncExternalStore(subscribeDeleteNotice, getDeleteNotices, getDeleteNotices);
+      React.useEffect(() => {
+        // Undoing a removal puts the session back: stop hiding the rows, the
+        // catalogue still knows them.
+        if (deleteNotices.some((notice) => notice.text === tr('deleteUndone'))) setHiddenCleaned(new Set());
+      }, [deleteNotices]);
 
       const normalized = query.trim();
 
@@ -2513,6 +2566,132 @@ window.__ModuleLoader__.load({
         return tr('archiveActiveAt').replace('{t}', timeText(row.stamp));
       };
 
+      // ------------------------------------------------------------------
+      // Hidden conversations: the sessions the client never lists. The sidebar
+      // filters subagent-origin sessions out, so they only surface through a
+      // parent's catalogue; the manager lists them with the archive page's
+      // title rule (workspace / name #id) and removes them through the same
+      // retained-deletion route, so its receipt still offers 10 seconds of undo.
+      // ------------------------------------------------------------------
+      const byId = sessions?.byId ?? {};
+      const hiddenArchived = new Set(archivedIds);
+      const hiddenOwnerOf = (id) => {
+        for (const workspace of workspaces?.items ?? []) {
+          if (Array.isArray(workspace.sessionIds) && workspace.sessionIds.includes(id)) return workspace;
+        }
+        return undefined;
+      };
+      /** The workspace of a hidden session: its nearest visible ancestor's. */
+      const hiddenWorkspaceOf = (id) => {
+        const seen = new Set();
+        let current = id;
+        while (typeof current === 'string' && current.length > 0 && !seen.has(current)) {
+          seen.add(current);
+          const owner = hiddenOwnerOf(current);
+          if (owner !== undefined) return String(owner.title || owner.path || '').trim();
+          const parent = byId[current]?.parentId;
+          current = typeof parent === 'string' ? parent : '';
+        }
+        return '';
+      };
+      // The catalogue carries the human label ("审计 Host 端逻辑缺陷") while a
+      // subagent's session title is only its fallback prompt, so the label wins;
+      // its createdAt also dates the rows the store reports with 0.
+      const hiddenCatalogue = new Map();
+      for (const projection of Object.values(sessions?.projectionsBySession ?? {})) {
+        for (const child of projection?.values?.subagentCatalog ?? []) {
+          if (typeof child?.id === 'string' && child.mode !== 'external') hiddenCatalogue.set(child.id, child);
+        }
+      }
+      const hiddenIds = new Set([
+        ...Object.keys(byId).filter((id) => byId[id]?.origin === 'subagent'),
+        ...hiddenCatalogue.keys(),
+      ]);
+      const hiddenRows = [...hiddenIds]
+        .filter((id) => !hiddenArchived.has(id) && !hiddenCleaned.has(id))
+        .map((id) => {
+          const record = byId[id] ?? {};
+          const catalog = hiddenCatalogue.get(id) ?? {};
+          const title = [catalog.label, record.displayTitle, record.title]
+            .map((value) => (typeof value === 'string' ? value.trim() : ''))
+            .find((value) => value.length > 0) ?? '';
+          const stamp = stampOf(id) || (typeof catalog.createdAt === 'number' ? catalog.createdAt : 0);
+          return {
+            id,
+            title: title.length > 0 ? title : id.replace(/^session-/u, '').slice(0, 8),
+            workspace: hiddenWorkspaceOf(id) || tr('ungrouped'),
+            short: id.replace(/^session-/u, '').slice(0, 8),
+            stamp,
+            note: stamp > 0 ? tr('archiveActiveAt').replace('{t}', timeText(stamp)) : '',
+          };
+        })
+        .sort((left, right) => (right.stamp - left.stamp)
+          || left.title.localeCompare(right.title, 'zh-Hans-CN'));
+      const hiddenTitleCount = new Map();
+      for (const row of hiddenRows) hiddenTitleCount.set(row.title, (hiddenTitleCount.get(row.title) ?? 0) + 1);
+      const repeatedHiddenTitles = new Set([...hiddenTitleCount.entries()]
+        .filter(([, count]) => count > 1)
+        .map(([title]) => title));
+      const hiddenSelectedRows = hiddenRows.filter((row) => hiddenSelected.has(row.id));
+      const allHiddenSelected = hiddenRows.length > 0 && hiddenSelectedRows.length === hiddenRows.length;
+      const toggleHiddenSelected = (id) => {
+        setHiddenSelected((current) => {
+          const next = new Set(current);
+          if (next.has(id)) next.delete(id);
+          else next.add(id);
+          return next;
+        });
+      };
+      const openHiddenManager = () => {
+        setHiddenError('');
+        setHiddenSelected(new Set());
+        setHiddenOpen(true);
+      };
+      const clearHidden = async () => {
+        const targets = hiddenRows.filter((row) => hiddenSelected.has(row.id));
+        if (targets.length === 0 || hiddenBusy) return;
+        setHiddenBusy(true);
+        setHiddenError('');
+        const tokens = [];
+        const failures = [];
+        let done = 0;
+        for (const row of targets) {
+          // Retain every removal so one receipt can hand the batch back.
+          let result = await requestDelete(ctx, { id: row.id, title: row.title }, false, true);
+          if (!result.ok && (result.code === 'lifecycle-unavailable' || result.code === 'lifecycle-error')) {
+            result = await requestDelete(ctx, { id: row.id, title: row.title }, true, true);
+          }
+          if (result.ok) {
+            done += 1;
+            if (typeof result.token === 'string' && result.token.length > 0) tokens.push(result.token);
+          } else {
+            failures.push({ id: row.id, error: result.error });
+          }
+        }
+        await refreshStores(ctx);
+        setHiddenBusy(false);
+        const removed = new Set(targets
+          .filter((row) => !failures.some((failure) => failure.id === row.id))
+          .map((row) => row.id));
+        if (removed.size > 0) {
+          setHiddenCleaned((current) => new Set([...current, ...removed]));
+        }
+        // Rows that failed keep their selection, so a retry does not start over.
+        setHiddenSelected(new Set(failures.map((failure) => failure.id)));
+        if (done > 0) {
+          const text = tr('hiddenManageDone').replace('{n}', String(done));
+          setNotice(text);
+          pushDeleteNotice({ text, tone: 'success', tokens, seconds: 10 });
+        }
+        if (failures.length > 0) {
+          setHiddenError(tr('batchPartial').replace('{ok}', String(done))
+            .replace('{fail}', String(failures.length))
+            .replace('{reason}', failures[0].error));
+        } else {
+          setHiddenOpen(false);
+        }
+      };
+
       const groupHead = (key, label, ids, depth) => {
         const state = groupState(ids);
         const folded = collapsed.has(key);
@@ -2589,9 +2768,21 @@ window.__ModuleLoader__.load({
       return h(React.Fragment, null,
         h('style', { key: 'styles', 'data-plugin-css': `${NS}-archives` }, CSS),
         h('div', { className: 'ove-page' },
-          h('div', { className: 'ove-head' },
-            h('h1', { className: 'ove-title' }, tr('archivesTitle')),
-            h('p', { className: 'ove-intro' }, tr('archivesIntro'))),
+          // The title row's right edge carries the hidden-session manager: those
+          // conversations are not archived, so they get their own entry instead
+          // of a fake archive row.
+          h('div', { className: 'ove-head ove-head-row' },
+            h('div', { className: 'ove-head-text' },
+              h('h1', { className: 'ove-title' }, tr('archivesTitle')),
+              h('p', { className: 'ove-intro' }, tr('archivesIntro'))),
+            h('div', { className: 'ove-head-actions' },
+              h('button', {
+                type: 'button',
+                className: 'ove-btn ove-head-action',
+                disabled: hiddenRows.length === 0,
+                title: tr('hiddenManageIntro').replace('{n}', String(hiddenRows.length)),
+                onClick: openHiddenManager,
+              }, `${tr('hiddenManageTitle')}（${hiddenRows.length}）`))),
 
           h('input', {
             type: 'search',
@@ -2706,6 +2897,69 @@ window.__ModuleLoader__.load({
               }, batchBusy
                 ? (batchKind === 'restore' ? tr('batchRestoring') : tr('batchDeleting'))
                 : (batchKind === 'restore' ? tr('batchRestore') : tr('batchDeleteConfirm'))))))),
+
+        // Managing the conversations the client hides: same dialog shell, same
+        // sortable grouping and title rule as the archive confirmation.
+        hiddenOpen && overlayPortal(h('div', {
+          className: 'ove-overlay ove-overlay-top',
+          onMouseDown: (event) => {
+            if (event.target === event.currentTarget && !hiddenBusy) setHiddenOpen(false);
+          },
+        },
+          h('div', {
+            className: 'ove-dialog ove-dialog-wide',
+            role: 'dialog',
+            'aria-modal': 'true',
+            'aria-label': tr('hiddenManageTitle'),
+          },
+            h('h2', { className: 'ove-dialog-title' }, tr('hiddenManageTitle')),
+            h('p', { className: 'ove-dialog-desc' },
+              tr('hiddenManageDesc').replace('{n}', String(hiddenRows.length))),
+            hiddenError && h('p', { className: 'ove-error', role: 'alert' }, hiddenError),
+            h('div', { className: 'ove-toolbar' },
+              h('label', { className: 'ove-check-all' },
+                h('input', {
+                  type: 'checkbox',
+                  className: 'ove-check',
+                  checked: allHiddenSelected,
+                  ref: (el) => {
+                    if (el !== null) el.indeterminate = !allHiddenSelected && hiddenSelectedRows.length > 0;
+                  },
+                  onChange: () => setHiddenSelected(allHiddenSelected ? new Set() : new Set(hiddenRows.map((row) => row.id))),
+                }),
+                h('span', null, tr('selectAll'))),
+              h('span', { className: 'ove-muted' },
+                tr('selectedCount').replace('{n}', String(hiddenSelectedRows.length))),
+              hiddenSelectedRows.length > 0 && h('button', {
+                type: 'button',
+                className: 'ove-clear',
+                onClick: () => setHiddenSelected(new Set()),
+              }, tr('clearSelection'))),
+            hiddenRows.length === 0
+              ? h('p', { className: 'ove-muted' }, tr('hiddenManageEmpty'))
+              : h(ArchivePicker, {
+                rows: hiddenRows,
+                sort: hiddenSort,
+                onSort: setHiddenSort,
+                tr,
+                repeatedTitles: repeatedHiddenTitles,
+                selected: hiddenSelected,
+                onToggle: toggleHiddenSelected,
+              }),
+            h('div', { className: 'ove-dialog-actions' },
+              h('button', {
+                type: 'button',
+                className: 'ove-btn',
+                disabled: hiddenBusy,
+                onClick: () => setHiddenOpen(false),
+              }, tr('close')),
+              h('button', {
+                type: 'button',
+                className: 'ove-btn ove-btn-danger',
+                disabled: hiddenBusy || hiddenSelectedRows.length === 0,
+                onClick: () => { void clearHidden(); },
+              }, hiddenBusy ? tr('hiddenManageClearing') : tr('hiddenManageClear'))))
+        )),
 
       );
     }

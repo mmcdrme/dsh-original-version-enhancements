@@ -373,6 +373,17 @@
 .ove-pick-row .ove-arc-title { flex: 1 1 auto; min-width: 0; font-size: 13px; line-height: 20px; }
 .ove-pick-row:hover { background: color-mix(in srgb, var(--dsw-alias-label-primary) 6%, transparent); }
 .ove-pick-row:hover .ove-arc-sid { display: inline; }
+/* The archive page keeps its title and intro on the left and puts the
+   hidden-session manager against the title row's right edge. */
+.ove-head-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.ove-head-text { flex: 1 1 auto; min-width: 0; display: grid; gap: 6px; }
+.ove-head-row .ove-head-actions { flex: none; padding-top: 2px; }
+/* The picked-session list as a checklist: the checkbox joins the title line. */
+.ove-pick-main { flex: 1 1 auto; min-width: 0; display: grid; gap: 1px; }
+.ove-pick-row.is-selectable { padding-left: 6px; cursor: pointer; }
+.ove-pick-row.is-selectable.is-selected { background: color-mix(in srgb, #3b82f6 12%, transparent); }
+.ove-pick-when { font-size: 11px; line-height: 16px; color: var(--dsw-alias-label-tertiary); }
+.ove-dialog .ove-toolbar { margin: 0; padding: 0; }
 .ove-dialog-target {
   margin: 0;
   padding: 8px 10px;
