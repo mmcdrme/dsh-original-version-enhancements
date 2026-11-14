@@ -2013,6 +2013,8 @@ window.__ModuleLoader__.load({
                     onClick: () => setWindow({ mute: !appearance.mute }),
                   }, h('span', { className: 'ove-switch-thumb' })))),
 
+          h(SubagentTreeSettingsSection, { t: tr }),
+
           h('p', { className: 'ove-hint' }, tr('pageHint')),
           h('p', { className: 'ove-footnote' }, tr('footnote'))),
         dialog,
@@ -3162,18 +3164,21 @@ window.__ModuleLoader__.load({
     const SUBAGENT_TREE_CSS = `
 /* The expander sits at the row's own left edge: a caret plus the direct
    subagent count, before the status dot and the title. */
+/* Out of flow on purpose: the arrow sits in the row's left gutter, so every
+   conversation title stays at the same x whether or not it has subagents. */
 .ove-sub-toggle {
-  flex: none; display: inline-flex; align-items: center; justify-content: center; gap: 2px;
-  min-width: 20px; height: 20px; margin: 0 2px 0 0; padding: 0 3px;
-  border: 0; border-radius: 6px; background: transparent;
+  position: absolute; left: -6px; top: 50%; transform: translateY(-50%);
+  display: inline-flex; align-items: center; justify-content: center; gap: 1px;
+  min-width: 16px; height: 18px; margin: 0; padding: 0 1px;
+  border: 0; border-radius: 5px; background: transparent;
   color: var(--dsw-alias-label-tertiary);
-  font: inherit; font-size: 11px; line-height: 20px; font-variant-numeric: tabular-nums;
+  font: inherit; font-size: 10px; line-height: 18px; font-variant-numeric: tabular-nums;
   cursor: pointer; transition: background-color .12s ease, color .12s ease;
 }
 .ove-sub-toggle:hover { background: color-mix(in srgb, var(--dsw-alias-label-primary) 9%, transparent); color: var(--dsw-alias-label-secondary); }
 .ove-sub-toggle:focus-visible { outline: 2px solid #3b82f6; outline-offset: -1px; }
 .ove-sub-host { display: block; }
-.ove-sub-toggle-count { flex: none; font-size: 10.5px; line-height: 20px; opacity: .9; }
+.ove-sub-toggle-count { flex: none; font-size: 10px; line-height: 18px; opacity: .9; }
 .ove-sub-caret {
   flex: none; width: 0; height: 0;
   border-left: 4px solid currentColor;
@@ -3419,7 +3424,11 @@ window.__ModuleLoader__.load({
             event.stopPropagation();
             toggle(parentId);
           });
-          row.prepend(button);
+          // The stock row is static; absolute positioning needs it as the
+          // containing block. It is restored when the toggle goes away.
+          row.style.position = 'relative';
+          row.dataset.oveSubagentHost = 'true';
+          row.append(button);
           toggles.set(parentId, button);
         }
         if (button.dataset.signature === signature) return;
@@ -3546,6 +3555,11 @@ window.__ModuleLoader__.load({
           // drop ours when the row is gone or re-rendered, then re-add below.
           for (const [id, button] of [...toggles]) {
             if (!wanted.has(id) || !button.isConnected) {
+              const hostRow = button.parentElement;
+              if (hostRow !== null) {
+                hostRow.style.position = '';
+                delete hostRow.dataset.oveSubagentHost;
+              }
               button.remove();
               toggles.delete(id);
             }
@@ -3616,8 +3630,21 @@ window.__ModuleLoader__.load({
         try { unsubscribe?.(); } catch { /* the store is already gone */ }
         try { unsubscribeSettings?.(); } catch { /* already gone */ }
         try { observer?.disconnect(); } catch { /* already detached */ }
-        for (const button of toggles.values()) button.remove();
+        for (const button of toggles.values()) {
+          const hostRow = button.parentElement;
+          if (hostRow !== null) {
+            hostRow.style.position = '';
+            delete hostRow.dataset.oveSubagentHost;
+          }
+          button.remove();
+        }
         toggles.clear();
+        // A row whose toggle React re-rendered away keeps the marker only until
+        // the next paint; reset anything still flagged on dispose.
+        for (const row of document.querySelectorAll('[data-ove-subagent-host]')) {
+          row.style.position = '';
+          delete row.dataset.oveSubagentHost;
+        }
         for (const host of hosts.values()) host.remove();
         hosts.clear();
       };
@@ -3642,12 +3669,12 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * The "子智能体" settings page: one switch pair for the sidebar tree, plus
-     * a way to forget which conversations were expanded.
+     * The "子智能体" block of the plugin page: two switches for the sidebar tree
+     * and a way to forget which conversations were expanded.
      * @param props - injected translator.
-     * @returns the page.
+     * @returns the group rendered inside the plugin page.
      */
-    function SubagentTreeSettingsPage({ t }) {
+    function SubagentTreeSettingsSection({ t }) {
       const tr = typeof t === 'function' ? t : (key) => key;
       const settings = useSubagentTreeSettings();
       const [cleared, setCleared] = React.useState(false);
@@ -3675,31 +3702,24 @@ window.__ModuleLoader__.load({
           onClick: onToggle,
         }, h('span', { className: 'ove-switch-thumb' })));
 
-      return h(React.Fragment, null,
-        h('style', { key: 'styles', 'data-plugin-css': `${NS}-subagent-tree-page` }, CSS),
-        h('div', { className: 'ove-page' },
-          h('div', { className: 'ove-head' },
-            h('h1', { className: 'ove-title' }, tr('subagentTree.settingsTitle')),
-            h('p', { className: 'ove-intro' }, tr('subagentTree.settingsIntro'))),
-
-          h('div', { className: 'ove-card' },
-            row('enable', settings.enabled, () => setSubagentTreeSetting('enabled', settings.enabled !== true)),
-            row('showCount', settings.showCount, () => setSubagentTreeSetting('showCount', settings.showCount !== true), settings.enabled !== true)),
-
-          h('div', { className: 'ove-card' },
-            h('div', { className: 'ove-row' },
-              h('div', { className: 'ove-row-text' },
-                h('div', { className: 'ove-row-title' }, tr('subagentTree.clearTitle')),
-                h('div', { className: 'ove-row-desc' }, tr('subagentTree.clearDesc'))),
-              h('button', {
-                type: 'button',
-                className: 'ove-btn',
-                onClick: clearExpanded,
-              }, tr('subagentTree.clearButton'))),
-            cleared ? h('p', { className: 'ove-muted ove-pad-left' }, tr('subagentTree.cleared')) : null),
-
-          h('p', { className: 'ove-footnote' }, tr('subagentTree.settingsNote'))),
-      );
+      return h('div', { className: 'ove-group' },
+        h('h2', { className: 'ove-group-title' }, tr('subagentTree.settingsTitle')),
+        h('p', { className: 'ove-group-desc' }, tr('subagentTree.settingsIntro')),
+        h('div', { className: 'ove-card' },
+          row('enable', settings.enabled, () => setSubagentTreeSetting('enabled', settings.enabled !== true)),
+          row('showCount', settings.showCount, () => setSubagentTreeSetting('showCount', settings.showCount !== true), settings.enabled !== true)),
+        h('div', { className: 'ove-card' },
+          h('div', { className: 'ove-row' },
+            h('div', { className: 'ove-row-text' },
+              h('div', { className: 'ove-row-title' }, tr('subagentTree.clearTitle')),
+              h('div', { className: 'ove-row-desc' }, tr('subagentTree.clearDesc'))),
+            h('button', {
+              type: 'button',
+              className: 'ove-btn',
+              onClick: clearExpanded,
+            }, tr('subagentTree.clearButton'))),
+          cleared ? h('p', { className: 'ove-muted ove-pad-left' }, tr('subagentTree.cleared')) : null),
+        h('p', { className: 'ove-footnote' }, tr('subagentTree.settingsNote')));
     }
 
     function DetachedSessionsBridge({ ctx, t }) {
@@ -7639,16 +7659,6 @@ window.__ModuleLoader__.load({
           label: () => text('pageTitle'),
           inject: () => ({ t: translator }),
         }, PluginPage)), 'original-version-enhancements: plugin page');
-
-        // The sidebar subagent tree has its own settings page: it is a viewing
-        // feature of the stock sidebar rather than a switch inside the plugin page.
-        ctx.effect(() => ctx.slots.inject('settings.section', () => ctx.slots.register({
-          name: 'settings.section',
-          id: 'original-version-enhancements-subagent-tree',
-          order: 23,
-          label: () => text('subagentTree.settingsTitle'),
-          inject: () => ({ t: translator }),
-        }, SubagentTreeSettingsPage)), 'original-version-enhancements: subagent tree page');
 
         // The archive page, the session menu row, and the dialog exist only
         // while the chat-manager switch is on; toggling disposes them live.
