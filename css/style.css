@@ -715,6 +715,9 @@
 .ove-primary:active:not(:disabled) { transform: translateY(1px); box-shadow: none; }
 .ove-primary:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 2px; }
 .ove-primary:disabled { opacity: .5; cursor: default; }
+.ove-bind-scope { display: grid; gap: 4px; margin: 2px 0 6px; }
+.ove-bind-scope .ove-size-group { justify-content: flex-start; }
+.ove-bind-scope-tip { margin: 0; font-size: 11px; line-height: 16px; color: var(--dsw-alias-label-tertiary); }
 .ove-session-pick { max-height: 260px; overflow: auto; display: grid; gap: 2px; padding: 4px; border-radius: 10px; background: var(--dsw-alias-bg-base); }
 .ove-session-option { display: flex; align-items: center; gap: 10px; padding: 7px 8px; border-radius: 8px; font-size: 13px; line-height: 20px; cursor: pointer; transition: background .12s ease; }
 .ove-session-option:hover { background: var(--dsw-alias-bg-layer-1); }

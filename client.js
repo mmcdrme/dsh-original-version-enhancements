@@ -21,7 +21,6 @@ window.__ModuleLoader__.load({
     const RESTORE_ROUTE = `${ROUTE_ROOT}/sessions/restore`;
     const PURGE_ROUTE = `${ROUTE_ROOT}/sessions/purge`;
     const TRANSFER_ROUTE = `${ROUTE_ROOT}/sessions/transfer`;
-    const RENAME_ROUTE = `${ROUTE_ROOT}/sessions/rename`;
     /** The four accepted work-details modes, in the same order as Settings. */
     const MODES = ['compact', 'standard', 'detailed', 'verbose'];
     /** Saved values from older generations of the same Host setting. */
@@ -34,7 +33,7 @@ window.__ModuleLoader__.load({
     /* ------------------------------------------------------------------ */
 
     const FLAGS_KEY = 'original-version-enhancements.flags.v1';
-    const DEFAULT_FLAGS = { stepSwitcher: true, chatManager: true, automation: true, recall: true, detached: true };
+    const DEFAULT_FLAGS = { stepSwitcher: true, chatManager: true, automation: true, recall: true, detached: true, bindScopes: false };
     const flagListeners = new Set();
 
     const readFlags = () => {
@@ -47,6 +46,9 @@ window.__ModuleLoader__.load({
           automation: flags.automation !== false,
           recall: flags.recall !== false,
           detached: flags.detached !== false,
+          // Experimental, and off on purpose: the bind picker only gains its
+          // scope selector when the human turns this on.
+          bindScopes: flags.bindScopes === true,
         };
       } catch {
         return { ...DEFAULT_FLAGS };
@@ -1037,10 +1039,16 @@ window.__ModuleLoader__.load({
       // always present and the Host resolves either spelling.
       const idOf = (item) => String(item?.workspaceId ?? item?.id ?? item?.path ?? '');
       const sessionId = target?.id;
-      const owner = items.find((item) => Array.isArray(item.sessionIds) && item.sessionIds.includes(sessionId));
+      // A subagent session is not filed under any workspace, so its own id never
+      // matches an item; the parent's id is what names the "current workspace".
+      const lookup = Array.isArray(target?.lookupSessionIds) && target.lookupSessionIds.length > 0
+        ? target.lookupSessionIds.filter((id) => typeof id === 'string' && id.length > 0)
+        : [sessionId];
+      const owner = items.find((item) => Array.isArray(item.sessionIds)
+        && lookup.some((id) => item.sessionIds.includes(id)));
       const ownerId = idOf(owner);
       const targets = items
-        .filter((item) => idOf(item) !== ownerId)
+        .filter((item) => target?.allowOrigin === true || idOf(item) !== ownerId)
         .map((item) => ({
           id: idOf(item),
           title: String(item.title || item.path || item.directory || idOf(item)),
@@ -1058,7 +1066,13 @@ window.__ModuleLoader__.load({
       };
     };
 
-    /** Open the workspace chooser for one session. */
+    /**
+     * Open the workspace chooser for one session.
+     * @param target - `{id, title}` plus optional `allowOrigin`/`lookupSessionIds`
+     *   hints (a subagent copy uses the parent's workspace as the current one
+     *   while still offering it as a target).
+     * @param mode - `move` or `copy`.
+     */
     const openTransfer = (target, mode) => {
       publishTransfer({ target, mode, picks: [], busy: false, error: '', done: '' });
     };
@@ -1886,6 +1900,19 @@ window.__ModuleLoader__.load({
                   'aria-checked': flags.detached,
                   'aria-label': tr('switch.detached'),
                   onClick: () => toggle('detached'),
+                }, h('span', { className: 'ove-switch-thumb' }))),
+
+              h('div', { className: 'ove-row' },
+                h('div', { className: 'ove-row-text' },
+                  h('div', { className: 'ove-row-title' }, tr('switch.bindScopes')),
+                  h('div', { className: 'ove-row-desc' }, tr('switch.bindScopes.desc'))),
+                h('button', {
+                  type: 'button',
+                  className: 'ove-switch',
+                  role: 'switch',
+                  'aria-checked': flags.bindScopes,
+                  'aria-label': tr('switch.bindScopes'),
+                  onClick: () => toggle('bindScopes'),
                 }, h('span', { className: 'ove-switch-thumb' }))))),
 
           !flags.recall
@@ -3201,15 +3228,52 @@ window.__ModuleLoader__.load({
 .ove-sub-row:focus-visible { outline: 2px solid #3b82f6; outline-offset: -2px; }
 .ove-sub-caret-btn {
   flex: none; display: inline-flex; align-items: center; justify-content: center;
-  width: 12px; height: 16px; padding: 0; border: 0; background: transparent;
+  width: 10px; height: 16px; padding: 0; border: 0; background: transparent;
   color: var(--dsw-alias-label-tertiary); cursor: pointer;
 }
-.ove-sub-spacer { flex: none; width: 12px; }
-.ove-sub-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: color-mix(in srgb, var(--dsw-alias-label-primary) 28%, transparent); }
-.ove-sub-dot.is-running { background: #22c55e; animation: ove-sub-pulse 1.3s ease-in-out infinite; }
-@keyframes ove-sub-pulse { 50% { opacity: .35; } }
+.ove-sub-spacer { flex: none; width: 10px; }
+/* The lead cluster: caret or spacer, then the shipped status marker. The slot
+   width is fixed so every title starts in the same column. */
+.ove-sub-statusslot {
+  flex: none; display: inline-flex; align-items: center; justify-content: center;
+  width: 10px; height: 10px;
+}
+/* Shipped StateDot look: a dot whose colour follows the Session state. */
+.ove-sub-state { position: relative; display: inline-block; flex: none; width: 10px; height: 10px; }
+.ove-sub-state::after {
+  content: ""; position: absolute; inset: 20%; border-radius: 50%;
+  corner-shape: round; background: currentColor;
+}
+.ove-sub-state[data-state="done"] { color: var(--dsw-alias-state-success-primary); }
+.ove-sub-state[data-state="warning"] { color: var(--dsw-alias-state-warn-primary); }
+.ove-sub-state[data-state="error"] { color: var(--dsw-alias-state-error-primary); }
+.ove-sub-state[data-state="idle"] { color: var(--dsw-alias-state-idle-primary); }
+/* Shipped ongoing look: a small rotating arc instead of a static dot. */
+.ove-sub-spinner { flex: none; color: var(--dsw-alias-label-tertiary); }
+.ove-sub-spinner-motion { transform-origin: center; animation: ove-sub-spin .75s linear infinite; }
+.ove-sub-spinner-track, .ove-sub-spinner-arc {
+  fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round;
+}
+.ove-sub-spinner-track { opacity: .25; }
+.ove-sub-spinner-arc { stroke-dasharray: 12 150; animation: ove-sub-dash 1.5s ease-in-out infinite; }
+@keyframes ove-sub-spin { to { transform: rotate(360deg); } }
+@keyframes ove-sub-dash {
+  0% { stroke-dasharray: 1 150; stroke-dashoffset: 0; }
+  50% { stroke-dasharray: 90 150; stroke-dashoffset: -35; }
+  100% { stroke-dasharray: 90 150; stroke-dashoffset: -124; }
+}
 .ove-sub-title {
   flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* The shipped row's trailing slot: update time, or the pending label. */
+.ove-sub-time {
+  flex: none; margin-left: auto; padding-left: 6px;
+  font-size: 11px; line-height: 18px; color: var(--dsw-alias-label-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+.ove-sub-sr {
+  position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
 }
 /* Sibling rows that would read identically carry the catalogue's unique name. */
 .ove-sub-suffix {
@@ -3225,54 +3289,11 @@ window.__ModuleLoader__.load({
     /**
      * Menu category owned by the injected subagent rows. The shipped overlay
      * renders it with the same positioning, keyboard navigation and dismissal
-     * as the real session menu; a category of its own keeps the rows to the
-     * four actions a child conversation actually needs (the stock `session`
-     * menu would also offer pin, fork and archive there).
+     * as the real session menu; the rows inside are the same shipped menu-row
+     * components the ordinary session menu uses, so the copy action reads green
+     * there exactly as it does on a normal conversation.
      */
     const SUBAGENT_MENU_TARGET = 'ove-subagent';
-
-    /**
-     * Titles the human set through the subagent menu. A child's catalogue
-     * label comes from its immutable descriptor event, so renaming only
-     * changes the Session title; remembering the new name here keeps the
-     * injected row in step with the conversation header, across reloads too.
-     */
-    const SUBAGENT_TITLE_KEY = 'original-version-enhancements.subagent-tree.titles.v1';
-    const readSubagentTitleOverrides = () => {
-      try {
-        const raw = JSON.parse(globalThis.localStorage?.getItem(SUBAGENT_TITLE_KEY) ?? '{}');
-        if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return new Map();
-        return new Map(Object.entries(raw).filter(([, title]) => typeof title === 'string' && title.length > 0));
-      } catch {
-        return new Map();
-      }
-    };
-    const subagentTitleOverrides = readSubagentTitleOverrides();
-    const saveSubagentTitleOverrides = () => {
-      try {
-        globalThis.localStorage?.setItem(SUBAGENT_TITLE_KEY, JSON.stringify(Object.fromEntries(subagentTitleOverrides)));
-      } catch { /* a blocked storage only loses the remembered rename */ }
-    };
-
-    /** Repaint every installed tree after a remembered title changes. */
-    const repaintSubagentTrees = () => {
-      for (const repaint of subagentTreeRepainters) {
-        try { repaint(); } catch { /* a disposed tree cannot repaint */ }
-      }
-    };
-
-    /** Pending rename request behind the subagent menu dialog. */
-    let subagentRenameState = { target: null, busy: false, error: '' };
-    const subagentRenameListeners = new Set();
-    const publishSubagentRename = (patch) => {
-      subagentRenameState = { ...subagentRenameState, ...patch };
-      for (const listener of subagentRenameListeners) listener();
-    };
-    const subscribeSubagentRename = (listener) => {
-      subagentRenameListeners.add(listener);
-      return () => { subagentRenameListeners.delete(listener); };
-    };
-    const getSubagentRename = () => subagentRenameState;
 
     /**
      * Read an optional Client service. The context proxy only exposes services
@@ -3296,13 +3317,14 @@ window.__ModuleLoader__.load({
      * @param sessionId - the child Session the row shows.
      * @param displayTitle - the title the menu target carries.
      * @param point - viewport position of the gesture.
+     * @param parentId - the direct parent, used to resolve the current workspace.
      * @returns whether the menu was opened.
      */
-    const openSubagentMenu = (ctx, sessionId, displayTitle, point) => {
+    const openSubagentMenu = (ctx, sessionId, displayTitle, point, parentId) => {
       const open = optionalService(ctx, 'contextMenus')?.open;
       if (typeof open !== 'function') return false;
       try {
-        open({ kind: SUBAGENT_MENU_TARGET, value: { sessionId, displayTitle } }, point);
+        open({ kind: SUBAGENT_MENU_TARGET, value: { sessionId, displayTitle, parentId } }, point);
         return true;
       } catch {
         return false;
@@ -3337,273 +3359,97 @@ window.__ModuleLoader__.load({
     };
 
     /**
-     * Ask the Host to write one user title for a subagent conversation. The
-     * route appends the same `session/title` event the shipped rename writes,
-     * through the official title service or persistence handle.
-     * @param sessionId - the Session to rename.
-     * @param title - the draft title.
-     * @returns `{ok, title}` or `{ok:false, error, code}`.
+     * The shipped menu row that copies one Session id. The icon is the shipped
+     * copy glyph, so the row looks exactly like its ordinary-session twin.
+     * @param props - translator and the select handler.
+     * @returns the menu row.
      */
-    const requestHostRename = async (sessionId, title) => {
-      try {
-        const response = await fetch(RENAME_ROUTE, {
-          method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-            'x-dsh-session-rename-confirmation': 'rename-session',
-          },
-          body: JSON.stringify({ sessionId, title }),
-        });
-        const body = await readJson(response);
-        if (!response.ok || body?.ok !== true) {
-          const problem = body?.error ?? {};
-          return {
-            ok: false,
-            error: problem.message || describeHttpStatus(response.status),
-            code: typeof problem.code === 'string' ? problem.code : '',
-          };
-        }
-        const accepted = body.value?.title;
-        return { ok: true, title: typeof accepted === 'string' && accepted.length > 0 ? accepted : title };
-      } catch (error) {
-        return { ok: false, error: describeRequestFailure(error), code: '' };
+    function SubagentCopyIdMenuItem({ t, onSelect }) {
+      const label = t('subagentMenu.copyId');
+      if (uiPrimitives?.MenuItemButton) {
+        const Icon = uiPrimitives.IconCopyOutlineRegular;
+        return h(uiPrimitives.MenuItemButton, {
+          icon: Icon ? h(Icon, {}) : undefined,
+          onSelect,
+        }, label);
       }
-    };
-
-    /**
-     * Rename one subagent Session. The shipped hop mirrors the stock workspace
-     * menu (`sessions.using(...).rename`), which the Host refuses for a
-     * subagent-routed child; the Host route then writes the same user title
-     * event through the official Session services, so the rename still lands.
-     * @param ctx - the Client plugin context.
-     * @param sessionId - the Session to rename.
-     * @param title - the draft title.
-     * @returns `{ok, title}` or `{ok:false, error}`.
-     */
-    const renameSubagentSession = async (ctx, sessionId, title) => {
-      if (typeof ctx?.sessions?.using === 'function') {
-        try {
-          const result = await ctx.sessions.using(sessionId, { source: 'workspaceOperation' },
-            (reference) => reference.binding.session.rename(title));
-          if (result?.ok === true) {
-            const accepted = typeof result.value?.title === 'string' && result.value.title.length > 0
-              ? result.value.title
-              : title;
-            return { ok: true, title: accepted };
-          }
-        } catch { /* subagent routing refuses the ordinary hop; the Host route handles it */ }
-      }
-      return await requestHostRename(sessionId, title);
-    };
-
-    /**
-     * Rename dialog for one subagent conversation. It reuses the shipped Modal
-     * and Button so it reads like the stock session-rename dialog; the fallback
-     * markup keeps the action available in compositions without those
-     * primitives.
-     * @param props - injected translator and the plugin context.
-     * @returns the dialog, or nothing while no rename is pending.
-     */
-    function SubagentRenameDialog({ t, ctx }) {
-      const tr = typeof t === 'function' ? t : (key) => key;
-      const state = React.useSyncExternalStore(subscribeSubagentRename, getSubagentRename, getSubagentRename);
-      const target = state.target;
-      const targetId = typeof target?.sessionId === 'string' ? target.sessionId : '';
-      const [draft, setDraft] = React.useState('');
-      const [error, setError] = React.useState('');
-      const composingRef = React.useRef(false);
-
-      React.useEffect(() => {
-        if (targetId.length === 0) return;
-        setDraft(typeof target?.title === 'string' ? target.title : '');
-        setError('');
-      }, [targetId]);
-
-      React.useEffect(() => {
-        if (target === null || target === undefined) return undefined;
-        const onKey = (event) => {
-          if (event.key === 'Escape' && subagentRenameState.busy !== true) {
-            publishSubagentRename({ target: null, busy: false, error: '' });
-          }
-        };
-        window.addEventListener('keydown', onKey);
-        return () => window.removeEventListener('keydown', onKey);
-      }, [target]);
-
-      if (target === null || target === undefined) return null;
-
-      const busy = state.busy === true;
-      const trimmed = draft.trim();
-      const blocked = busy || trimmed.length === 0;
-      const close = () => {
-        if (subagentRenameState.busy === true) return;
-        publishSubagentRename({ target: null, busy: false, error: '' });
-      };
-      const confirm = async () => {
-        if (blocked || subagentRenameState.busy === true) return;
-        publishSubagentRename({ busy: true, error: '' });
-        const result = await renameSubagentSession(ctx, targetId, trimmed);
-        if (result.ok) {
-          subagentTitleOverrides.set(targetId, result.title);
-          saveSubagentTitleOverrides();
-          repaintSubagentTrees();
-          // The Host wrote a title event; ask for a fresh list baseline so the
-          // conversation metadata agrees with the row on the next reload too.
-          try { void ctx?.sessions?.refresh?.(); } catch { /* the next push still lands */ }
-          publishSubagentRename({ target: null, busy: false, error: '' });
-        } else {
-          publishSubagentRename({ busy: false, error: result.error || tr('subagentMenu.renameFailed') });
-        }
-      };
-
-      const field = h('input', {
-        className: 'ove-input',
-        style: { width: '100%', boxSizing: 'border-box' },
-        value: draft,
-        'aria-label': tr('subagentMenu.renameField'),
-        'data-modal-autofocus': true,
-        disabled: busy,
-        onFocus: (event) => { event.target.select?.(); },
-        onChange: (event) => { setDraft(event.target.value); setError(''); },
-        onCompositionStart: () => { composingRef.current = true; },
-        onCompositionEnd: () => { composingRef.current = false; },
-        onKeyDown: (event) => {
-          // Enter that commits an IME composition must not submit.
-          if (event.key === 'Enter' && composingRef.current !== true) {
-            event.preventDefault();
-            void confirm();
-          }
-        },
-      });
-
-      // The primitives are memo/forwardRef components, not plain functions.
-      const Modal = uiPrimitives?.Modal;
-      const Button = uiPrimitives?.Button;
-      if (Modal !== undefined && Modal !== null && Button !== undefined && Button !== null) {
-        return h(Modal, {
-          open: true,
-          onClose: close,
-          closeLabel: tr('subagentMenu.close'),
-          title: tr('subagentMenu.renameTitle'),
-          footer: h(React.Fragment, null,
-            h(Button, {
-              variant: 'outline',
-              disabled: busy,
-              onClick: close,
-            }, tr('cancel')),
-            h(Button, {
-              variant: 'primary',
-              disabled: blocked,
-              onClick: () => { void confirm(); },
-            }, busy ? tr('subagentMenu.renaming') : tr('subagentMenu.confirmRename'))),
-        },
-        field,
-        error.length > 0 && h('div', { role: 'alert', style: { color: '#dc2626', fontSize: '12px', lineHeight: '18px', marginTop: '6px' } }, error));
-      }
-
-      const dialog = h('div', {
-        className: 'ove-dialog',
-        role: 'dialog',
-        'aria-modal': 'true',
-        'aria-label': tr('subagentMenu.renameTitle'),
-      },
-        h('h2', { className: 'ove-dialog-title' }, tr('subagentMenu.renameTitle')),
-        h('p', { className: 'ove-dialog-desc' }, tr('subagentMenu.renameDesc')),
-        field,
-        error.length > 0 && h('p', { className: 'ove-error', role: 'alert' }, error),
-        h('div', { className: 'ove-dialog-actions' },
-          h('button', { type: 'button', className: 'ove-btn', disabled: busy, onClick: close }, tr('cancel')),
-          h('button', {
-            type: 'button',
-            className: 'ove-btn',
-            disabled: blocked,
-            onClick: () => { void confirm(); },
-          }, busy ? tr('subagentMenu.renaming') : tr('subagentMenu.confirmRename'))));
-
-      return overlayPortal(h(React.Fragment, null,
-        // The menu can open on a page with no other surface of this plugin, so
-        // the fallback dialog ships its own stylesheet.
-        h('style', { key: 'styles', 'data-plugin-css': `${NS}-subagent-rename` }, CSS),
-        h('div', {
-          className: 'ove-overlay ove-overlay-top',
-          onMouseDown: (event) => { if (event.target === event.currentTarget) close(); },
-        }, dialog)));
+      return h('button', {
+        type: 'button',
+        role: 'menuitem',
+        className: 'ove-menu-item',
+        onClick: onSelect,
+      }, h(TransferIcon, { mode: 'copy' }), h('span', null, label));
     }
 
     /**
-     * Contribute the four subagent-menu rows to the shipped context menu. The
-     * target category is ours, so they only appear for an injected subagent
-     * row; rename and copy-id run the shipped Session actions, while the
-     * transfer and delete rows reuse this plugin's own undoable flows.
+     * Rows of the subagent menu. Both rows reuse the shipped primitives: the
+     * copy-id row its own icon button, and "复制到工作区" the very component the
+     * ordinary session menu contributes (green label, copy glyph), pointed at
+     * the child Session and allowing the parent's workspace as a target.
+     * @param props - captured target, menu dismissal, translator, plugin context.
+     * @returns the menu rows.
+     */
+    function SubagentMenuRows({ target, dismiss, t, ctx }) {
+      const tr = typeof t === 'function' ? t : (key) => key;
+      const value = target?.value ?? {};
+      const sessionId = typeof value.sessionId === 'string' ? value.sessionId : '';
+      const displayTitle = typeof value.displayTitle === 'string' && value.displayTitle.length > 0
+        ? value.displayTitle
+        : sessionId;
+      const parentId = typeof value.parentId === 'string' ? value.parentId : '';
+      // The shipped menu hands component rows the same `[open, setOpen]` pair
+      // the ordinary session menu gives its own contributions.
+      const menuState = React.useMemo(() => [true, (open) => { if (!open) dismiss(); }], [dismiss]);
+      const useMenuOpenState = React.useCallback(() => menuState, [menuState]);
+      const copyId = () => {
+        menuState[1](false);
+        void copySubagentSessionId(ctx, sessionId, tr);
+      };
+      return h(React.Fragment, null,
+        h(SubagentCopyIdMenuItem, { t: tr, onSelect: copyId }),
+        h(SessionTransferMenuItem, {
+          sessionId,
+          displayTitle,
+          useMenuOpenState,
+          t: tr,
+          ctx,
+          mode: 'copy',
+          // A child has no workspace row of its own: the parent's workspace is
+          // the "current workspace", and it stays pickable so the copy can land
+          // beside its parent.
+          allowOrigin: true,
+          lookupSessionIds: parentId.length > 0 ? [sessionId, parentId] : [sessionId],
+        }));
+    }
+
+    /**
+     * The shipped overlay asks this keyed seat for the rows of the subagent
+     * target; every other target renders nothing here.
+     * @param props - captured target, dismissal, translator, plugin context.
+     * @returns the rows, or nothing for a different target kind.
+     */
+    function SubagentMenuContent({ target, dismiss, t, ctx }) {
+      return target?.kind === SUBAGENT_MENU_TARGET
+        ? h(SubagentMenuRows, { target, dismiss, t, ctx })
+        : null;
+    }
+
+    /**
+     * Register the subagent menu rows on the shipped context-menu overlay. The
+     * seat is keyed by our own target category, so the ordinary session menu is
+     * untouched.
      * @param ctx - the Client plugin context.
      * @param text - translator.
      */
     const registerSubagentMenus = (ctx, text) => {
-      if (typeof ctx?.inject !== 'function') return;
-      // `contextMenus` is provided by the menu plugin; a plugin only sees the
-      // services it injected, so wait for it instead of reading ctx.contextMenus.
+      if (typeof ctx?.inject !== 'function' || typeof ctx.slots?.inject !== 'function') return;
       ctx.inject(['contextMenus'], (scope) => {
-        const register = (id, order, resolve) => scope.effect(() => scope.contextMenus.register({
-          id: `original-version-enhancements.subagent.${id}`,
-          target: SUBAGENT_MENU_TARGET,
-          order,
-          resolve,
-        }), `original-version-enhancements: subagent menu ${id}`);
-
-        register('rename', 200, (target) => [{
-          id: 'rename',
-          label: text('subagentMenu.rename'),
-          icon: { key: 'workspace.rename' },
-          run: () => {
-            publishSubagentRename({
-              target: { sessionId: target.sessionId, title: target.displayTitle },
-              busy: false,
-              error: '',
-            });
-          },
-        }]);
-        register('copy-id', 450, (target) => [{
-          id: 'copy-id',
-          label: text('subagentMenu.copyId'),
-          icon: { key: 'workspace.copy' },
-          separatorBefore: true,
-          run: () => { void copySubagentSessionId(ctx, target.sessionId, text); },
-        }]);
-        // The transfer and delete surfaces live behind the chat-manager switch;
-        // with it off they are not mounted, so their rows are not offered either.
-        register('copy-workspace', 480, (target) => (getFlags().chatManager ? [{
-          id: 'copy-workspace',
-          label: text('subagentMenu.copyToWorkspace'),
-          icon: { key: 'ove.subagent.transfer' },
-          run: () => { openTransfer({ id: target.sessionId, title: target.displayTitle }, 'copy'); },
-        }] : []));
-        register('delete', 500, (target) => (getFlags().chatManager ? [{
-          id: 'delete',
-          label: text('subagentMenu.delete'),
-          icon: { key: 'ove.subagent.delete' },
-          danger: true,
-          separatorBefore: true,
-          run: () => {
-            publishDelete({
-              target: { id: target.sessionId, title: target.displayTitle || target.sessionId, subagent: true },
-              busy: false,
-              error: '',
-              code: '',
-            });
-          },
-        }] : []));
+        scope.effect(() => scope.slots.inject('contextMenu.content', () => scope.slots.register({
+          name: 'contextMenu.content',
+          key: SUBAGENT_MENU_TARGET,
+          inject: () => ({ t: text, ctx }),
+        }, SubagentMenuContent)), 'original-version-enhancements: subagent menu rows');
       });
-    };
-
-    /** Glyphs for the two rows this plugin owns in the subagent menu. */
-    const registerSubagentMenuIcons = (ctx) => {
-      if (typeof ctx?.slots?.inject !== 'function' || typeof ctx.effect !== 'function') return;
-      ctx.effect(() => ctx.slots.inject('contextMenu.icon', function* () {
-        yield ctx.slots.register({ name: 'contextMenu.icon', key: 'ove.subagent.transfer' },
-          () => h(TransferIcon, { mode: 'copy' }));
-        yield ctx.slots.register({ name: 'contextMenu.icon', key: 'ove.subagent.delete' },
-          () => h(TrashIcon));
-      }), 'original-version-enhancements: subagent menu icons');
     };
 
     /**
@@ -3641,6 +3487,13 @@ window.__ModuleLoader__.load({
       let unsubscribeSettings = null;
       let watchedArea = null;
       const refreshed = new Set();
+      // Live per-Session status from the shipped session UI service: the same
+      // source the ordinary sidebar rows paint their dots, completion reminders
+      // and pending-interaction labels from.
+      const statusSource = optionalService(ctx, 'uiSession')?.sessionStatus;
+      let statuses = new Map();
+      let nowTick = Date.now();
+      let unsubscribeStatus = null;
 
       const tr = (key) => {
         const value = translate(key);
@@ -3674,10 +3527,7 @@ window.__ModuleLoader__.load({
 
       const titleOf = (item, parentId) => {
         const catalog = catalogs.get(parentId)?.get(idOf(item)) ?? catalogs.get(parentId)?.get(item?.sessionId);
-        // A rename through the subagent menu outranks the immutable catalogue
-        // label, so the row reads the same as the conversation header.
-        const renamed = subagentTitleOverrides.get(idOf(item));
-        for (const candidate of [renamed, catalog?.label, catalog?.name, item?.displayTitle, item?.title]) {
+        for (const candidate of [catalog?.label, catalog?.name, item?.displayTitle, item?.title]) {
           const title = typeof candidate === 'string' ? candidate.trim() : '';
           if (title.length > 0) return title;
         }
@@ -3722,18 +3572,125 @@ window.__ModuleLoader__.load({
         paint();
       };
 
+      /**
+       * The shipped workspace dictionary, so the injected rows say exactly what
+       * a normal conversation row says ("进行中", "已完成", "待审批", "2小时").
+       * @returns the bound translator, or null when that namespace is absent.
+       */
+      const workspaceTranslator = () => {
+        try {
+          const bound = typeof ctx?.locale?.bind === 'function' ? ctx.locale.bind('workspace') : undefined;
+          return typeof bound === 'function' ? bound : null;
+        } catch {
+          return null;
+        }
+      };
+
+      /** Relative update time, worded by the shipped workspace dictionary. */
+      const timeLabelOf = (updatedAt, t) => {
+        if (t === null || !Number.isFinite(updatedAt) || updatedAt <= 0) return '';
+        try {
+          const relative = typeof uiPrimitives?.relativeTime === 'function'
+            ? uiPrimitives.relativeTime(updatedAt, nowTick)
+            : undefined;
+          if (relative === undefined || relative === null) return '';
+          return relative.unit === 'now' ? t('time.now') : t(`time.${relative.unit}`, { n: relative.n });
+        } catch {
+          return '';
+        }
+      };
+
+      /** The pending-interaction vocabulary, matching the shipped row statuses. */
+      const pendingOf = (kind) => {
+        switch (kind) {
+          case 'approval': return { label: 'status.waitingApproval', compact: 'status.compact.approval' };
+          case 'plan-review': return { label: 'status.planReview', compact: 'status.compact.planReview' };
+          case 'question': return { label: 'status.waitingAnswer', compact: 'status.compact.answer' };
+          default: return undefined;
+        }
+      };
+
+      /**
+       * One child row's status, derived exactly like the shipped sidebar rows:
+       * a pending interaction outranks live activity, which outranks the
+       * finished-but-unviewed reminder; an idle conversation shows no marker.
+       * @param item - the child Session list entry.
+       * @param t - the shipped workspace translator.
+       * @returns `{state, trailing, aria}`; state is the shipped StateDot state.
+       */
+      const statusOf = (item, t) => {
+        const id = idOf(item);
+        const record = statuses.get(id) ?? {};
+        const pending = pendingOf(record.pendingInteraction?.kind);
+        const runningChildren = (children.get(id) ?? [])
+          .filter((kid) => (statuses.get(idOf(kid))?.running ?? kid.running) === true).length;
+        const say = (key, params) => {
+          try { return t === null ? '' : t(key, params); } catch { return ''; }
+        };
+        if (pending !== undefined) {
+          return { state: 'warning', trailing: say(pending.compact), aria: say(pending.label) };
+        }
+        if (record.running === true || item.running === true) {
+          return { state: 'ongoing', trailing: '', aria: say('status.running') };
+        }
+        if (runningChildren > 0) {
+          return {
+            state: 'ongoing',
+            trailing: '',
+            aria: say(runningChildren === 1 ? 'status.subagentsRunning.one' : 'status.subagentsRunning.other', { n: runningChildren }),
+          };
+        }
+        if (record.completionUnread === true) {
+          return { state: 'done', trailing: '', aria: say('status.completed') };
+        }
+        return { state: 'idle', trailing: '', aria: '' };
+      };
+
+      /** A shipped-style status marker: a spinner while ongoing, a dot otherwise. */
+      const statusNode = (state) => {
+        if (state === 'ongoing') {
+          const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+          svg.setAttribute('class', 'ove-sub-spinner');
+          svg.setAttribute('width', '10');
+          svg.setAttribute('height', '10');
+          svg.setAttribute('viewBox', '0 0 24 24');
+          svg.setAttribute('aria-hidden', 'true');
+          const group = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+          group.setAttribute('class', 'ove-sub-spinner-motion');
+          for (const name of ['track', 'arc']) {
+            const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+            circle.setAttribute('class', `ove-sub-spinner-${name}`);
+            circle.setAttribute('cx', '12');
+            circle.setAttribute('cy', '12');
+            circle.setAttribute('r', '9.5');
+            group.append(circle);
+          }
+          svg.append(group);
+          return svg;
+        }
+        const marker = document.createElement('span');
+        marker.className = 'ove-sub-state';
+        marker.dataset.state = state;
+        marker.setAttribute('aria-hidden', 'true');
+        return marker;
+      };
+
       const buildRow = (item, depth, parentId) => {
         const branch = document.createElement('div');
         branch.className = 'ove-sub-branch';
         const itemId = idOf(item);
         const kids = children.get(itemId) ?? [];
         const expanded = subagentTreeOpen.has(itemId);
+        const workspaceText = workspaceTranslator();
+        const status = statusOf(item, workspaceText);
         const row = document.createElement('div');
         row.className = 'ove-sub-row';
         row.dataset.oveSubagentRow = itemId;
         row.tabIndex = 0;
         row.setAttribute('role', 'treeitem');
-        row.style.paddingLeft = `${22 + depth * 14}px`;
+        // Two spaces of indent for the first level, one more per nested level:
+        // the row no longer wears a bullet, only the lead slot (caret + status).
+        row.style.paddingLeft = `${2 + Math.max(0, depth - 1) * 12}px`;
         if (kids.length > 0) {
           row.setAttribute('aria-expanded', String(expanded));
           const caretButton = document.createElement('button');
@@ -3752,10 +3709,18 @@ window.__ModuleLoader__.load({
           spacer.className = 'ove-sub-spacer';
           row.append(spacer);
         }
-        const dot = document.createElement('span');
-        dot.className = `ove-sub-dot${item.running === true ? ' is-running' : ''}`;
-        dot.setAttribute('aria-hidden', 'true');
-        row.append(dot);
+        // A fixed lead slot keeps every title in one column whether or not the
+        // row carries a status marker.
+        const lead = document.createElement('span');
+        lead.className = 'ove-sub-statusslot';
+        if (status.state !== 'idle') lead.append(statusNode(status.state));
+        if (status.aria.length > 0) {
+          const spoken = document.createElement('span');
+          spoken.className = 'ove-sub-sr';
+          spoken.textContent = status.aria;
+          lead.append(spoken);
+        }
+        row.append(lead);
         const label = document.createElement('span');
         label.className = 'ove-sub-title';
         label.textContent = titleOf(item, parentId);
@@ -3772,12 +3737,24 @@ window.__ModuleLoader__.load({
         } else {
           row.title = titleOf(item, parentId);
         }
+        // The trailing slot follows the shipped row: a pending-interaction label
+        // replaces the update time, otherwise the time shows.
+        const trailingText = status.trailing.length > 0
+          ? status.trailing
+          : timeLabelOf(item.updatedAt, workspaceText);
+        if (trailingText.length > 0) {
+          const trailing = document.createElement('span');
+          trailing.className = 'ove-sub-time';
+          trailing.textContent = trailingText;
+          if (status.trailing.length === 0) trailing.setAttribute('aria-hidden', 'true');
+          row.append(trailing);
+        }
         if (itemId === active) row.classList.add('is-active');
         row.addEventListener('click', () => openChild(itemId));
         // The row is injected markup, so it owns its own menu gesture: the
         // shipped overlay is opened for this exact child conversation.
         row.addEventListener('contextmenu', (event) => {
-          if (!openSubagentMenu(ctx, itemId, titleOf(item, parentId), { x: event.clientX, y: event.clientY })) return;
+          if (!openSubagentMenu(ctx, itemId, titleOf(item, parentId), { x: event.clientX, y: event.clientY }, parentId)) return;
           event.preventDefault();
           event.stopPropagation();
         });
@@ -3786,7 +3763,7 @@ window.__ModuleLoader__.load({
           if (event.key === 'ContextMenu' || (event.key === 'F10' && event.shiftKey)) {
             event.preventDefault();
             const rect = row.getBoundingClientRect();
-            openSubagentMenu(ctx, itemId, titleOf(item, parentId), { x: rect.left + 24, y: rect.bottom - 2 });
+            openSubagentMenu(ctx, itemId, titleOf(item, parentId), { x: rect.left + 24, y: rect.bottom - 2 }, parentId);
             return;
           }
           if (event.key !== 'Enter' && event.key !== ' ') return;
@@ -3856,14 +3833,21 @@ window.__ModuleLoader__.load({
 
       /** Stable description of everything a block renders, to skip no-op repaints. */
       const signatureOf = (parentId) => {
+        const workspaceText = workspaceTranslator();
         const walk = (id, parent) => {
           const kids = children.get(id) ?? [];
-          return kids.map((kid) => [
-            idOf(kid),
-            titleOf(kid, parent),
-            kid.running === true,
-            subagentTreeOpen.has(idOf(kid)) ? walk(idOf(kid), idOf(kid)) : [],
-          ]);
+          return kids.map((kid) => {
+            const status = statusOf(kid, workspaceText);
+            const trailing = status.trailing.length > 0 ? status.trailing : timeLabelOf(kid.updatedAt, workspaceText);
+            return [
+              idOf(kid),
+              titleOf(kid, parent),
+              status.state,
+              status.aria,
+              trailing,
+              subagentTreeOpen.has(idOf(kid)) ? walk(idOf(kid), idOf(kid)) : [],
+            ];
+          });
         };
         return JSON.stringify([parentId, active, walk(parentId, parentId)]);
       };
@@ -3872,6 +3856,12 @@ window.__ModuleLoader__.load({
         if (stopped) return;
         observer?.disconnect();
         try {
+          nowTick = Date.now();
+          try {
+            statuses = typeof statusSource?.getSnapshot === 'function' ? statusSource.getSnapshot() : new Map();
+          } catch {
+            statuses = new Map();
+          }
           const snapshot = typeof store?.getSnapshot === 'function' ? store.getSnapshot() : undefined;
           // The public list snapshot is keyed by id (plus `ids` in list order);
           // each entry carries `parentId` for a subagent conversation.
@@ -3947,19 +3937,6 @@ window.__ModuleLoader__.load({
               pruned = true;
             }
             if (pruned) saveSubagentTreeOpen();
-            // A remembered rename is only meaningful while its child is still
-            // in the tree; the same loaded list that prunes expansion prunes it.
-            const alive = new Set();
-            for (const list of children.values()) {
-              for (const child of list) alive.add(idOf(child));
-            }
-            let titlesPruned = false;
-            for (const id of [...subagentTitleOverrides.keys()]) {
-              if (alive.has(id)) continue;
-              subagentTitleOverrides.delete(id);
-              titlesPruned = true;
-            }
-            if (titlesPruned) saveSubagentTitleOverrides();
           }
 
           const rows = [...document.querySelectorAll(rowSelector)];
@@ -4030,6 +4007,9 @@ window.__ModuleLoader__.load({
       };
 
       if (typeof store?.subscribe === 'function') unsubscribe = store.subscribe(schedule);
+      if (typeof statusSource?.subscribe === 'function') {
+        unsubscribeStatus = statusSource.subscribe(schedule);
+      }
       unsubscribeSettings = subscribeSubagentTreeSettings(schedule);
       subagentTreeRepainters.add(schedule);
       observe();
@@ -4048,6 +4028,7 @@ window.__ModuleLoader__.load({
         globalThis.clearInterval(sweeper);
         subagentTreeRepainters.delete(schedule);
         try { unsubscribe?.(); } catch { /* the store is already gone */ }
+        try { unsubscribeStatus?.(); } catch { /* the status store is already gone */ }
         try { unsubscribeSettings?.(); } catch { /* already gone */ }
         try { observer?.disconnect(); } catch { /* already detached */ }
         for (const button of toggles.values()) {
@@ -4503,7 +4484,9 @@ window.__ModuleLoader__.load({
      * @param props - owner props, menu hook, translator, plugin context, mode.
      * @returns the menu row.
      */
-    function SessionTransferMenuItem({ sessionId, displayTitle, useMenuOpenState, t, ctx, mode }) {
+    function SessionTransferMenuItem({
+      sessionId, displayTitle, useMenuOpenState, t, ctx, mode, allowOrigin = false, lookupSessionIds,
+    }) {
       const tr = typeof t === 'function' ? t : (key) => key;
       const [, closeMenu] = useMenuOpenState();
       const archived = useArchivedSession(ctx, sessionId);
@@ -4516,7 +4499,12 @@ window.__ModuleLoader__.load({
 
       const select = () => {
         closeMenu(false);
-        openTransfer({ id: sessionId, title: displayTitle || sessionId }, mode);
+        openTransfer({
+          id: sessionId,
+          title: displayTitle || sessionId,
+          ...(allowOrigin === true ? { allowOrigin: true } : {}),
+          ...(Array.isArray(lookupSessionIds) && lookupSessionIds.length > 0 ? { lookupSessionIds } : {}),
+        }, mode);
       };
 
       const tone = transferTone(mode);
@@ -5000,9 +4988,6 @@ window.__ModuleLoader__.load({
         h('h2', { className: 'ove-dialog-title' }, tr('dialogTitle')),
         h('p', { className: 'ove-dialog-desc' }, tr('dialogDesc')),
         h('p', { className: 'ove-dialog-target' }, target.title),
-        // Removing a child conversation can invalidate whatever its parent
-        // still refers to, so this deletion carries an explicit warning.
-        target.subagent === true && h('p', { className: 'ove-warn' }, tr('subagentMenu.deleteWarn')),
         error && h('p', { className: 'ove-error', role: 'alert' }, error),
         canForce && h('p', { className: 'ove-warn' }, tr('forceHint')),
         canForce && h('p', { className: 'ove-muted ove-dialog-note' }, tr('retryHint')),
@@ -6177,6 +6162,9 @@ window.__ModuleLoader__.load({
             className: 'ove-combo-list',
             role: 'listbox',
             'aria-label': tr('auto.session'),
+            // Leaving the list drops the pointer highlight (and the sidebar
+            // outline it drives) instead of leaving one row lit forever.
+            onMouseLeave: () => setCursor(-1),
             style: {
               left: `${box.left}px`,
               top: `${box.top}px`,
@@ -6378,6 +6366,9 @@ window.__ModuleLoader__.load({
             className: 'ove-combo-list',
             role: 'listbox',
             'aria-label': ariaLabel,
+            // Same as the session picker: pointer highlight must not outlive
+            // the pointer leaving the list.
+            onMouseLeave: () => setCursor(-1),
             style: {
               left: `${box.left}px`,
               top: `${box.top}px`,
@@ -6498,6 +6489,7 @@ window.__ModuleLoader__.load({
      */
     function AutomationPage({ useSessions, useWorkspaces, t, uiWorkspace }) {
       const tr = typeof t === 'function' ? t : (key) => key;
+      const flags = useFlags();
       const sessions = useSessions((snapshot) => snapshot);
       const workspaces = useWorkspaces((snapshot) => snapshot);
 
@@ -6525,6 +6517,8 @@ window.__ModuleLoader__.load({
       const [draftDirty, setDraftDirty] = React.useState(false);
       const [bindTasks, setBindTasks] = React.useState([]);
       const [bindPicks, setBindPicks] = React.useState(() => new Set());
+      // Scope of the bind picker; only offered by the experimental switch.
+      const [bindScope, setBindScope] = React.useState('all');
       const [cleanPending, setCleanPending] = React.useState(false);
       const [detailTab, setDetailTab] = React.useState('edit');
       const [records, setRecords] = React.useState([]);
@@ -6984,6 +6978,7 @@ window.__ModuleLoader__.load({
         const list = Array.isArray(tasks) ? tasks.filter((task) => task !== null && task !== undefined) : [];
         setBindTasks(list);
         setBindPicks(new Set());
+        setBindScope('all');
         setActionError('');
         setNotice(null);
       };
@@ -6991,6 +6986,7 @@ window.__ModuleLoader__.load({
       const closeBind = () => {
         setBindTasks([]);
         setBindPicks(new Set());
+        setBindScope('all');
       };
 
       const confirmBind = async () => {
@@ -7061,7 +7057,14 @@ window.__ModuleLoader__.load({
             const title = titleOf(id);
             if (title.length === 0) continue;
             if (workspaceTitle.length > 0 && title === workspaceTitle) continue;
-            candidates.push({ id, title, workspace: workspaceTitle, workspaceId: String(workspace.workspaceId ?? ''), stamp: stampOf(id) });
+            candidates.push({
+              id,
+              title,
+              workspace: workspaceTitle,
+              workspaceId: String(workspace.workspaceId ?? ''),
+              stamp: stampOf(id),
+              hidden: false,
+            });
           }
         }
         for (const id of Object.keys(byId)) {
@@ -7075,12 +7078,16 @@ window.__ModuleLoader__.load({
             workspace: workspaceTitleOf(owner),
             workspaceId: owner === undefined ? '' : String(owner.workspaceId ?? ''),
             stamp: stampOf(id),
+            // A Session outside every workspace's own list (a subagent, or a
+            // conversation the sidebar hides) is the "hidden" half of the
+            // experimental bind scope.
+            hidden: true,
           });
         }
         // Duplicate names are kept: the workspace half tells them apart, and
         // hiding one would hide the conversation the human wants to pick.
         return candidates
-          .map((session) => ({ ...session, archived: false, label: session.title }))
+          .map((session) => ({ ...session, archived: false, label: session.title, hidden: session.hidden === true }))
           .sort((a, b) => a.label.localeCompare(b.label)
             || a.workspace.localeCompare(b.workspace)
             || b.stamp - a.stamp);
@@ -7127,8 +7134,13 @@ window.__ModuleLoader__.load({
           // copies it created rather than by a title match.
           for (const id of Array.isArray(task?.copySessionIds) ? task.copySessionIds : []) bound.add(id);
         }
-        return sessionOptions.filter((session) => !bound.has(session.id));
-      }, [sessionOptions, bindTasks]);
+        return sessionOptions.filter((session) => {
+          if (bound.has(session.id)) return false;
+          if (!flags.bindScopes || bindScope === 'all') return true;
+          if (bindScope === 'visible') return session.hidden !== true;
+          return session.hidden === true;
+        });
+      }, [sessionOptions, bindTasks, flags.bindScopes, bindScope]);
 
       /** Rows in the bind picker that need their short id to stay distinct. */
       const bindDuplicates = React.useMemo(() => duplicateIdsOf(bindCandidates), [bindCandidates]);
@@ -7960,8 +7972,24 @@ window.__ModuleLoader__.load({
             children: h(React.Fragment, null,
               h('p', { className: 'ove-dialog-target' }, tr('auto.bindTasks')
                 .replace('{names}', bindTasks.map((task) => task.title).join('、'))),
+              // Experimental: restrict the picker to the sidebar's visible
+              // conversations, or to the ones it hides (subagents and the like).
+              flags.bindScopes
+                ? h('div', { className: 'ove-bind-scope' },
+                  h('div', { className: 'ove-size-group', role: 'group', 'aria-label': tr('auto.bindScope') },
+                    ['all', 'visible', 'hidden'].map((scope) => h('button', {
+                      key: scope,
+                      type: 'button',
+                      className: `ove-size${bindScope === scope ? ' is-on' : ''}`,
+                      'aria-pressed': bindScope === scope,
+                      onClick: () => setBindScope(scope),
+                    }, tr(`auto.bindScope.${scope}`)))),
+                  h('p', { className: 'ove-bind-scope-tip' }, tr('auto.bindScope.tip')))
+                : null,
               bindCandidates.length === 0
-                ? h('p', { className: 'ove-muted' }, tr('auto.bindEmpty'))
+                ? h('p', { className: 'ove-muted' }, flags.bindScopes && bindScope !== 'all'
+                  ? tr(bindScope === 'hidden' ? 'auto.bindScope.hiddenEmpty' : 'auto.bindScope.visibleEmpty')
+                  : tr('auto.bindEmpty'))
                 : h('div', { className: 'ove-session-pick' }, bindCandidates.map((session) => h('label', {
                   className: 'ove-session-option',
                   key: session.id,
@@ -8221,12 +8249,6 @@ window.__ModuleLoader__.load({
         // the transfer/delete rows reuse this plugin's undoable flows. The
         // rename dialog exists exactly while the tree can open it.
         registerSubagentMenus(ctx, text);
-        registerSubagentMenuIcons(ctx);
-        ctx.effect(() => ctx.slots.inject('shell.overlay', () => ctx.slots.register({
-          name: 'shell.overlay',
-          id: 'original-version-enhancements.subagent-rename',
-          inject: () => ({ t: translator, ctx }),
-        }, SubagentRenameDialog)), 'original-version-enhancements: subagent rename dialog');
 
         // Independent windows have their own switch: the menu row and the
         // cross-window bridge exist only while it is on. Turning it off brings
