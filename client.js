@@ -2907,7 +2907,7 @@ window.__ModuleLoader__.load({
           },
         },
           h('div', {
-            className: 'ove-dialog ove-dialog-wide',
+            className: 'ove-dialog ove-dialog-wide ove-hidden-dialog',
             role: 'dialog',
             'aria-modal': 'true',
             'aria-label': tr('hiddenManageTitle'),
@@ -2928,11 +2928,15 @@ window.__ModuleLoader__.load({
                   onChange: () => setHiddenSelected(allHiddenSelected ? new Set() : new Set(hiddenRows.map((row) => row.id))),
                 }),
                 h('span', null, tr('selectAll'))),
-              h('span', { className: 'ove-muted' },
+              h('span', { className: 'ove-muted ove-pick-count' },
                 tr('selectedCount').replace('{n}', String(hiddenSelectedRows.length))),
-              hiddenSelectedRows.length > 0 && h('button', {
+              // Always rendered, hidden while nothing is picked: removing the
+              // button from the flow resized the toolbar (and with it the whole
+              // dialog, which is centred), so clicking rows made the window jump.
+              h('button', {
                 type: 'button',
-                className: 'ove-clear',
+                className: 'ove-clear ove-clear-reserved',
+                disabled: hiddenSelectedRows.length === 0,
                 onClick: () => setHiddenSelected(new Set()),
               }, tr('clearSelection'))),
             hiddenRows.length === 0

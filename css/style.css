@@ -386,6 +386,13 @@
 .ove-pick-row.is-selectable.is-selected { background: color-mix(in srgb, #3b82f6 12%, transparent); }
 .ove-pick-when { font-size: 11px; line-height: 16px; color: var(--dsw-alias-label-tertiary); }
 .ove-dialog .ove-toolbar { margin: 0; padding: 0; }
+/* A hidden-but-present control keeps the dialog's toolbar height (and so the
+   centred window itself) from moving when the first row gets picked. */
+.ove-clear-reserved:disabled { visibility: hidden; }
+/* Fixed list height: the dialog keeps one size while rows are picked, and a
+   scrollbar appearing (more hidden sessions than fit) cannot resize it either. */
+.ove-hidden-dialog .ove-pick-list { height: 264px; }
+.ove-pick-count { font-variant-numeric: tabular-nums; }
 .ove-dialog-target {
   margin: 0;
   padding: 8px 10px;
