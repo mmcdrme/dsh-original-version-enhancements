@@ -96,6 +96,7 @@
   background: color-mix(in srgb, var(--dsw-alias-brand-primary) 82%, var(--dsw-alias-bg-base));
 }
 .ove-switch:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 2px; }
+.ove-switch:disabled { opacity: .45; cursor: default; }
 .ove-switch-thumb {
   display: block;
   width: 16px;
@@ -122,6 +123,7 @@
 }
 .ove-search:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: -1px; }
 .ove-muted { margin: 0; font-size: 14px; line-height: 22px; color: var(--dsw-alias-label-tertiary); }
+.ove-pad-left { margin: 0; padding: 0 2px; }
 .ove-error { margin: 0; font-size: 13px; line-height: 20px; color: var(--dsw-alias-state-error-primary); }
 .ove-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 0 0 10px; padding: 0 14.5px; }
 .ove-check-all { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--dsw-alias-label-secondary); cursor: pointer; }

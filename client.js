@@ -72,6 +72,51 @@ window.__ModuleLoader__.load({
     const useFlags = () => React.useSyncExternalStore(subscribeFlags, getFlags, getFlags);
 
     /* ------------------------------------------------------------------ */
+    /* Subagent tree settings (its own settings page)                      */
+    /* ------------------------------------------------------------------ */
+
+    /** Switches owned by the "子智能体" settings page. */
+    const SUBAGENT_TREE_SETTINGS_KEY = 'original-version-enhancements.subagent-tree.settings.v1';
+    const DEFAULT_SUBAGENT_TREE_SETTINGS = { enabled: true, showCount: true };
+    const subagentTreeSettingListeners = new Set();
+
+    const readSubagentTreeSettings = () => {
+      try {
+        const raw = JSON.parse(globalThis.localStorage?.getItem(SUBAGENT_TREE_SETTINGS_KEY) ?? '{}');
+        const saved = raw !== null && typeof raw === 'object' ? raw : {};
+        return {
+          enabled: saved.enabled !== false,
+          showCount: saved.showCount !== false,
+        };
+      } catch {
+        return { ...DEFAULT_SUBAGENT_TREE_SETTINGS };
+      }
+    };
+
+    let subagentTreeSettings = readSubagentTreeSettings();
+
+    const subscribeSubagentTreeSettings = (listener) => {
+      subagentTreeSettingListeners.add(listener);
+      return () => { subagentTreeSettingListeners.delete(listener); };
+    };
+
+    const getSubagentTreeSettings = () => subagentTreeSettings;
+
+    const setSubagentTreeSetting = (key, value) => {
+      subagentTreeSettings = { ...subagentTreeSettings, [key]: value };
+      try {
+        globalThis.localStorage?.setItem(SUBAGENT_TREE_SETTINGS_KEY, JSON.stringify(subagentTreeSettings));
+      } catch { /* a blocked storage keeps the switch for this page only */ }
+      for (const listener of subagentTreeSettingListeners) listener();
+    };
+
+    const useSubagentTreeSettings = () => React.useSyncExternalStore(
+      subscribeSubagentTreeSettings,
+      getSubagentTreeSettings,
+      getSubagentTreeSettings,
+    );
+
+    /* ------------------------------------------------------------------ */
     /* Sent-message history: recall the last submissions in the composer   */
     /* ------------------------------------------------------------------ */
 
@@ -3105,26 +3150,30 @@ window.__ModuleLoader__.load({
       }
     };
     const subagentTreeOpen = readSubagentTreeOpen();
+    /** Installed tree painters; clearing the remembered state refreshes them. */
+    const subagentTreeRepainters = new Set();
     const saveSubagentTreeOpen = () => {
       try {
         globalThis.localStorage?.setItem(SUBAGENT_TREE_KEY, JSON.stringify([...subagentTreeOpen]));
       } catch { /* a blocked storage keeps the expansion for this page only */ }
     };
 
-    /** Styles for the injected sidebar rows (they live outside any plugin surface). */
+    /** Styles for the injected sidebar controls (outside any plugin surface). */
     const SUBAGENT_TREE_CSS = `
-.ove-sub-host { display: block; margin: 0 0 2px; }
-.ove-sub-head {
-  display: flex; align-items: center; gap: 6px; width: 100%; box-sizing: border-box;
-  height: 22px; padding: 0 8px 0 24px; margin: 0;
-  border: 0; border-radius: 8px; background: transparent;
+/* The expander sits at the row's own left edge: a caret plus the direct
+   subagent count, before the status dot and the title. */
+.ove-sub-toggle {
+  flex: none; display: inline-flex; align-items: center; justify-content: center; gap: 2px;
+  min-width: 20px; height: 20px; margin: 0 2px 0 0; padding: 0 3px;
+  border: 0; border-radius: 6px; background: transparent;
   color: var(--dsw-alias-label-tertiary);
-  font: inherit; font-size: 12px; font-weight: 500; line-height: 22px;
-  text-align: left; cursor: pointer;
-  transition: background-color .12s ease, color .12s ease;
+  font: inherit; font-size: 11px; line-height: 20px; font-variant-numeric: tabular-nums;
+  cursor: pointer; transition: background-color .12s ease, color .12s ease;
 }
-.ove-sub-head:hover { background: color-mix(in srgb, var(--dsw-alias-label-primary) 6%, transparent); color: var(--dsw-alias-label-secondary); }
-.ove-sub-head:focus-visible { outline: 2px solid #3b82f6; outline-offset: -2px; }
+.ove-sub-toggle:hover { background: color-mix(in srgb, var(--dsw-alias-label-primary) 9%, transparent); color: var(--dsw-alias-label-secondary); }
+.ove-sub-toggle:focus-visible { outline: 2px solid #3b82f6; outline-offset: -1px; }
+.ove-sub-host { display: block; }
+.ove-sub-toggle-count { flex: none; font-size: 10.5px; line-height: 20px; opacity: .9; }
 .ove-sub-caret {
   flex: none; width: 0; height: 0;
   border-left: 4px solid currentColor;
@@ -3132,12 +3181,6 @@ window.__ModuleLoader__.load({
   transition: transform .12s ease;
 }
 .ove-sub-caret.is-open { transform: rotate(90deg); }
-.ove-sub-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ove-sub-count {
-  flex: none; min-width: 16px; height: 16px; padding: 0 5px; border-radius: 8px;
-  background: color-mix(in srgb, var(--dsw-alias-label-primary) 8%, transparent);
-  font-size: 11px; line-height: 16px; text-align: center; font-variant-numeric: tabular-nums;
-}
 .ove-sub-branch { display: block; }
 .ove-sub-row {
   display: flex; align-items: center; gap: 6px;
@@ -3190,6 +3233,7 @@ window.__ModuleLoader__.load({
       if (typeof document === 'undefined' || typeof MutationObserver !== 'function') return () => {};
       const rowSelector = '[data-row-key^="session:"]';
       const hosts = new Map();
+      const toggles = new Map();
       const store = ctx?.sessions?.list;
       /** Child metadata per parent, from the catalogue projection when loaded. */
       let catalogs = new Map();
@@ -3199,6 +3243,7 @@ window.__ModuleLoader__.load({
       let stopped = false;
       let observer = null;
       let unsubscribe = null;
+      let unsubscribeSettings = null;
       let watchedArea = null;
       const refreshed = new Set();
 
@@ -3271,7 +3316,7 @@ window.__ModuleLoader__.load({
           subagentTreeOpen.delete(sessionId);
         } else {
           subagentTreeOpen.add(sessionId);
-          // The collapsed strip can be drawn from the session list alone; the
+          // The collapsed arrow can be drawn from the session list alone; the
           // human labels and sibling names come from the catalogue projection.
           ensureCatalog(sessionId);
         }
@@ -3290,7 +3335,7 @@ window.__ModuleLoader__.load({
         row.dataset.oveSubagentRow = itemId;
         row.tabIndex = 0;
         row.setAttribute('role', 'treeitem');
-        row.style.paddingLeft = `${10 + depth * 14}px`;
+        row.style.paddingLeft = `${22 + depth * 14}px`;
         if (kids.length > 0) {
           row.setAttribute('aria-expanded', String(expanded));
           const caretButton = document.createElement('button');
@@ -3343,35 +3388,57 @@ window.__ModuleLoader__.load({
         return branch;
       };
 
-      const buildHost = (parentId) => {
-        const kids = children.get(parentId) ?? [];
+      /** The expanded children of one conversation, as its own inline block. */
+      const buildBlock = (parentId) => {
         const host = document.createElement('div');
         host.className = 'ove-sub-host';
         host.dataset.oveSubagentFor = parentId;
-        if (kids.length === 0) return host;
-        const open = subagentTreeOpen.has(parentId);
-        const head = document.createElement('button');
-        head.type = 'button';
-        head.className = 'ove-sub-head';
-        head.setAttribute('aria-expanded', String(open));
-        head.append(caretOf(open));
-        const label = document.createElement('span');
-        label.className = 'ove-sub-label';
-        label.textContent = `${tr('subagentTree.label')} · ${kids.length}`;
-        head.append(label);
-        head.addEventListener('click', (event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          toggle(parentId);
-        });
-        host.append(head);
-        if (open) {
-          for (const kid of kids) host.append(buildRow(kid, 1, parentId));
-        }
+        const kids = children.get(parentId) ?? [];
+        if (kids.length === 0 || !subagentTreeOpen.has(parentId)) return host;
+        for (const kid of kids) host.append(buildRow(kid, 1, parentId));
         return host;
       };
 
-      /** Stable description of everything a host renders, to skip no-op repaints. */
+      /**
+       * The expander lives inside the stock row, at its left edge: caret plus
+       * the DIRECT child count (nested descendants are not counted here).
+       */
+      const paintToggle = (row, parentId) => {
+        const count = (children.get(parentId) ?? []).length;
+        const open = subagentTreeOpen.has(parentId);
+        const settings = getSubagentTreeSettings();
+        const signature = `${count}|${open}|${settings.showCount === true}`;
+        let button = toggles.get(parentId);
+        if (button === undefined || !button.isConnected || button.parentElement !== row) {
+          button?.remove();
+          button = document.createElement('button');
+          button.type = 'button';
+          button.className = 'ove-sub-toggle';
+          button.addEventListener('click', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            toggle(parentId);
+          });
+          row.prepend(button);
+          toggles.set(parentId, button);
+        }
+        if (button.dataset.signature === signature) return;
+        button.dataset.signature = signature;
+        button.setAttribute('aria-expanded', String(open));
+        button.setAttribute('aria-label', tr(open ? 'subagentTree.collapse' : 'subagentTree.expand'));
+        button.title = settings.showCount === true
+          ? tr('subagentTree.toggleTitle').replace('{n}', String(count))
+          : tr('subagentTree.toggleTitleBare');
+        button.replaceChildren(caretOf(open));
+        if (settings.showCount === true) {
+          const badge = document.createElement('span');
+          badge.className = 'ove-sub-toggle-count';
+          badge.textContent = String(count);
+          button.append(badge);
+        }
+      };
+
+      /** Stable description of everything a block renders, to skip no-op repaints. */
       const signatureOf = (parentId) => {
         const walk = (id, parent) => {
           const kids = children.get(id) ?? [];
@@ -3382,7 +3449,7 @@ window.__ModuleLoader__.load({
             subagentTreeOpen.has(idOf(kid)) ? walk(idOf(kid), idOf(kid)) : [],
           ]);
         };
-        return JSON.stringify([parentId, active, subagentTreeOpen.has(parentId), walk(parentId, parentId)]);
+        return JSON.stringify([parentId, active, walk(parentId, parentId)]);
       };
 
       const paint = () => {
@@ -3475,18 +3542,27 @@ window.__ModuleLoader__.load({
             wanted.set(id, row);
             if (subagentTreeOpen.has(id)) ensureCatalog(id);
           }
+          // The left-edge expander belongs to the stock row, which React owns:
+          // drop ours when the row is gone or re-rendered, then re-add below.
+          for (const [id, button] of [...toggles]) {
+            if (!wanted.has(id) || !button.isConnected) {
+              button.remove();
+              toggles.delete(id);
+            }
+          }
           for (const [id, host] of [...hosts]) {
-            if (wanted.has(id)) continue;
+            if (wanted.has(id) && subagentTreeOpen.has(id)) continue;
             host.remove();
             hosts.delete(id);
           }
           for (const [id, row] of wanted) {
+            paintToggle(row, id);
             const wrapper = row.parentElement;
-            if (wrapper === null) continue;
+            if (wrapper === null || !subagentTreeOpen.has(id)) continue;
             const signature = signatureOf(id);
             let host = hosts.get(id);
-            if (host === undefined || host.dataset.signature !== signature) {
-              const fresh = buildHost(id);
+            if (host === undefined || !host.isConnected || host.dataset.signature !== signature) {
+              const fresh = buildBlock(id);
               fresh.dataset.signature = signature;
               if (host !== undefined) host.replaceWith(fresh);
               hosts.set(id, fresh);
@@ -3520,6 +3596,8 @@ window.__ModuleLoader__.load({
       };
 
       if (typeof store?.subscribe === 'function') unsubscribe = store.subscribe(schedule);
+      unsubscribeSettings = subscribeSubagentTreeSettings(schedule);
+      subagentTreeRepainters.add(schedule);
       observe();
       schedule();
       // Catalogue projections and running state arrive through the store; a slow
@@ -3534,8 +3612,12 @@ window.__ModuleLoader__.load({
           scheduled = 0;
         }
         globalThis.clearInterval(sweeper);
+        subagentTreeRepainters.delete(schedule);
         try { unsubscribe?.(); } catch { /* the store is already gone */ }
+        try { unsubscribeSettings?.(); } catch { /* already gone */ }
         try { observer?.disconnect(); } catch { /* already detached */ }
+        for (const button of toggles.values()) button.remove();
+        toggles.clear();
         for (const host of hosts.values()) host.remove();
         hosts.clear();
       };
@@ -3551,8 +3633,73 @@ window.__ModuleLoader__.load({
       const tr = typeof t === 'function' ? t : (key) => key;
       const trRef = React.useRef(tr);
       trRef.current = tr;
-      React.useEffect(() => installSubagentTree(ctx, (key) => trRef.current(key)), [ctx]);
+      const settings = useSubagentTreeSettings();
+      React.useEffect(() => {
+        if (settings.enabled !== true) return undefined;
+        return installSubagentTree(ctx, (key) => trRef.current(key));
+      }, [ctx, settings.enabled]);
       return h('style', { 'data-plugin-css': `${NS}-subagent-tree` }, SUBAGENT_TREE_CSS);
+    }
+
+    /**
+     * The "子智能体" settings page: one switch pair for the sidebar tree, plus
+     * a way to forget which conversations were expanded.
+     * @param props - injected translator.
+     * @returns the page.
+     */
+    function SubagentTreeSettingsPage({ t }) {
+      const tr = typeof t === 'function' ? t : (key) => key;
+      const settings = useSubagentTreeSettings();
+      const [cleared, setCleared] = React.useState(false);
+
+      const clearExpanded = () => {
+        subagentTreeOpen.clear();
+        saveSubagentTreeOpen();
+        for (const repaint of subagentTreeRepainters) {
+          try { repaint(); } catch { /* a disposed tree cannot repaint */ }
+        }
+        setCleared(true);
+      };
+
+      const row = (key, checked, onToggle, disabled) => h('div', { className: 'ove-row' },
+        h('div', { className: 'ove-row-text' },
+          h('div', { className: 'ove-row-title' }, tr(`subagentTree.${key}`)),
+          h('div', { className: 'ove-row-desc' }, tr(`subagentTree.${key}.desc`))),
+        h('button', {
+          type: 'button',
+          className: 'ove-switch',
+          role: 'switch',
+          'aria-checked': checked,
+          'aria-label': tr(`subagentTree.${key}`),
+          disabled: disabled === true,
+          onClick: onToggle,
+        }, h('span', { className: 'ove-switch-thumb' })));
+
+      return h(React.Fragment, null,
+        h('style', { key: 'styles', 'data-plugin-css': `${NS}-subagent-tree-page` }, CSS),
+        h('div', { className: 'ove-page' },
+          h('div', { className: 'ove-head' },
+            h('h1', { className: 'ove-title' }, tr('subagentTree.settingsTitle')),
+            h('p', { className: 'ove-intro' }, tr('subagentTree.settingsIntro'))),
+
+          h('div', { className: 'ove-card' },
+            row('enable', settings.enabled, () => setSubagentTreeSetting('enabled', settings.enabled !== true)),
+            row('showCount', settings.showCount, () => setSubagentTreeSetting('showCount', settings.showCount !== true), settings.enabled !== true)),
+
+          h('div', { className: 'ove-card' },
+            h('div', { className: 'ove-row' },
+              h('div', { className: 'ove-row-text' },
+                h('div', { className: 'ove-row-title' }, tr('subagentTree.clearTitle')),
+                h('div', { className: 'ove-row-desc' }, tr('subagentTree.clearDesc'))),
+              h('button', {
+                type: 'button',
+                className: 'ove-btn',
+                onClick: clearExpanded,
+              }, tr('subagentTree.clearButton'))),
+            cleared ? h('p', { className: 'ove-muted ove-pad-left' }, tr('subagentTree.cleared')) : null),
+
+          h('p', { className: 'ove-footnote' }, tr('subagentTree.settingsNote'))),
+      );
     }
 
     function DetachedSessionsBridge({ ctx, t }) {
@@ -7492,6 +7639,16 @@ window.__ModuleLoader__.load({
           label: () => text('pageTitle'),
           inject: () => ({ t: translator }),
         }, PluginPage)), 'original-version-enhancements: plugin page');
+
+        // The sidebar subagent tree has its own settings page: it is a viewing
+        // feature of the stock sidebar rather than a switch inside the plugin page.
+        ctx.effect(() => ctx.slots.inject('settings.section', () => ctx.slots.register({
+          name: 'settings.section',
+          id: 'original-version-enhancements-subagent-tree',
+          order: 23,
+          label: () => text('subagentTree.settingsTitle'),
+          inject: () => ({ t: translator }),
+        }, SubagentTreeSettingsPage)), 'original-version-enhancements: subagent tree page');
 
         // The archive page, the session menu row, and the dialog exist only
         // while the chat-manager switch is on; toggling disposes them live.
