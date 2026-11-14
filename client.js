@@ -3469,19 +3469,19 @@ window.__ModuleLoader__.load({
   font: inherit; font-size: 10px; line-height: 18px; font-variant-numeric: tabular-nums;
   cursor: pointer; transition: background-color .12s ease, color .12s ease;
 }
-/* The drawn arrow is tiny; the hit area extends a little further right (over
-   the very start of the name) without moving anything in the row. */
+/* The drawn arrow is tiny; the hit area is a much larger invisible box around
+   it (and to its right, over the start of the name) without moving anything. */
 .ove-sub-toggle::after {
-  content: ""; position: absolute; top: -5px; bottom: -5px; left: 0; right: -8px;
+  content: ""; position: absolute; top: -8px; bottom: -8px; left: -4px; right: -18px;
 }
 .ove-sub-toggle:hover { background: color-mix(in srgb, var(--dsw-alias-label-primary) 9%, transparent); color: var(--dsw-alias-label-secondary); }
 .ove-sub-toggle:focus-visible { outline: 2px solid #3b82f6; outline-offset: -1px; }
 .ove-sub-host { display: block; }
-.ove-sub-toggle-count { flex: none; font-size: 10px; line-height: 18px; opacity: .9; }
+.ove-sub-toggle-count { flex: none; font-size: 11px; line-height: 18px; opacity: .9; }
 .ove-sub-caret {
   flex: none; width: 0; height: 0;
-  border-left: 4px solid currentColor;
-  border-top: 3.5px solid transparent; border-bottom: 3.5px solid transparent;
+  border-left: 5px solid currentColor;
+  border-top: 4.5px solid transparent; border-bottom: 4.5px solid transparent;
   transition: transform .12s ease;
 }
 .ove-sub-caret.is-open { transform: rotate(90deg); }
