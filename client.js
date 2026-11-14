@@ -3463,16 +3463,11 @@ window.__ModuleLoader__.load({
 .ove-sub-toggle {
   position: relative;
   display: inline-flex; align-items: center; justify-content: center; gap: 0;
-  height: 18px; margin: 0 0 0 6px; padding: 0;
+  height: 18px; margin: 0 0 0 6px; padding: 0 6px 0 0;
   border: 0; border-radius: 5px; background: transparent;
   color: var(--dsw-alias-label-tertiary);
   font: inherit; font-size: 10px; line-height: 18px; font-variant-numeric: tabular-nums;
   cursor: pointer; transition: background-color .12s ease, color .12s ease;
-}
-/* The drawn arrow is tiny; the hit area is a much larger invisible box around
-   it (and to its right, over the start of the name) without moving anything. */
-.ove-sub-toggle::after {
-  content: ""; position: absolute; top: -8px; bottom: -8px; left: -4px; right: -18px;
 }
 .ove-sub-toggle:hover { background: color-mix(in srgb, var(--dsw-alias-label-primary) 9%, transparent); color: var(--dsw-alias-label-secondary); }
 .ove-sub-toggle:focus-visible { outline: 2px solid #3b82f6; outline-offset: -1px; }
