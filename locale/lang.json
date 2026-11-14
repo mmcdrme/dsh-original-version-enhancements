@@ -305,7 +305,9 @@
     "archiveUnknownDate": "未标注日期",
     "archiveCount": "{n} 个",
     "archiveAt": "归档于 {t}",
-    "archiveActiveAt": "最后活动 {t}"
+    "archiveActiveAt": "最后活动 {t}",
+    "batchRestoreTitle": "批量取消归档",
+    "batchRestoreDesc": "将把选中的 {n} 个会话移出归档，放回各自工作区。"
   },
   "en": {
     "group": "Work details",
@@ -613,6 +615,8 @@
     "archiveUnknownDate": "Unknown date",
     "archiveCount": "{n}",
     "archiveAt": "Archived {t}",
-    "archiveActiveAt": "Last active {t}"
+    "archiveActiveAt": "Last active {t}",
+    "batchRestoreTitle": "Unarchive selected",
+    "batchRestoreDesc": "Move the {n} selected conversations out of the archive, back to their workspaces."
   }
 }

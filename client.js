@@ -1928,15 +1928,10 @@ window.__ModuleLoader__.load({
       const [busy, setBusy] = React.useState(null);
       const [actionError, setActionError] = React.useState('');
       const [notice, setNotice] = React.useState('');
-      const [pending, setPending] = React.useState(null);
-      const [deleteBusy, setDeleteBusy] = React.useState(false);
-      const [deleteError, setDeleteError] = React.useState('');
-      const [deleteCode, setDeleteCode] = React.useState('');
-      const deleteBusyRef = React.useRef(false);
       const [sort, setSort] = React.useState(readArchiveSort);
       const [selected, setSelected] = React.useState(() => new Set());
       const [batchBusy, setBatchBusy] = React.useState(false);
-      const [batchConfirm, setBatchConfirm] = React.useState(false);
+      const [batchKind, setBatchKind] = React.useState(null);
       const [collapsed, setCollapsed] = React.useState(() => new Set());
 
       const normalized = query.trim();
@@ -2122,49 +2117,30 @@ window.__ModuleLoader__.load({
         }
       };
 
-      const openDelete = (row) => {
-        setPending({ id: row.id, title: row.title });
-        setDeleteError('');
-        setDeleteCode('');
+      // A direct click on a row's delete button acts immediately; only the
+      // checkbox-driven batch actions ask for confirmation. The 10s undo
+      // receipt still follows the deletion.
+      const removeNow = async (row) => {
+        if (busy !== null || batchBusy) return;
+        setBusy(row.id);
         setActionError('');
         setNotice('');
-      };
-
-      const cancelDelete = () => {
-        if (deleteBusyRef.current) return;
-        setPending(null);
-        setDeleteError('');
-        setDeleteCode('');
-      };
-
-      const confirmDelete = async (force) => {
-        // `deleteBusy` only reflects the previous render; the ref makes a
-        // double click idempotent so the second outcome cannot overwrite the
-        // first one after the dialog has closed.
-        if (pending === null || deleteBusyRef.current) return;
-        deleteBusyRef.current = true;
-        setDeleteBusy(true);
-        setDeleteError('');
-        setDeleteCode('');
-        const result = await requestDelete(ctx, pending, force);
-        deleteBusyRef.current = false;
-        setDeleteBusy(false);
+        let result = await requestDelete(ctx, { id: row.id, title: row.title }, false);
+        if (!result.ok && (result.code === 'lifecycle-unavailable' || result.code === 'lifecycle-error')) {
+          // The session lifecycle still holds the storage: retry once forced.
+          result = await requestDelete(ctx, { id: row.id, title: row.title }, true);
+        }
+        setBusy(null);
         if (result.ok) {
-          setNotice(`${tr('delete')} · ${pending.title}`);
-          setPending(null);
-          setDeleteCode('');
-          // The receipt carries the undo; a Host that did not retain the storage
-          // (an older composition) leaves the token empty and the toast is a
-          // plain confirmation.
+          setNotice(`${tr('delete')} · ${row.title}`);
           pushDeleteNotice({
-            text: `${tr('delete')} · ${pending.title}`,
+            text: `${tr('delete')} · ${row.title}`,
             tone: 'success',
             token: result.token ?? '',
             seconds: 10,
           });
         } else {
-          setDeleteError(result.error);
-          setDeleteCode(result.code);
+          setActionError(result.error);
         }
       };
 
@@ -2190,6 +2166,7 @@ window.__ModuleLoader__.load({
         }
         await refreshStores(ctx);
         setSelected(new Set());
+        setBatchKind(null);
         setBatchBusy(false);
         if (done > 0) setNotice(tr('batchRestored').replace('{n}', String(done)));
       };
@@ -2206,7 +2183,7 @@ window.__ModuleLoader__.load({
           if (result.ok) done += 1;
           else if (done === 0) setActionError(result.error);
         }
-        setBatchConfirm(false);
+        setBatchKind(null);
         setSelected(new Set());
         setBatchBusy(false);
         if (done > 0) setNotice(tr('batchDeleted').replace('{n}', String(done)));
@@ -2290,7 +2267,7 @@ window.__ModuleLoader__.load({
               type: 'button',
               className: 'ove-btn ove-btn-danger',
               disabled: busy !== null || batchBusy,
-              onClick: () => openDelete(row),
+              onClick: () => { void removeNow(row); },
             }, tr('delete')))));
 
       return h(React.Fragment, null,
@@ -2341,13 +2318,13 @@ window.__ModuleLoader__.load({
                 type: 'button',
                 className: 'ove-btn',
                 disabled: selectedRows.length === 0 || batchBusy,
-                onClick: restoreMany,
-              }, batchBusy ? tr('batchRestoring') : tr('batchRestore')),
+                onClick: () => setBatchKind('restore'),
+              }, tr('batchRestore')),
               h('button', {
                 type: 'button',
                 className: 'ove-btn ove-btn-danger',
                 disabled: selectedRows.length === 0 || batchBusy,
-                onClick: () => setBatchConfirm(true),
+                onClick: () => setBatchKind('delete'),
               }, tr('batchDelete')))),
 
           rows.length > 0 && h('div', {
@@ -2367,43 +2344,41 @@ window.__ModuleLoader__.load({
 
           h('p', { className: 'ove-footnote' }, tr('footnote'))),
 
-        // Batch deletion is final: unlike the single row it keeps no undo
-        // copy, so the dialog says so before anything is removed.
-        batchConfirm && overlayPortal(h('div', {
+        // Checkbox actions always ask first; the direct row buttons do not.
+        batchKind !== null && overlayPortal(h('div', {
           className: 'ove-overlay ove-overlay-top',
           onMouseDown: (event) => {
-            if (event.target === event.currentTarget && !batchBusy) setBatchConfirm(false);
+            if (event.target === event.currentTarget && !batchBusy) setBatchKind(null);
           },
         },
-          h('div', { className: 'ove-dialog', role: 'dialog', 'aria-modal': 'true', 'aria-label': tr('batchDeleteTitle') },
-            h('h2', { className: 'ove-dialog-title' }, tr('batchDeleteTitle')),
-            h('p', { className: 'ove-dialog-desc' }, tr('batchDeleteDesc').replace('{n}', String(selectedRows.length))),
+          h('div', {
+            className: 'ove-dialog',
+            role: 'dialog',
+            'aria-modal': 'true',
+            'aria-label': batchKind === 'restore' ? tr('batchRestoreTitle') : tr('batchDeleteTitle'),
+          },
+            h('h2', { className: 'ove-dialog-title' },
+              batchKind === 'restore' ? tr('batchRestoreTitle') : tr('batchDeleteTitle')),
+            h('p', { className: 'ove-dialog-desc' },
+              batchKind === 'restore'
+                ? tr('batchRestoreDesc').replace('{n}', String(selectedRows.length))
+                : tr('batchDeleteDesc').replace('{n}', String(selectedRows.length))),
             h('div', { className: 'ove-dialog-actions' },
               h('button', {
                 type: 'button',
                 className: 'ove-btn',
                 disabled: batchBusy,
-                onClick: () => setBatchConfirm(false),
+                onClick: () => setBatchKind(null),
               }, tr('cancel')),
               h('button', {
                 type: 'button',
-                className: 'ove-btn ove-btn-danger',
+                className: `ove-btn${batchKind === 'delete' ? ' ove-btn-danger' : ''}`,
                 disabled: batchBusy,
-                onClick: deleteMany,
-              }, batchBusy ? tr('batchDeleting') : tr('confirmDelete')))))),
+                onClick: () => { void (batchKind === 'restore' ? restoreMany() : deleteMany()); },
+              }, batchBusy
+                ? (batchKind === 'restore' ? tr('batchRestoring') : tr('batchDeleting'))
+                : (batchKind === 'restore' ? tr('batchRestore') : tr('confirmDelete'))))))),
 
-        // Rendered inside the settings panel so the confirmation stays above
-        // the page instead of falling behind the settings modal.
-        pending !== null && h(DeleteConfirm, {
-          t,
-          target: pending,
-          busy: deleteBusy,
-          error: deleteError,
-          code: deleteCode,
-          onCancel: cancelDelete,
-          onConfirm: confirmDelete,
-          overlayClass: 'ove-overlay-top',
-        }),
       );
     }
 

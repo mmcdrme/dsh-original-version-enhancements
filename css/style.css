@@ -154,20 +154,22 @@
 .ove-arc-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ove-arc-count { margin-left: auto; flex: none; font-weight: 400; color: var(--dsw-alias-label-tertiary); }
 .ove-arc-title { display: flex; align-items: baseline; gap: 6px; min-width: 0; font-size: 14px; line-height: 22px; color: var(--dsw-alias-label-primary); }
-.ove-arc-ws { flex: none; max-width: 40%; font-weight: 600; color: var(--dsw-alias-label-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ove-arc-ws { flex: 0 1 auto; min-width: 0; font-weight: 600; color: var(--dsw-alias-label-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ove-arc-sep { flex: none; color: var(--dsw-alias-label-tertiary); }
-.ove-arc-name { min-width: 0; font-weight: 400; color: var(--dsw-alias-label-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ove-arc-name { flex: 1 1 auto; min-width: 0; font-weight: 400; color: var(--dsw-alias-label-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ove-arc-sid {
-  flex: none; margin-left: 2px; font-size: 12px; color: #2563eb;
-  font-variant-numeric: tabular-nums; opacity: 0; transition: opacity .12s ease;
+  display: none; flex: none; margin-left: 2px; font-size: 12px; color: #2563eb;
+  font-variant-numeric: tabular-nums;
 }
 .ove-arc-row:hover .ove-arc-sid,
-.ove-arc-sid.is-shown { opacity: 1; }
+.ove-arc-sid.is-shown { display: inline; }
 .ove-arc-when { margin-top: 2px; font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-tertiary); }
-/* Row actions stay out of the way until the row is hovered or focused. */
-.ove-arc-row .ove-actions { opacity: 0; pointer-events: none; transition: opacity .12s ease; }
+/* Row actions take no room until the row is hovered (or focused by keyboard):
+   the title keeps its full width at rest and only then shortens with an
+   ellipsis to make room for the buttons. */
+.ove-arc-row .ove-actions { display: none; }
 .ove-arc-row:hover .ove-actions,
-.ove-arc-row:focus-within .ove-actions { opacity: 1; pointer-events: auto; }
+.ove-arc-row:has(.ove-check:focus-visible) .ove-actions { display: flex; }
 .ove-item-text { flex: 1 1 180px; min-width: 0; display: grid; gap: 2px; }
 .ove-item-title { font-size: 14px; line-height: 22px; overflow-wrap: anywhere; }
 .ove-item-sub { font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-tertiary); }
