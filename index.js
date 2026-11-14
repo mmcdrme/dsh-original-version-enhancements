@@ -31,6 +31,7 @@ import {
   readAutomationState,
   writeAutomationState,
 } from './host/automation.mjs'
+import { createRenameRequestHandler, renameSubagentSession } from './host/rename-session.mjs'
 import { createLangHandler } from './host/lang.mjs'
 import { createStyleHandler } from './host/css.mjs'
 import { createEmbedHandler } from './host/embed.mjs'
@@ -353,6 +354,29 @@ export function apply(ctx) {
       handler: deleteHandler,
     }),
     'original-version-enhancements: confirmed session deletion route',
+  )
+
+  // Renaming a subagent conversation. The shipped `session/rename` RPC resolves
+  // the target to its live Agent, and the Host refuses subagent-routed sessions
+  // there, so the same user `session/title` event is written through the
+  // official title service (loaded child) or persistence write handle (unloaded
+  // child). Ordinary Sessions still go through the shipped RPC.
+  const renameHandler = createRenameRequestHandler({
+    isTrustedRequest,
+    rename: (sessionId, title) => renameSubagentSession({
+      sessions: ctx.sessions,
+      sessionPersistence: persistence,
+      sessionTitle: () => optional(ctx, 'sessionTitle'),
+    }, sessionId, title),
+  })
+
+  ctx.effect(
+    () => ctx.webServer.register({
+      kind: 'exact',
+      path: `${ROUTE_ROOT}/sessions/rename`,
+      handler: renameHandler,
+    }),
+    'original-version-enhancements: subagent rename route',
   )
 
   // Moving or copying one session into another workspace. A session belongs to

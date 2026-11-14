@@ -241,6 +241,18 @@ DSH 的子智能体是真实会话（`origin: 'subagent'`，带 `parentSessionId
 - **在插件设置页里**：设置 → 原版功能增强 → 最下面的「子智能体」分组，可以单独开关
   「在父会话下展开子智能体」、开关「显示子会话数量」，以及「全部收起」清除记住的展开状态
   （关掉开关后侧边栏恢复官方原样）。
+- **子会话右键菜单**：在子智能体行上点右键（或聚焦后按 `Shift+F10` / 菜单键）会打开官方的
+  右键菜单浮层，只有四条针对这条子会话的动作：
+  - `重命名会话`：官方对话框样式；提交时先走官方 `sessions.using(...).rename`，但 DSH 的
+    `session/rename` RPC 会把子智能体会话交给「subagent delivery」并拒绝（`owned by subagent routing`），
+    所以插件再用 Host 路由写同一个 `session/title`（`source.kind = 'user'`）事件——子会话已加载时走官方
+    `sessionTitle.rename` 服务，未加载时走官方 `sessionPersistence` 写句柄，标题与官方重命名完全同构、可持久化；
+  - `复制 Session ID`：与官方会话菜单一致，用官方剪贴板工具 + 官方菜单提示条；
+  - `复制到工作区`：复用插件的复制功能，把子会话的完整记录复制成目标工作区里的独立会话
+    （新 id、新 `cwd`、不继承父子血缘），可撤销，原会话不变；
+  - `删除子智能体`：复用插件可撤销的永久删除，并在确认框里额外提示
+    「删除子智能体可能会造成未知问题」——父会话里引用它的记录、正在运行的任务和后续回复都可能失效。
+  这些动作只在插件自有的菜单类别里注册，官方会话行的右键菜单不受影响。
 - 侧边栏没有「会话行下方」这种插槽，所以这一段行由插件在 shell 上用 MutationObserver
   注入：侧边栏重渲染、折叠工作区分组、滚动隐藏行后都会自动重新对上位置，不会残留错位的行。
 
@@ -444,6 +456,10 @@ DSH 的子智能体是真实会话（`origin: 'subagent'`，带 `parentSessionId
   同一个确认头）
 - `POST /plugins/original-version-enhancements/sessions/transfer` — 移动 / 复制会话到其他工作区
   （需要 `x-dsh-session-transfer-confirmation: transfer-session` 确认头与同源校验）
+- `POST /plugins/original-version-enhancements/sessions/rename` — 重命名子智能体会话
+  （需要 `x-dsh-session-rename-confirmation: rename-session` 确认头与同源校验；只接受
+  `origin: 'subagent'` 的子会话，普通会话仍走官方重命名。子会话已加载时调用官方
+  `sessionTitle.rename`，否则通过官方 `sessionPersistence` 写句柄追加同样的 `session/title` 事件）
 - `POST /plugins/original-version-enhancements/automation/catalog` — 任务目录、投递后清理标记与每个任务的记录条数
 - `POST /plugins/original-version-enhancements/automation/history` — 单个任务的运行记录
 - `POST /plugins/original-version-enhancements/automation/create` — 新建任务
@@ -526,6 +542,13 @@ Host 半侧由 `host/css.mjs` 通过 `/plugins/original-version-enhancements/sty
 看到被拦截的真实地址，据此定位是哪个插件。
 
 测试用 Node 内置 runner：`node --test test/*.test.mjs`（或 `npm test`）。
+
+## 更新记录（v1.36.0）
+
+- **子智能体右键菜单**：子会话行新增官方样式的右键菜单——`重命名会话`、`复制 Session ID`、
+  `复制到工作区`、`删除子智能体`。前两条按官方方式实现（官方重命名事件 + 官方剪贴板与提示条），
+  后两条复用本插件已有的可撤销复制与永久删除；删除确认框额外提示
+  「删除子智能体可能会造成未知问题」。新增 Host 路由 `/sessions/rename`，并补 8 条回归用例。
 
 ## 修复记录（v1.32.0）
 

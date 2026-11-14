@@ -333,7 +333,21 @@
     "batchRestoreTitle": "批量取消归档",
     "batchRestoreDesc": "将把选中的 {n} 个会话移出归档，放回各自工作区。",
     "batchListCount": "本次共 {n} 个会话",
-    "batchListLabel": "待处理的会话清单"
+    "batchListLabel": "待处理的会话清单",
+    "subagentMenu.rename": "重命名会话",
+    "subagentMenu.renameTitle": "重命名子智能体",
+    "subagentMenu.renameField": "子智能体名称",
+    "subagentMenu.renameDesc": "子智能体是父会话派生的真实会话，改名只影响它自己的标题，不影响父会话。",
+    "subagentMenu.confirmRename": "重命名",
+    "subagentMenu.renaming": "正在重命名…",
+    "subagentMenu.renameFailed": "重命名失败，请稍后重试。",
+    "subagentMenu.close": "关闭",
+    "subagentMenu.copyId": "复制 Session ID",
+    "subagentMenu.copyIdDone": "Session ID 已复制",
+    "subagentMenu.copyIdFailed": "复制失败，请重试",
+    "subagentMenu.copyToWorkspace": "复制到工作区",
+    "subagentMenu.delete": "删除子智能体",
+    "subagentMenu.deleteWarn": "删除子智能体可能会造成未知问题：父会话里引用它的记录、正在运行的任务以及后续回复都可能失效。删除后 10 秒内可在提示条中撤销。"
   },
   "en": {
     "group": "Work details",
@@ -669,6 +683,20 @@
     "batchRestoreTitle": "Unarchive selected",
     "batchRestoreDesc": "Move the {n} selected conversations out of the archive, back to their workspaces.",
     "batchListCount": "{n} conversations in this batch",
-    "batchListLabel": "Sessions in this batch"
+    "batchListLabel": "Sessions in this batch",
+    "subagentMenu.rename": "Rename session",
+    "subagentMenu.renameTitle": "Rename subagent",
+    "subagentMenu.renameField": "Subagent name",
+    "subagentMenu.renameDesc": "A subagent is a real Session created by its parent conversation; renaming only changes its own title.",
+    "subagentMenu.confirmRename": "Rename",
+    "subagentMenu.renaming": "Renaming…",
+    "subagentMenu.renameFailed": "Rename failed. Try again later.",
+    "subagentMenu.close": "Close",
+    "subagentMenu.copyId": "Copy Session ID",
+    "subagentMenu.copyIdDone": "Session ID copied",
+    "subagentMenu.copyIdFailed": "Copy failed. Try again.",
+    "subagentMenu.copyToWorkspace": "Copy to workspace",
+    "subagentMenu.delete": "Delete subagent",
+    "subagentMenu.deleteWarn": "Deleting a subagent may cause unknown problems: records in the parent conversation that refer to it, running tasks, and later replies can all break. This deletion can be undone from the receipt within 10 seconds."
   }
 }

@@ -21,6 +21,7 @@ window.__ModuleLoader__.load({
     const RESTORE_ROUTE = `${ROUTE_ROOT}/sessions/restore`;
     const PURGE_ROUTE = `${ROUTE_ROOT}/sessions/purge`;
     const TRANSFER_ROUTE = `${ROUTE_ROOT}/sessions/transfer`;
+    const RENAME_ROUTE = `${ROUTE_ROOT}/sessions/rename`;
     /** The four accepted work-details modes, in the same order as Settings. */
     const MODES = ['compact', 'standard', 'detailed', 'verbose'];
     /** Saved values from older generations of the same Host setting. */
@@ -3217,6 +3218,394 @@ window.__ModuleLoader__.load({
 }
 `;
 
+    /* ------------------------------------------------------------------ */
+    /* Subagent right-click menu                                           */
+    /* ------------------------------------------------------------------ */
+
+    /**
+     * Menu category owned by the injected subagent rows. The shipped overlay
+     * renders it with the same positioning, keyboard navigation and dismissal
+     * as the real session menu; a category of its own keeps the rows to the
+     * four actions a child conversation actually needs (the stock `session`
+     * menu would also offer pin, fork and archive there).
+     */
+    const SUBAGENT_MENU_TARGET = 'ove-subagent';
+
+    /**
+     * Titles the human set through the subagent menu. A child's catalogue
+     * label comes from its immutable descriptor event, so renaming only
+     * changes the Session title; remembering the new name here keeps the
+     * injected row in step with the conversation header, across reloads too.
+     */
+    const SUBAGENT_TITLE_KEY = 'original-version-enhancements.subagent-tree.titles.v1';
+    const readSubagentTitleOverrides = () => {
+      try {
+        const raw = JSON.parse(globalThis.localStorage?.getItem(SUBAGENT_TITLE_KEY) ?? '{}');
+        if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return new Map();
+        return new Map(Object.entries(raw).filter(([, title]) => typeof title === 'string' && title.length > 0));
+      } catch {
+        return new Map();
+      }
+    };
+    const subagentTitleOverrides = readSubagentTitleOverrides();
+    const saveSubagentTitleOverrides = () => {
+      try {
+        globalThis.localStorage?.setItem(SUBAGENT_TITLE_KEY, JSON.stringify(Object.fromEntries(subagentTitleOverrides)));
+      } catch { /* a blocked storage only loses the remembered rename */ }
+    };
+
+    /** Repaint every installed tree after a remembered title changes. */
+    const repaintSubagentTrees = () => {
+      for (const repaint of subagentTreeRepainters) {
+        try { repaint(); } catch { /* a disposed tree cannot repaint */ }
+      }
+    };
+
+    /** Pending rename request behind the subagent menu dialog. */
+    let subagentRenameState = { target: null, busy: false, error: '' };
+    const subagentRenameListeners = new Set();
+    const publishSubagentRename = (patch) => {
+      subagentRenameState = { ...subagentRenameState, ...patch };
+      for (const listener of subagentRenameListeners) listener();
+    };
+    const subscribeSubagentRename = (listener) => {
+      subagentRenameListeners.add(listener);
+      return () => { subagentRenameListeners.delete(listener); };
+    };
+    const getSubagentRename = () => subagentRenameState;
+
+    /**
+     * Read an optional Client service. The context proxy only exposes services
+     * the plugin injected, while `ctx.get` is the public lookup for optional
+     * ones (the same call the stock workspace plugin uses for analytics).
+     * @param ctx - the Client plugin context.
+     * @param name - service name.
+     * @returns the service, or undefined when this composition has none.
+     */
+    const optionalService = (ctx, name) => {
+      try {
+        return typeof ctx?.get === 'function' ? ctx.get(name) : undefined;
+      } catch {
+        return undefined;
+      }
+    };
+
+    /**
+     * Open the shipped menu overlay for one injected subagent row.
+     * @param ctx - the Client plugin context.
+     * @param sessionId - the child Session the row shows.
+     * @param displayTitle - the title the menu target carries.
+     * @param point - viewport position of the gesture.
+     * @returns whether the menu was opened.
+     */
+    const openSubagentMenu = (ctx, sessionId, displayTitle, point) => {
+      const open = optionalService(ctx, 'contextMenus')?.open;
+      if (typeof open !== 'function') return false;
+      try {
+        open({ kind: SUBAGENT_MENU_TARGET, value: { sessionId, displayTitle } }, point);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+
+    /**
+     * Copy one Session id the way the stock menu does: the shipped clipboard
+     * helper, then the menu toast it already uses for copy failures.
+     * @param ctx - the Client plugin context.
+     * @param sessionId - the Session id to place on the clipboard.
+     * @param tr - translator.
+     */
+    const copySubagentSessionId = async (ctx, sessionId, tr) => {
+      let copied = false;
+      try {
+        if (typeof uiPrimitives?.writeClipboard === 'function') {
+          copied = (await uiPrimitives.writeClipboard(sessionId)) === true;
+        } else if (typeof navigator !== 'undefined' && typeof navigator.clipboard?.writeText === 'function') {
+          await navigator.clipboard.writeText(sessionId);
+          copied = true;
+        }
+      } catch {
+        copied = false;
+      }
+      const text = tr(copied ? 'subagentMenu.copyIdDone' : 'subagentMenu.copyIdFailed');
+      const notify = optionalService(ctx, 'contextMenus')?.notify;
+      if (typeof notify === 'function') {
+        try { notify(text, copied); return; } catch { /* fall back to the plugin receipt */ }
+      }
+      pushDeleteNotice({ text, tone: copied ? 'success' : 'warning', token: '', seconds: 0 });
+    };
+
+    /**
+     * Ask the Host to write one user title for a subagent conversation. The
+     * route appends the same `session/title` event the shipped rename writes,
+     * through the official title service or persistence handle.
+     * @param sessionId - the Session to rename.
+     * @param title - the draft title.
+     * @returns `{ok, title}` or `{ok:false, error, code}`.
+     */
+    const requestHostRename = async (sessionId, title) => {
+      try {
+        const response = await fetch(RENAME_ROUTE, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'x-dsh-session-rename-confirmation': 'rename-session',
+          },
+          body: JSON.stringify({ sessionId, title }),
+        });
+        const body = await readJson(response);
+        if (!response.ok || body?.ok !== true) {
+          const problem = body?.error ?? {};
+          return {
+            ok: false,
+            error: problem.message || describeHttpStatus(response.status),
+            code: typeof problem.code === 'string' ? problem.code : '',
+          };
+        }
+        const accepted = body.value?.title;
+        return { ok: true, title: typeof accepted === 'string' && accepted.length > 0 ? accepted : title };
+      } catch (error) {
+        return { ok: false, error: describeRequestFailure(error), code: '' };
+      }
+    };
+
+    /**
+     * Rename one subagent Session. The shipped hop mirrors the stock workspace
+     * menu (`sessions.using(...).rename`), which the Host refuses for a
+     * subagent-routed child; the Host route then writes the same user title
+     * event through the official Session services, so the rename still lands.
+     * @param ctx - the Client plugin context.
+     * @param sessionId - the Session to rename.
+     * @param title - the draft title.
+     * @returns `{ok, title}` or `{ok:false, error}`.
+     */
+    const renameSubagentSession = async (ctx, sessionId, title) => {
+      if (typeof ctx?.sessions?.using === 'function') {
+        try {
+          const result = await ctx.sessions.using(sessionId, { source: 'workspaceOperation' },
+            (reference) => reference.binding.session.rename(title));
+          if (result?.ok === true) {
+            const accepted = typeof result.value?.title === 'string' && result.value.title.length > 0
+              ? result.value.title
+              : title;
+            return { ok: true, title: accepted };
+          }
+        } catch { /* subagent routing refuses the ordinary hop; the Host route handles it */ }
+      }
+      return await requestHostRename(sessionId, title);
+    };
+
+    /**
+     * Rename dialog for one subagent conversation. It reuses the shipped Modal
+     * and Button so it reads like the stock session-rename dialog; the fallback
+     * markup keeps the action available in compositions without those
+     * primitives.
+     * @param props - injected translator and the plugin context.
+     * @returns the dialog, or nothing while no rename is pending.
+     */
+    function SubagentRenameDialog({ t, ctx }) {
+      const tr = typeof t === 'function' ? t : (key) => key;
+      const state = React.useSyncExternalStore(subscribeSubagentRename, getSubagentRename, getSubagentRename);
+      const target = state.target;
+      const targetId = typeof target?.sessionId === 'string' ? target.sessionId : '';
+      const [draft, setDraft] = React.useState('');
+      const [error, setError] = React.useState('');
+      const composingRef = React.useRef(false);
+
+      React.useEffect(() => {
+        if (targetId.length === 0) return;
+        setDraft(typeof target?.title === 'string' ? target.title : '');
+        setError('');
+      }, [targetId]);
+
+      React.useEffect(() => {
+        if (target === null || target === undefined) return undefined;
+        const onKey = (event) => {
+          if (event.key === 'Escape' && subagentRenameState.busy !== true) {
+            publishSubagentRename({ target: null, busy: false, error: '' });
+          }
+        };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+      }, [target]);
+
+      if (target === null || target === undefined) return null;
+
+      const busy = state.busy === true;
+      const trimmed = draft.trim();
+      const blocked = busy || trimmed.length === 0;
+      const close = () => {
+        if (subagentRenameState.busy === true) return;
+        publishSubagentRename({ target: null, busy: false, error: '' });
+      };
+      const confirm = async () => {
+        if (blocked || subagentRenameState.busy === true) return;
+        publishSubagentRename({ busy: true, error: '' });
+        const result = await renameSubagentSession(ctx, targetId, trimmed);
+        if (result.ok) {
+          subagentTitleOverrides.set(targetId, result.title);
+          saveSubagentTitleOverrides();
+          repaintSubagentTrees();
+          // The Host wrote a title event; ask for a fresh list baseline so the
+          // conversation metadata agrees with the row on the next reload too.
+          try { void ctx?.sessions?.refresh?.(); } catch { /* the next push still lands */ }
+          publishSubagentRename({ target: null, busy: false, error: '' });
+        } else {
+          publishSubagentRename({ busy: false, error: result.error || tr('subagentMenu.renameFailed') });
+        }
+      };
+
+      const field = h('input', {
+        className: 'ove-input',
+        style: { width: '100%', boxSizing: 'border-box' },
+        value: draft,
+        'aria-label': tr('subagentMenu.renameField'),
+        'data-modal-autofocus': true,
+        disabled: busy,
+        onFocus: (event) => { event.target.select?.(); },
+        onChange: (event) => { setDraft(event.target.value); setError(''); },
+        onCompositionStart: () => { composingRef.current = true; },
+        onCompositionEnd: () => { composingRef.current = false; },
+        onKeyDown: (event) => {
+          // Enter that commits an IME composition must not submit.
+          if (event.key === 'Enter' && composingRef.current !== true) {
+            event.preventDefault();
+            void confirm();
+          }
+        },
+      });
+
+      // The primitives are memo/forwardRef components, not plain functions.
+      const Modal = uiPrimitives?.Modal;
+      const Button = uiPrimitives?.Button;
+      if (Modal !== undefined && Modal !== null && Button !== undefined && Button !== null) {
+        return h(Modal, {
+          open: true,
+          onClose: close,
+          closeLabel: tr('subagentMenu.close'),
+          title: tr('subagentMenu.renameTitle'),
+          footer: h(React.Fragment, null,
+            h(Button, {
+              variant: 'outline',
+              disabled: busy,
+              onClick: close,
+            }, tr('cancel')),
+            h(Button, {
+              variant: 'primary',
+              disabled: blocked,
+              onClick: () => { void confirm(); },
+            }, busy ? tr('subagentMenu.renaming') : tr('subagentMenu.confirmRename'))),
+        },
+        field,
+        error.length > 0 && h('div', { role: 'alert', style: { color: '#dc2626', fontSize: '12px', lineHeight: '18px', marginTop: '6px' } }, error));
+      }
+
+      const dialog = h('div', {
+        className: 'ove-dialog',
+        role: 'dialog',
+        'aria-modal': 'true',
+        'aria-label': tr('subagentMenu.renameTitle'),
+      },
+        h('h2', { className: 'ove-dialog-title' }, tr('subagentMenu.renameTitle')),
+        h('p', { className: 'ove-dialog-desc' }, tr('subagentMenu.renameDesc')),
+        field,
+        error.length > 0 && h('p', { className: 'ove-error', role: 'alert' }, error),
+        h('div', { className: 'ove-dialog-actions' },
+          h('button', { type: 'button', className: 'ove-btn', disabled: busy, onClick: close }, tr('cancel')),
+          h('button', {
+            type: 'button',
+            className: 'ove-btn',
+            disabled: blocked,
+            onClick: () => { void confirm(); },
+          }, busy ? tr('subagentMenu.renaming') : tr('subagentMenu.confirmRename'))));
+
+      return overlayPortal(h(React.Fragment, null,
+        // The menu can open on a page with no other surface of this plugin, so
+        // the fallback dialog ships its own stylesheet.
+        h('style', { key: 'styles', 'data-plugin-css': `${NS}-subagent-rename` }, CSS),
+        h('div', {
+          className: 'ove-overlay ove-overlay-top',
+          onMouseDown: (event) => { if (event.target === event.currentTarget) close(); },
+        }, dialog)));
+    }
+
+    /**
+     * Contribute the four subagent-menu rows to the shipped context menu. The
+     * target category is ours, so they only appear for an injected subagent
+     * row; rename and copy-id run the shipped Session actions, while the
+     * transfer and delete rows reuse this plugin's own undoable flows.
+     * @param ctx - the Client plugin context.
+     * @param text - translator.
+     */
+    const registerSubagentMenus = (ctx, text) => {
+      if (typeof ctx?.inject !== 'function') return;
+      // `contextMenus` is provided by the menu plugin; a plugin only sees the
+      // services it injected, so wait for it instead of reading ctx.contextMenus.
+      ctx.inject(['contextMenus'], (scope) => {
+        const register = (id, order, resolve) => scope.effect(() => scope.contextMenus.register({
+          id: `original-version-enhancements.subagent.${id}`,
+          target: SUBAGENT_MENU_TARGET,
+          order,
+          resolve,
+        }), `original-version-enhancements: subagent menu ${id}`);
+
+        register('rename', 200, (target) => [{
+          id: 'rename',
+          label: text('subagentMenu.rename'),
+          icon: { key: 'workspace.rename' },
+          run: () => {
+            publishSubagentRename({
+              target: { sessionId: target.sessionId, title: target.displayTitle },
+              busy: false,
+              error: '',
+            });
+          },
+        }]);
+        register('copy-id', 450, (target) => [{
+          id: 'copy-id',
+          label: text('subagentMenu.copyId'),
+          icon: { key: 'workspace.copy' },
+          separatorBefore: true,
+          run: () => { void copySubagentSessionId(ctx, target.sessionId, text); },
+        }]);
+        // The transfer and delete surfaces live behind the chat-manager switch;
+        // with it off they are not mounted, so their rows are not offered either.
+        register('copy-workspace', 480, (target) => (getFlags().chatManager ? [{
+          id: 'copy-workspace',
+          label: text('subagentMenu.copyToWorkspace'),
+          icon: { key: 'ove.subagent.transfer' },
+          run: () => { openTransfer({ id: target.sessionId, title: target.displayTitle }, 'copy'); },
+        }] : []));
+        register('delete', 500, (target) => (getFlags().chatManager ? [{
+          id: 'delete',
+          label: text('subagentMenu.delete'),
+          icon: { key: 'ove.subagent.delete' },
+          danger: true,
+          separatorBefore: true,
+          run: () => {
+            publishDelete({
+              target: { id: target.sessionId, title: target.displayTitle || target.sessionId, subagent: true },
+              busy: false,
+              error: '',
+              code: '',
+            });
+          },
+        }] : []));
+      });
+    };
+
+    /** Glyphs for the two rows this plugin owns in the subagent menu. */
+    const registerSubagentMenuIcons = (ctx) => {
+      if (typeof ctx?.slots?.inject !== 'function' || typeof ctx.effect !== 'function') return;
+      ctx.effect(() => ctx.slots.inject('contextMenu.icon', function* () {
+        yield ctx.slots.register({ name: 'contextMenu.icon', key: 'ove.subagent.transfer' },
+          () => h(TransferIcon, { mode: 'copy' }));
+        yield ctx.slots.register({ name: 'contextMenu.icon', key: 'ove.subagent.delete' },
+          () => h(TrashIcon));
+      }), 'original-version-enhancements: subagent menu icons');
+    };
+
     /**
      * Draw the subagent tree under each conversation row in the stock sidebar.
      *
@@ -3285,7 +3674,10 @@ window.__ModuleLoader__.load({
 
       const titleOf = (item, parentId) => {
         const catalog = catalogs.get(parentId)?.get(idOf(item)) ?? catalogs.get(parentId)?.get(item?.sessionId);
-        for (const candidate of [catalog?.label, catalog?.name, item?.displayTitle, item?.title]) {
+        // A rename through the subagent menu outranks the immutable catalogue
+        // label, so the row reads the same as the conversation header.
+        const renamed = subagentTitleOverrides.get(idOf(item));
+        for (const candidate of [renamed, catalog?.label, catalog?.name, item?.displayTitle, item?.title]) {
           const title = typeof candidate === 'string' ? candidate.trim() : '';
           if (title.length > 0) return title;
         }
@@ -3382,7 +3774,21 @@ window.__ModuleLoader__.load({
         }
         if (itemId === active) row.classList.add('is-active');
         row.addEventListener('click', () => openChild(itemId));
+        // The row is injected markup, so it owns its own menu gesture: the
+        // shipped overlay is opened for this exact child conversation.
+        row.addEventListener('contextmenu', (event) => {
+          if (!openSubagentMenu(ctx, itemId, titleOf(item, parentId), { x: event.clientX, y: event.clientY })) return;
+          event.preventDefault();
+          event.stopPropagation();
+        });
         row.addEventListener('keydown', (event) => {
+          // The menu key and Shift+F10 open the same menu as a right click.
+          if (event.key === 'ContextMenu' || (event.key === 'F10' && event.shiftKey)) {
+            event.preventDefault();
+            const rect = row.getBoundingClientRect();
+            openSubagentMenu(ctx, itemId, titleOf(item, parentId), { x: rect.left + 24, y: rect.bottom - 2 });
+            return;
+          }
           if (event.key !== 'Enter' && event.key !== ' ') return;
           event.preventDefault();
           openChild(itemId);
@@ -3541,6 +3947,19 @@ window.__ModuleLoader__.load({
               pruned = true;
             }
             if (pruned) saveSubagentTreeOpen();
+            // A remembered rename is only meaningful while its child is still
+            // in the tree; the same loaded list that prunes expansion prunes it.
+            const alive = new Set();
+            for (const list of children.values()) {
+              for (const child of list) alive.add(idOf(child));
+            }
+            let titlesPruned = false;
+            for (const id of [...subagentTitleOverrides.keys()]) {
+              if (alive.has(id)) continue;
+              subagentTitleOverrides.delete(id);
+              titlesPruned = true;
+            }
+            if (titlesPruned) saveSubagentTitleOverrides();
           }
 
           const rows = [...document.querySelectorAll(rowSelector)];
@@ -4581,6 +5000,9 @@ window.__ModuleLoader__.load({
         h('h2', { className: 'ove-dialog-title' }, tr('dialogTitle')),
         h('p', { className: 'ove-dialog-desc' }, tr('dialogDesc')),
         h('p', { className: 'ove-dialog-target' }, target.title),
+        // Removing a child conversation can invalidate whatever its parent
+        // still refers to, so this deletion carries an explicit warning.
+        target.subagent === true && h('p', { className: 'ove-warn' }, tr('subagentMenu.deleteWarn')),
         error && h('p', { className: 'ove-error', role: 'alert' }, error),
         canForce && h('p', { className: 'ove-warn' }, tr('forceHint')),
         canForce && h('p', { className: 'ove-muted ove-dialog-note' }, tr('retryHint')),
@@ -7793,6 +8215,18 @@ window.__ModuleLoader__.load({
           id: 'original-version-enhancements.subagent-tree',
           inject: () => ({ ctx, t: translator }),
         }, SubagentTreeBridge)), 'original-version-enhancements: subagent tree');
+
+        // The subagent rows open the shipped context menu with a category of
+        // their own: rename and copy-id run the shipped session actions, and
+        // the transfer/delete rows reuse this plugin's undoable flows. The
+        // rename dialog exists exactly while the tree can open it.
+        registerSubagentMenus(ctx, text);
+        registerSubagentMenuIcons(ctx);
+        ctx.effect(() => ctx.slots.inject('shell.overlay', () => ctx.slots.register({
+          name: 'shell.overlay',
+          id: 'original-version-enhancements.subagent-rename',
+          inject: () => ({ t: translator, ctx }),
+        }, SubagentRenameDialog)), 'original-version-enhancements: subagent rename dialog');
 
         // Independent windows have their own switch: the menu row and the
         // cross-window bridge exist only while it is on. Turning it off brings
