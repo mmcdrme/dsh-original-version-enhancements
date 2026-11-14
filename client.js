@@ -3506,11 +3506,11 @@ window.__ModuleLoader__.load({
    the name at exactly the same x. */
 .ove-sub-caret-btn {
   flex: none; display: inline-flex; align-items: center; justify-content: flex-start; gap: 1px;
-  width: 20px; height: 16px; padding: 0; border: 0; background: transparent;
+  width: 20px; height: 16px; padding: 0; margin-right: 6px; border: 0; background: transparent;
   color: var(--dsw-alias-label-tertiary); cursor: pointer;
 }
 .ove-sub-caret-count { flex: none; font-size: 10px; line-height: 16px; font-variant-numeric: tabular-nums; opacity: .9; }
-.ove-sub-caret-slot { flex: none; width: 20px; height: 16px; }
+.ove-sub-caret-slot { flex: none; width: 20px; height: 16px; margin-right: 6px; }
 /* The lead cluster owns one fixed 18px column before the name: the caret,
    status marker and level dot are packed against its right edge, so the deepest
    element (the dot) touches the name and every name starts in the shipped
@@ -3571,7 +3571,7 @@ window.__ModuleLoader__.load({
    column (6px) separates it from the conversation name. A row without any
    subagent shows no number, but keeps the column so its name still lines up. */
 .ove-sub-level {
-  flex: none; min-width: 8px; margin-right: 6px;
+  flex: none; min-width: 8px; margin-right: 2px;
   font-size: 11px; line-height: 12px; font-weight: 600;
   color: #2563eb; font-variant-numeric: tabular-nums;
 }
@@ -4010,6 +4010,13 @@ window.__ModuleLoader__.load({
           lead.append(spoken);
         }
         leadCluster.append(lead);
+        // The blue level number sits before the arrow, so the expander always
+        // starts at the same x for every row of one level.
+        const level = document.createElement('span');
+        level.className = `ove-sub-level${kids.length === 0 ? ' is-empty' : ''}`;
+        level.setAttribute('aria-hidden', 'true');
+        level.textContent = String(depth);
+        leadCluster.append(level);
         if (kids.length > 0) {
           row.setAttribute('aria-expanded', String(expanded));
           const caretButton = document.createElement('button');
@@ -4040,13 +4047,6 @@ window.__ModuleLoader__.load({
           slot.setAttribute('aria-hidden', 'true');
           leadCluster.append(slot);
         }
-        // The level is a blue number before the name (no dot prefix), so the
-        // nesting reads as a number and same-level rows line up from the left.
-        const level = document.createElement('span');
-        level.className = `ove-sub-level${kids.length === 0 ? ' is-empty' : ''}`;
-        level.setAttribute('aria-hidden', 'true');
-        level.textContent = String(depth);
-        leadCluster.append(level);
         row.append(leadCluster);
         const label = document.createElement('span');
         label.className = 'ove-sub-title';
