@@ -1,9 +1,10 @@
 // Unit tests for the locked and scrolling behaviour of the settings page.
 //
-// A switched-off box keeps its rows (they are only inert), and opening a fold
-// scrolls it into the dialog's option list in step with the fold's own 0.22 s:
-// bottom edge when the whole box fits, top edge when it cannot, and nothing at
-// all when the box is already fully readable.
+// A switched-off box keeps its rows (they are only inert). Opening a fold
+// scrolls the dialog's option list in step with the fold's own 0.22 s: the view
+// stops on the top edge of the next section's border, which clips that border
+// away; a box too tall for the list is lined up by its top edge; and a box that
+// is already fully readable moves nothing.
 
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
@@ -16,7 +17,7 @@ const revealWith = (box, area, options = {}) => {
   const start = clientSource.indexOf('    /** The fold\'s own animation length')
   const end = clientSource.indexOf('    /**\n     * One "big setting" box:')
   assert.ok(start >= 0 && end > start, 'missing revealFoldedBox anchors')
-  let clock = 0;
+  let clock = 0
   let frames = 0
   const body = {}
   const scroller = {
@@ -26,9 +27,13 @@ const revealWith = (box, area, options = {}) => {
     parentElement: body,
     getBoundingClientRect: () => area,
   }
+  const sibling = options.nextTop === undefined
+    ? null
+    : { getBoundingClientRect: () => ({ top: options.nextTop }) }
   const node = {
     isConnected: true,
     parentElement: scroller,
+    nextElementSibling: sibling,
     getBoundingClientRect: () => box,
   }
   const window = {
@@ -59,7 +64,29 @@ return { revealFoldedBox, FOLD_DURATION_MS }`,
 
 const AREA = { top: 100, bottom: 900, height: 800 }
 
-test('a box that fits is pinned by its bottom edge, above the list padding', () => {
+test('the view stops on the top edge of the next section border', () => {
+  // The next box starts 10 px below the opened one; one pixel past the edge
+  // keeps its border itself clipped instead of drawing a stray line.
+  const result = revealWith(
+    { top: 700, bottom: 1100, height: 400 },
+    AREA,
+    { nextTop: 1110 },
+  )
+  assert.equal(result.scrollTop, 209)
+})
+
+test('a box too tall for the list is pinned by its top edge instead', () => {
+  const result = revealWith({ top: 400, bottom: 1600, height: 1200 }, AREA, { nextTop: 1610 })
+  assert.equal(result.scrollTop, 300)
+})
+
+test('a fold that is already fully readable is left alone', () => {
+  const result = revealWith({ top: 200, bottom: 400, height: 200 }, AREA, { scrollTop: 500, nextTop: 410 })
+  assert.equal(result.scrollTop, 500)
+  assert.equal(result.frames, 0)
+})
+
+test('the last box has no section below, so it stops above the list padding', () => {
   const result = revealWith(
     { top: 700, bottom: 1100, height: 400 },
     AREA,
@@ -69,68 +96,45 @@ test('a box that fits is pinned by its bottom edge, above the list padding', () 
   assert.equal(result.scrollTop, 224)
 })
 
-test('a box too tall for the list is pinned by its top edge instead', () => {
-  const result = revealWith({ top: 400, bottom: 1600, height: 1200 }, AREA)
-  assert.equal(result.scrollTop, 300)
-})
-
-test('a fold that is already fully readable is left alone', () => {
-  const result = revealWith({ top: 200, bottom: 400, height: 200 }, AREA, { scrollTop: 500 })
-  assert.equal(result.scrollTop, 500)
-  assert.equal(result.frames, 0)
-})
-
-test('a partially hidden fold below the list is only scrolled as far as needed', () => {
-  const result = revealWith(
-    { top: 760, bottom: 1080, height: 320 },
-    AREA,
-    { scrollTop: 500, paddingBottom: '24px' },
-  )
-  // Nothing is cut off at the top, so the bottom edge is the only rule:
-  // 500 + (1080 - 876)
-  assert.equal(result.scrollTop, 704)
-})
-
 test('the rows a folded body is about to reveal count towards its height', () => {
   const result = revealWith(
     { top: 700, bottom: 760, height: 60 },
     AREA,
-    { paddingBottom: '24px', body: { scrollHeight: 300, clientHeight: 0 } },
+    { nextTop: 770, body: { scrollHeight: 300, clientHeight: 0 } },
   )
-  // 760 (collapsed) + 300 (rows) - 876
-  assert.equal(result.scrollTop, 184)
+  // 770 (next box, collapsed) + 300 (rows) - 900 - 1
+  assert.equal(result.scrollTop, 169)
 })
 
 test('the clamp counts the rows that are still opening', () => {
-  // Everything folded: the list is nearly at its end, yet the move must reach
-  // the position the opened box will occupy.
   const result = revealWith(
     { top: 700, bottom: 760, height: 60 },
     AREA,
     {
-      paddingBottom: '24px',
-      scrollHeight: 800,
+      nextTop: 770,
+      scrollHeight: 600,
       body: { scrollHeight: 300, clientHeight: 0 },
     },
   )
-  assert.equal(result.scrollTop, 184)
+  // The list can only reach 600 + 300 - 800 before the body has opened.
+  assert.equal(result.scrollTop, 100)
 })
 
 test('the scroll runs for the fold duration and lands on the exact target', () => {
-  const result = revealWith({ top: 700, bottom: 1100, height: 400 }, AREA, { paddingBottom: '24px' })
+  const result = revealWith({ top: 700, bottom: 1100, height: 400 }, AREA, { nextTop: 1110 })
   assert.equal(result.api.FOLD_DURATION_MS, 220)
   // 110 ms steps: half way, then the final frame — two animation frames.
   assert.equal(result.frames, 2)
-  assert.equal(result.scrollTop, 224)
+  assert.equal(result.scrollTop, 209)
 })
 
 test('reduced motion jumps to the target without animation', () => {
   const result = revealWith({ top: 700, bottom: 1100, height: 400 }, AREA, {
-    paddingBottom: '24px',
+    nextTop: 1110,
     reduce: true,
   })
   assert.equal(result.frames, 0)
-  assert.equal(result.scrollTop, 224)
+  assert.equal(result.scrollTop, 209)
 })
 
 test('a switched-off box keeps its rows but makes them inert', () => {

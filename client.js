@@ -1948,10 +1948,11 @@ window.__ModuleLoader__.load({
      * Bring a fold the human just opened into view inside the settings dialog.
      *
      * The list is scrolled only when it has to be: a fold already fully inside
-     * the visible area is left where it is. When the whole box fits, its bottom
-     * edge is lined up with the top of the list's bottom padding (so the box
-     * border never sits on the dialog edge); a box taller than the list is
-     * lined up by its top edge instead, at the top of the list's content area.
+     * the visible list is left where it is. When the whole box fits, the view
+     * ends on the **top edge of the next section's border** — that border is
+     * then outside the clip, so it is not drawn — which leaves the opened box
+     * sitting just above the gap instead of touching the dialog edge. A box
+     * taller than the list is lined up by its top edge at the content top.
      * The body is clipped rather than collapsed in layout while folded, so its
      * full height is readable up front and the scroll can start immediately.
      * @param node - the box (or folded row) element that opened.
@@ -1972,20 +1973,34 @@ window.__ModuleLoader__.load({
         const style = getComputedStyle(scroller);
         const padTop = Number.parseFloat(style.paddingTop) || 0;
         const padBottom = Number.parseFloat(style.paddingBottom) || 0;
-        const visibleTop = area.top + padTop;
-        const visibleBottom = area.bottom - padBottom;
+        const contentTop = area.top + padTop;
+        const contentBottom = area.bottom - padBottom;
+        if (area.height === 0 || contentBottom - contentTop <= 0) return;
         const box = node.getBoundingClientRect();
         const grow = body === null || body === undefined
           ? 0
           : Math.max(0, body.scrollHeight - body.clientHeight);
         const bottom = box.bottom + grow;
-        if (area.height === 0 || visibleBottom - visibleTop <= 0) return;
-        // Already readable in full: leave the list alone.
-        if (box.top >= visibleTop && bottom <= visibleBottom) return;
-        const fits = bottom - box.top <= visibleBottom - visibleTop;
-        const target = fits
-          ? scroller.scrollTop + (bottom - visibleBottom)
-          : scroller.scrollTop + (box.top - visibleTop);
+        // Already readable in full: leave the list where it is.
+        if (box.top >= contentTop && bottom <= area.bottom) return;
+        const fits = bottom - box.top <= contentBottom - contentTop;
+        let target;
+        if (fits) {
+          // The section under this one (its border is what the view stops on)
+          // moves down by the same amount the body grows.
+          const sibling = node.nextElementSibling;
+          const nextTop = sibling !== null && sibling !== undefined
+            && typeof sibling.getBoundingClientRect === 'function'
+            ? sibling.getBoundingClientRect().top + grow
+            : null;
+          target = nextTop === null
+            // The last box has no section below: stop at the list padding.
+            ? scroller.scrollTop + (bottom - contentBottom)
+            // One pixel short of the edge, so the border itself is clipped.
+            : scroller.scrollTop + (nextTop - area.bottom) - 1;
+        } else {
+          target = scroller.scrollTop + (box.top - contentTop);
+        }
         // The list can only scroll as far as the content it is about to have:
         // the folded rows still count, otherwise the clamp would cut the move
         // short while the body is still opening.
