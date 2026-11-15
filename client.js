@@ -1830,6 +1830,107 @@ window.__ModuleLoader__.load({
         error.length > 0 ? h('p', { className: 'ove-key-error' }, error) : null);
     }
 
+    /** Which settings boxes the human folded away (absent = expanded). */
+    const SETTINGS_OPEN_KEY = 'original-version-enhancements.settings-open.v1';
+    const readSettingsOpen = () => {
+      try {
+        const raw = JSON.parse(globalThis.localStorage?.getItem(SETTINGS_OPEN_KEY) ?? '{}');
+        return raw !== null && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+      } catch {
+        return {};
+      }
+    };
+    let settingsOpenState = readSettingsOpen();
+    const settingsOpenListeners = new Set();
+    const subscribeSettingsOpen = (listener) => {
+      settingsOpenListeners.add(listener);
+      return () => { settingsOpenListeners.delete(listener); };
+    };
+    const getSettingsOpen = () => settingsOpenState;
+    const useSettingsOpen = () => React.useSyncExternalStore(subscribeSettingsOpen, getSettingsOpen, getSettingsOpen);
+    /** Fold or unfold one box; only folded boxes are stored. */
+    const setSettingOpen = (key, open) => {
+      const next = { ...settingsOpenState };
+      if (open === true) delete next[key];
+      else next[key] = false;
+      settingsOpenState = next;
+      try {
+        globalThis.localStorage?.setItem(SETTINGS_OPEN_KEY, JSON.stringify(next));
+      } catch { /* a blocked storage keeps the state for this page only */ }
+      for (const listener of settingsOpenListeners) listener();
+    };
+
+    /**
+     * One "big setting" box: a switch head that can fold the settings it owns.
+     *
+     * Folding is animated with a grid row transition (`1fr` → `0fr`), so the
+     * body slides shut instead of jumping, and the box border simply wraps
+     * whatever is currently visible.
+     * @param props - title/description, optional switch, body, and folded state.
+     * @returns the box.
+     */
+    function SettingBox({ t, title, desc, checked, onSwitch, children, extraClass, open, onToggleOpen }) {
+      const tr = typeof t === 'function' ? t : (key) => key;
+      const hasBody = children !== null && children !== undefined;
+      const unfolded = hasBody ? open !== false : true;
+      const toggle = () => {
+        if (!hasBody || typeof onToggleOpen !== 'function') return;
+        onToggleOpen(unfolded !== true);
+      };
+      const caret = h('button', {
+        type: 'button',
+        className: `ove-setting-caret${unfolded ? ' is-open' : ''}`,
+        'aria-expanded': hasBody ? unfolded : undefined,
+        'aria-hidden': hasBody ? undefined : 'true',
+        'aria-label': tr(unfolded ? 'setting.collapse' : 'setting.expand'),
+        tabIndex: hasBody ? undefined : -1,
+        disabled: !hasBody,
+        onClick: (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          toggle();
+        },
+      }, h('svg', {
+        viewBox: '0 0 16 16',
+        width: 12,
+        height: 12,
+        fill: 'none',
+        stroke: 'currentColor',
+        strokeWidth: 1.6,
+        strokeLinecap: 'round',
+        strokeLinejoin: 'round',
+        'aria-hidden': 'true',
+      }, h('path', { d: 'M6 3.5 10.5 8 6 12.5' })));
+      return h('div', {
+        className: extraClass === undefined ? 'ove-setting' : `ove-setting ${extraClass}`,
+      },
+        h('div', {
+          className: 'ove-setting-head',
+          onClick: (event) => {
+            // The head itself is a fold handle; its switch keeps its own click.
+            const target = event.target instanceof Element ? event.target : null;
+            if (target !== null && target.closest('button, input, a, select, textarea') !== null) return;
+            toggle();
+          },
+        },
+          caret,
+          h('div', { className: 'ove-setting-text' },
+            h('div', { className: 'ove-setting-title' }, title),
+            desc === null || desc === undefined ? null : h('div', { className: 'ove-setting-desc' }, desc)),
+          onSwitch === null || onSwitch === undefined ? null : h('button', {
+            type: 'button',
+            className: 'ove-switch',
+            role: 'switch',
+            'aria-checked': checked === true,
+            'aria-label': title,
+            onClick: onSwitch,
+          }, h('span', { className: 'ove-switch-thumb' }))),
+        hasBody
+          ? h('div', { className: `ove-setting-collapse${unfolded ? '' : ' is-collapsed'}` },
+            h('div', { className: 'ove-setting-body' }, children))
+          : null);
+    }
+
     /**
      * Feature switches; the archive surface now has its own settings entry.
      * @param props - injected translator.
@@ -1841,6 +1942,7 @@ window.__ModuleLoader__.load({
       const recall = useRecall();
       const appearance = useWindow();
       const count = useSentHistoryCount();
+      const settingsOpen = useSettingsOpen();
       /** The pending scope switch, which must confirm that history is dropped. */
       const [scopeConfirm, setScopeConfirm] = React.useState(false);
       const scopePanelRef = React.useRef(null);
@@ -1920,15 +2022,17 @@ window.__ModuleLoader__.load({
        * without children is the same box with only a head, so the page reads as
        * a list of independent settings instead of one long wall of rows.
        */
-      const feature = (key, checked, onToggle, body, extraClass) => h('div', {
-        className: extraClass === undefined ? 'ove-setting' : `ove-setting ${extraClass}`,
-      },
-        h('div', { className: 'ove-setting-head' },
-          h('div', { className: 'ove-setting-text' },
-            h('div', { className: 'ove-setting-title' }, tr(key)),
-            h('div', { className: 'ove-setting-desc' }, tr(`${key}.desc`))),
-          switchOf(checked, onToggle, tr(key))),
-        body === null || body === undefined ? null : h('div', { className: 'ove-setting-body' }, body));
+      const feature = (key, checked, onToggle, body, extraClass) => h(SettingBox, {
+        t: tr,
+        title: tr(key),
+        desc: tr(`${key}.desc`),
+        checked,
+        onSwitch: onToggle,
+        children: body,
+        extraClass,
+        open: settingsOpen[key] !== false,
+        onToggleOpen: (open) => setSettingOpen(key, open),
+      });
       const note = (text) => h('p', { className: 'ove-row-note' }, text);
 
       return h(React.Fragment, null,
@@ -4540,6 +4644,7 @@ window.__ModuleLoader__.load({
     function SubagentTreeSettingsRows({ t }) {
       const tr = typeof t === 'function' ? t : (key) => key;
       const settings = useSubagentTreeSettings();
+      const settingsOpen = useSettingsOpen();
       const [cleared, setCleared] = React.useState(false);
 
       const clearExpanded = () => {
@@ -4566,14 +4671,16 @@ window.__ModuleLoader__.load({
           h('div', { className: 'ove-row-desc' }, desc)),
         control);
 
-      return h('div', { className: 'ove-setting' },
-        h('div', { className: 'ove-setting-head' },
-          h('div', { className: 'ove-setting-text' },
-            h('div', { className: 'ove-setting-title' }, tr('subagentTree.settingsTitle')),
-            h('div', { className: 'ove-setting-desc' }, tr('subagentTree.enable.desc'))),
-          switchOf('enable', settings.enabled, () => setSubagentTreeSetting('enabled', settings.enabled !== true))),
-        settings.enabled === true
-          ? h('div', { className: 'ove-setting-body' },
+      return h(SettingBox, {
+        t: tr,
+        title: tr('subagentTree.settingsTitle'),
+        desc: tr('subagentTree.enable.desc'),
+        checked: settings.enabled,
+        onSwitch: () => setSubagentTreeSetting('enabled', settings.enabled !== true),
+        open: settingsOpen['subagentTree'] !== false,
+        onToggleOpen: (open) => setSettingOpen('subagentTree', open),
+        children: settings.enabled === true
+          ? [
             h('p', { className: 'ove-row-note' }, tr('subagentTree.settingsIntro')),
             row(
               tr('subagentTree.showCount'),
@@ -4591,8 +4698,9 @@ window.__ModuleLoader__.load({
             ),
             cleared ? h('p', { className: 'ove-muted ove-row-note' }, tr('subagentTree.cleared')) : null,
             h('p', { className: 'ove-row-note' }, tr('subagentTree.settingsNote')),
-          )
-          : null);
+          ]
+          : null,
+      });
     }
 
     function DetachedSessionsBridge({ ctx, t }) {

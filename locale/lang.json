@@ -358,7 +358,9 @@
     "recall.persist": "重新启动保留历史记录",
     "recall.persist.desc": "关闭后独立模式的历史只保存在本次运行的内存里，重新启动应用后丢失（共享历史不受影响）。",
     "recall.clearTitle": "清除历史记录",
-    "recall.clearDesc": "当前已记录 {n} 条发送内容，清空后无法恢复。"
+    "recall.clearDesc": "当前已记录 {n} 条发送内容，清空后无法恢复。",
+    "setting.expand": "展开设置",
+    "setting.collapse": "收起设置"
   },
   "en": {
     "group": "Work details",
@@ -719,6 +721,8 @@
     "recall.persist": "Keep history across restarts",
     "recall.persist.desc": "When off, the independent-mode history lives only in this run’s memory and is gone after a restart (shared history is unaffected).",
     "recall.clearTitle": "Clear history",
-    "recall.clearDesc": "{n} sent messages are recorded right now; clearing them cannot be undone."
+    "recall.clearDesc": "{n} sent messages are recorded right now; clearing them cannot be undone.",
+    "setting.expand": "Expand settings",
+    "setting.collapse": "Collapse settings"
   }
 }

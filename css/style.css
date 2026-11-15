@@ -84,6 +84,37 @@
   padding: 0 14px;
 }
 .ove-setting-head { display: flex; align-items: flex-start; gap: 16px; padding: 12px 0; }
+.ove-setting:has(.ove-setting-collapse) .ove-setting-head { cursor: pointer; }
+/* Fold handle in front of the title; the glyph turns while the body slides. */
+.ove-setting-caret {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 20px;
+  margin: 1px -6px 0 -2px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+  cursor: pointer;
+  transition: background-color .15s ease, color .15s ease;
+}
+.ove-setting-caret:hover { background: color-mix(in srgb, var(--dsw-alias-label-primary) 8%, transparent); color: var(--dsw-alias-label-secondary); }
+.ove-setting-caret:focus-visible { outline: 2px solid #3b82f6; outline-offset: 1px; }
+.ove-setting-caret:disabled { visibility: hidden; }
+.ove-setting-caret svg { transition: transform .2s ease; }
+.ove-setting-caret.is-open svg { transform: rotate(90deg); }
+/* Animated fold: the grid row goes 1fr → 0fr, so the body slides shut and the
+   box border simply wraps whichever part is visible. */
+.ove-setting-collapse {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition: grid-template-rows .22s ease;
+}
+.ove-setting-collapse.is-collapsed { grid-template-rows: 0fr; }
 .ove-setting-text { flex: 1 1 auto; min-width: 0; display: grid; gap: 2px; }
 /* The big-setting title is a quieter label than a body row: it names the
    switch, it is not itself a line of content. */
@@ -96,7 +127,7 @@
 .ove-setting-desc { font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-tertiary); }
 /* Everything the switch owns starts one indent step in, with a hairline guide
    running down the left edge of the group. */
-.ove-setting-body { padding: 0 0 4px 7px; }
+.ove-setting-body { min-height: 0; overflow: hidden; padding: 0 0 4px 7px; }
 .ove-setting-body > .ove-row { position: relative; padding: 10px 0; }
 .ove-setting-body > .ove-row + .ove-row { border-top: .5px solid var(--dsw-alias-border-l1); }
 .ove-setting-body > .ove-row-note { padding: 8px 0 4px; }
