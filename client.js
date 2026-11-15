@@ -2365,6 +2365,13 @@ window.__ModuleLoader__.load({
 
               feature('switch.chat', flags.chatManager, () => toggle('chatManager'), null),
 
+              // Automation tasks come first: the order of this list is the
+              // order features were added in, not their importance.
+              feature('switch.automation', flags.automation, () => toggle('automation'),
+                  [
+                    switchRow('switch.bindScopes', flags.bindScopes, () => toggle('bindScopes')),
+                  ]),
+
               // Sent-message recall: the shortcut bindings and how deep the
               // stack goes. The scope is its own first-level setting below.
               feature('switch.recall', flags.recall, () => toggle('recall'),
@@ -2429,11 +2436,6 @@ window.__ModuleLoader__.load({
                       disabled: count === 0,
                       onClick: () => setClearConfirm(true),
                     }, tr('recall.clear'))),
-                  ]),
-
-              feature('switch.automation', flags.automation, () => toggle('automation'),
-                  [
-                    switchRow('switch.bindScopes', flags.bindScopes, () => toggle('bindScopes')),
                   ]),
 
               feature('switch.detached', flags.detached, () => toggle('detached'),
