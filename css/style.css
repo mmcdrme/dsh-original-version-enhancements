@@ -110,6 +110,20 @@
 }
 .ove-setting-body > .ove-row + .ove-row { border-top: .5px solid var(--dsw-alias-border-l1); }
 .ove-setting-body > .ove-row-note { padding: 8px 0 4px; }
+/* A switch inside a feature can own a switch of its own (the per-conversation
+   recall enable → its current mode): one more indent step, same guide. */
+.ove-setting-sub { position: relative; padding-left: 18px; }
+.ove-setting-sub::before {
+  content: "";
+  position: absolute;
+  left: 7px;
+  top: 8px;
+  bottom: 8px;
+  width: 1px;
+  border-radius: 1px;
+  background: var(--dsw-alias-border-l2);
+}
+.ove-setting-sub > .ove-row { position: relative; padding: 10px 0; }
 .ove-row-note {
   margin: 0;
   font-size: 12px;

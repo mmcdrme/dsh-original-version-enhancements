@@ -18,10 +18,10 @@ const slice = (startAnchor, endAnchor) => {
   return clientSource.slice(start, end)
 }
 
-const keys = new Function(`${slice('    const HISTORY_LIMIT_MAX = ', '    let recallState = readRecall();')}
-return { clampHistoryLimit, comboOfEvent, matchesCombo, comboLabel, keyOfCode, DEFAULT_RECALL, HISTORY_LIMIT_MAX }`)()
+const keys = new Function(`${slice('    const RECALL_KEY = ', '    let recallState = readRecall();')}
+return { clampHistoryLimit, comboOfEvent, matchesCombo, comboLabel, keyOfCode, readRecall, DEFAULT_RECALL, HISTORY_LIMIT_MAX }`)()
 
-const { nextHistory } = new Function(`${slice('    const HISTORY_LIMIT_MAX = ', '    let recallState = readRecall();')}
+const { nextHistory } = new Function(`${slice('    const RECALL_KEY = ', '    let recallState = readRecall();')}
 ${slice('    const nextHistory = ', '    let historySnapshot = readHistory();')}
 return { nextHistory }`)()
 
@@ -36,8 +36,34 @@ const stroke = (key, modifiers = {}, code = '') => ({
 })
 
 test('the defaults are Alt+P upward, Alt+B downward and 100 entries', () => {
-  assert.deepEqual(keys.DEFAULT_RECALL, { prev: 'alt+p', next: 'alt+b', max: 100, perSession: false })
+  assert.deepEqual(keys.DEFAULT_RECALL, {
+    prev: 'alt+p', next: 'alt+b', max: 100, perSession: false, scopeEnabled: true,
+  })
   assert.equal(keys.HISTORY_LIMIT_MAX, 100)
+})
+
+test('the per-conversation feature defaults to on and migrates an old record as on', () => {
+  // A record written before the switch existed has no flag; it must keep
+  // working (always-on behaviour) instead of silently disabling the feature.
+  // The sliced region carries readRecall but not the storage key constant, so
+  // the stub answers every key with the one record under test.
+  let stored = JSON.stringify({ prev: 'alt+p', next: 'alt+b', max: 10, perSession: true })
+  const previous = globalThis.localStorage
+  globalThis.localStorage = {
+    getItem: () => stored,
+    setItem: (key, value) => { stored = value },
+  }
+  try {
+    const migrated = keys.readRecall()
+    assert.equal(migrated.scopeEnabled, true)
+    assert.equal(migrated.perSession, true)
+    // Turning it off is remembered, and survives a read.
+    stored = JSON.stringify({ ...migrated, scopeEnabled: false })
+    assert.equal(keys.readRecall().scopeEnabled, false)
+  } finally {
+    if (previous === undefined) delete globalThis.localStorage
+    else globalThis.localStorage = previous
+  }
 })
 
 test('an unmodified stroke is never a binding', () => {

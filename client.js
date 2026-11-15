@@ -136,7 +136,10 @@ window.__ModuleLoader__.load({
     const HISTORY_KEY = 'original-version-enhancements.history.v1';
     const HISTORY_SESSIONS_KEY = 'original-version-enhancements.history.sessions.v1';
     const HISTORY_LIMIT_MAX = 100;
-    const DEFAULT_RECALL = { prev: 'alt+p', next: 'alt+b', max: 100, perSession: false };
+    // `scopeEnabled` is the per-conversation feature's own switch: off means
+    // "stop recording" (the mode below is then irrelevant), on means "record and
+    // answer the keys", with `perSession` choosing which store it uses.
+    const DEFAULT_RECALL = { prev: 'alt+p', next: 'alt+b', max: 100, perSession: false, scopeEnabled: true };
 
     const clampHistoryLimit = (value) => {
       const count = Math.round(Number(value));
@@ -294,6 +297,8 @@ window.__ModuleLoader__.load({
           next,
           max: clampHistoryLimit(saved.max),
           perSession: saved.perSession === true,
+          // Older builds stored no flag: their behaviour was "always on".
+          scopeEnabled: saved.scopeEnabled !== false,
         };
       } catch {
         return { ...DEFAULT_RECALL };
@@ -1603,6 +1608,8 @@ window.__ModuleLoader__.load({
     function RecallBridge({ inputActions, useInput, sessionId }) {
       const flags = useFlags();
       const recall = useRecall();
+      /** The per-conversation feature is off: no recording, no keys. */
+      const recallOff = recall.scopeEnabled === false;
       const subscribe = typeof useInput === 'function' ? useInput : () => (state) => state;
       const draft = subscribe((state) => (typeof state?.draft === 'string' ? state.draft : ''));
       const phase = subscribe((state) => (typeof state?.phase === 'string' ? state.phase : 'plain'));
@@ -1670,7 +1677,7 @@ window.__ModuleLoader__.load({
         } else if (pendingSend.current !== null) {
           // Back to `plain`. The draft is still there if the Host refused the
           // submission; it is blank only when the submission was accepted.
-          if (text.trim().length === 0) rememberSentTextFor(sessionRef.current, pendingSend.current);
+          if (text.trim().length === 0 && !recallOff) rememberSentTextFor(sessionRef.current, pendingSend.current);
           pendingSend.current = null;
         }
         lastText.current = text.trim().length > 0 ? text : null;
@@ -1680,10 +1687,10 @@ window.__ModuleLoader__.load({
           shown.current = null;
           cursor.current = -1;
         }
-      }, [draft, phase, sessionId]);
+      }, [draft, phase, sessionId, recallOff]);
 
       React.useEffect(() => {
-        if (!flags.recall) return undefined;
+        if (!flags.recall || recallOff) return undefined;
         const onKeyDown = (event) => {
           if (event.defaultPrevented || event.isComposing || event.keyCode === 229) return;
           const target = event.target instanceof HTMLElement ? event.target : null;
@@ -1713,7 +1720,7 @@ window.__ModuleLoader__.load({
         };
         document.addEventListener('keydown', onKeyDown, true);
         return () => document.removeEventListener('keydown', onKeyDown, true);
-      }, [flags.recall, recall.prev, recall.next]);
+      }, [flags.recall, recallOff, recall.prev, recall.next]);
 
       return null;
     }
@@ -1902,10 +1909,14 @@ window.__ModuleLoader__.load({
             h('div', { className: 'ove-settings' },
               feature('switch.steps', flags.stepSwitcher, () => toggle('stepSwitcher'), null),
 
-              feature('switch.chat', flags.chatManager, () => toggle('chatManager'),
-                flags.chatManager === true
+              feature('switch.chat', flags.chatManager, () => toggle('chatManager'), null),
+
+              // Sent-message recall: the history store, then the two switches
+              // that belong to it — "is per-conversation recall on" and, under
+              // it, the current mode.
+              feature('switch.recall', flags.recall, () => toggle('recall'),
+                flags.recall === true
                   ? [
-                  note(tr('recall.desc')),
                   settingRow(tr('recall.prev'), tr('recall.prev.desc'), h(KeyRecorder, {
                     value: recall.prev,
                     label: tr,
@@ -1926,14 +1937,6 @@ window.__ModuleLoader__.load({
                     'aria-label': tr('recall.max'),
                     onChange: (event) => setRecall({ max: event.target.value }),
                   })),
-                  settingRow(tr('recall.scope'), tr('recall.scope.desc'), h('button', {
-                    type: 'button',
-                    className: 'ove-switch',
-                    role: 'switch',
-                    'aria-checked': recall.perSession,
-                    'aria-label': tr('recall.scope'),
-                    onClick: () => setScopeConfirm(true),
-                  }, h('span', { className: 'ove-switch-thumb' }))),
                   settingRow(
                     tr('recall.saved').replace('{n}', String(count)),
                     tr('recall.saved.desc'),
@@ -1944,6 +1947,26 @@ window.__ModuleLoader__.load({
                       onClick: () => clearAllSentHistory(),
                     }, tr('recall.clear')),
                   ),
+                  // Whether the per-conversation feature is on at all. Off
+                  // means "stop recording", not "switch to shared history".
+                  settingRow(tr('recall.scope'), tr('recall.scopeEnableDesc'),
+                    switchOf(recall.scopeEnabled !== false, () => setRecall({ scopeEnabled: recall.scopeEnabled === false }), tr('recall.scope'))),
+                  // The mode lives one level down: it only chooses which
+                  // store the (enabled) feature records into.
+                  h('div', { className: 'ove-setting-sub' },
+                    settingRow(
+                      `${tr('recall.scopeMode')}：${tr(recall.perSession === true ? 'recall.scopeMode.independent' : 'recall.scopeMode.shared')}`,
+                      tr('recall.scope.desc'),
+                      h('button', {
+                        type: 'button',
+                        className: 'ove-switch',
+                        role: 'switch',
+                        'aria-checked': recall.perSession === true,
+                        'aria-label': tr('recall.scopeMode'),
+                        disabled: recall.scopeEnabled === false,
+                        onClick: () => setScopeConfirm(true),
+                      }, h('span', { className: 'ove-switch-thumb' })),
+                    )),
                   ]
                   : null),
 
