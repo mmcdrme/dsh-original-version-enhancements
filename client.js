@@ -1848,6 +1848,39 @@ window.__ModuleLoader__.load({
               }, tr('recall.scopeConfirmAction'))))), document.body)
         : null;
 
+      /**
+       * One settings row: explanation on the left, its single control on the
+       * right. Every switch of the page is built from this, so the layout stays
+       * identical whether the control is a switch, a key recorder or a slider.
+       */
+      const settingRow = (title, desc, control) => h('div', { className: 'ove-row' },
+        h('div', { className: 'ove-row-text' },
+          h('div', { className: 'ove-row-title' }, title),
+          desc === null || desc === undefined ? null : h('div', { className: 'ove-row-desc' }, desc)),
+        control);
+
+      /** One switch row, labelled by its `switch.*` locale pair. */
+      const switchRow = (key, checked, onToggle, ariaLabel) => settingRow(
+        tr(key),
+        tr(`${key}.desc`),
+        h('button', {
+          type: 'button',
+          className: 'ove-switch',
+          role: 'switch',
+          'aria-checked': checked === true,
+          'aria-label': ariaLabel === undefined ? tr(key) : ariaLabel,
+          onClick: onToggle,
+        }, h('span', { className: 'ove-switch-thumb' })),
+      );
+
+      /**
+       * The settings a switch owns. They render directly under that switch and
+       * indented, so a parent switch reads as a heading for its children, and a
+       * child switch keeps the same relationship one level down.
+       */
+      const childBlock = (nodes) => h('div', { className: 'ove-row-children' }, nodes);
+      const note = (text) => h('p', { className: 'ove-row-note' }, text);
+
       return h(React.Fragment, null,
         h('style', { key: 'styles', 'data-plugin-css': `${NS}-page` }, CSS),
         h('div', { className: 'ove-page' },
@@ -1858,115 +1891,23 @@ window.__ModuleLoader__.load({
           h('div', { className: 'ove-group' },
             h('h2', { className: 'ove-group-title' }, tr('featuresTitle')),
             h('div', { className: 'ove-card' },
-              h('div', { className: 'ove-row' },
-                h('div', { className: 'ove-row-text' },
-                  h('div', { className: 'ove-row-title' }, tr('switch.steps')),
-                  h('div', { className: 'ove-row-desc' }, tr('switch.steps.desc'))),
-                h('button', {
-                  type: 'button',
-                  className: 'ove-switch',
-                  role: 'switch',
-                  'aria-checked': flags.stepSwitcher,
-                  'aria-label': tr('switch.steps'),
-                  onClick: () => toggle('stepSwitcher'),
-                }, h('span', { className: 'ove-switch-thumb' }))),
+              switchRow('switch.steps', flags.stepSwitcher, () => toggle('stepSwitcher')),
 
-              h('div', { className: 'ove-row' },
-                h('div', { className: 'ove-row-text' },
-                  h('div', { className: 'ove-row-title' }, tr('switch.chat')),
-                  h('div', { className: 'ove-row-desc' }, tr('switch.chat.desc'))),
-                h('button', {
-                  type: 'button',
-                  className: 'ove-switch',
-                  role: 'switch',
-                  'aria-checked': flags.chatManager,
-                  'aria-label': tr('switch.chat'),
-                  onClick: () => toggle('chatManager'),
-                }, h('span', { className: 'ove-switch-thumb' }))),
-
-              h('div', { className: 'ove-row' },
-                h('div', { className: 'ove-row-text' },
-                  h('div', { className: 'ove-row-title' }, tr('switch.automation')),
-                  h('div', { className: 'ove-row-desc' }, tr('switch.automation.desc'))),
-                h('button', {
-                  type: 'button',
-                  className: 'ove-switch',
-                  role: 'switch',
-                  'aria-checked': flags.automation,
-                  'aria-label': tr('switch.automation'),
-                  onClick: () => toggle('automation'),
-                }, h('span', { className: 'ove-switch-thumb' }))),
-
-              h('div', { className: 'ove-row' },
-                h('div', { className: 'ove-row-text' },
-                  h('div', { className: 'ove-row-title' }, tr('switch.recall')),
-                  h('div', { className: 'ove-row-desc' }, tr('switch.recall.desc'))),
-                h('button', {
-                  type: 'button',
-                  className: 'ove-switch',
-                  role: 'switch',
-                  'aria-checked': flags.recall,
-                  'aria-label': tr('switch.recall'),
-                  onClick: () => toggle('recall'),
-                }, h('span', { className: 'ove-switch-thumb' }))),
-
-              h('div', { className: 'ove-row' },
-                h('div', { className: 'ove-row-text' },
-                  h('div', { className: 'ove-row-title' }, tr('switch.detached')),
-                  h('div', { className: 'ove-row-desc' }, tr('switch.detached.desc'))),
-                h('button', {
-                  type: 'button',
-                  className: 'ove-switch',
-                  role: 'switch',
-                  'aria-checked': flags.detached,
-                  'aria-label': tr('switch.detached'),
-                  onClick: () => toggle('detached'),
-                }, h('span', { className: 'ove-switch-thumb' }))),
-
-              h('div', { className: 'ove-row' },
-                h('div', { className: 'ove-row-text' },
-                  h('div', { className: 'ove-row-title' }, tr('switch.bindScopes')),
-                  h('div', { className: 'ove-row-desc' }, tr('switch.bindScopes.desc'))),
-                h('button', {
-                  type: 'button',
-                  className: 'ove-switch',
-                  role: 'switch',
-                  'aria-checked': flags.bindScopes,
-                  'aria-label': tr('switch.bindScopes'),
-                  onClick: () => toggle('bindScopes'),
-                }, h('span', { className: 'ove-switch-thumb' }))))),
-
-          !flags.recall
-            ? null
-            : h('div', { className: 'ove-group' },
-              h('h2', { className: 'ove-group-title' }, tr('recall.title')),
-              h('p', { className: 'ove-group-desc' }, tr('recall.desc')),
-              h('div', { className: 'ove-card' },
-                h('div', { className: 'ove-row' },
-                  h('div', { className: 'ove-row-text' },
-                    h('div', { className: 'ove-row-title' }, tr('recall.prev')),
-                    h('div', { className: 'ove-row-desc' }, tr('recall.prev.desc'))),
-                  h(KeyRecorder, {
+              switchRow('switch.chat', flags.chatManager, () => toggle('chatManager')),
+              flags.chatManager === true
+                ? childBlock([
+                  note(tr('recall.desc')),
+                  settingRow(tr('recall.prev'), tr('recall.prev.desc'), h(KeyRecorder, {
                     value: recall.prev,
                     label: tr,
                     onCapture: capture('prev'),
                   })),
-
-                h('div', { className: 'ove-row' },
-                  h('div', { className: 'ove-row-text' },
-                    h('div', { className: 'ove-row-title' }, tr('recall.next')),
-                    h('div', { className: 'ove-row-desc' }, tr('recall.next.desc'))),
-                  h(KeyRecorder, {
+                  settingRow(tr('recall.next'), tr('recall.next.desc'), h(KeyRecorder, {
                     value: recall.next,
                     label: tr,
                     onCapture: capture('next'),
                   })),
-
-                h('div', { className: 'ove-row' },
-                  h('div', { className: 'ove-row-text' },
-                    h('div', { className: 'ove-row-title' }, tr('recall.max')),
-                    h('div', { className: 'ove-row-desc' }, tr('recall.max.desc'))),
-                  h('input', {
+                  settingRow(tr('recall.max'), tr('recall.max.desc'), h('input', {
                     type: 'number',
                     className: 'ove-input ove-number',
                     min: 1,
@@ -1976,12 +1917,7 @@ window.__ModuleLoader__.load({
                     'aria-label': tr('recall.max'),
                     onChange: (event) => setRecall({ max: event.target.value }),
                   })),
-
-                h('div', { className: 'ove-row' },
-                  h('div', { className: 'ove-row-text' },
-                    h('div', { className: 'ove-row-title' }, tr('recall.scope')),
-                    h('div', { className: 'ove-row-desc' }, tr('recall.scope.desc'))),
-                  h('button', {
+                  settingRow(tr('recall.scope'), tr('recall.scope.desc'), h('button', {
                     type: 'button',
                     className: 'ove-switch',
                     role: 'switch',
@@ -1989,80 +1925,67 @@ window.__ModuleLoader__.load({
                     'aria-label': tr('recall.scope'),
                     onClick: () => setScopeConfirm(true),
                   }, h('span', { className: 'ove-switch-thumb' }))),
-
-                h('div', { className: 'ove-row' },
-                  h('div', { className: 'ove-row-text' },
-                    h('div', { className: 'ove-row-title' }, tr('recall.saved').replace('{n}', String(count))),
-                    h('div', { className: 'ove-row-desc' }, tr('recall.saved.desc'))),
-                  h('button', {
-                    type: 'button',
-                    className: 'ove-btn ove-btn-quiet',
-                    disabled: count === 0,
-                    onClick: () => clearAllSentHistory(),
-                  }, tr('recall.clear'))))),
-
-          !flags.detached
-            ? null
-            : h('div', { className: 'ove-group' },
-              h('h2', { className: 'ove-group-title' }, tr('window.title')),
-              h('p', { className: 'ove-group-desc' }, tr('window.desc')),
-              h('div', { className: 'ove-card' },
-                h('div', { className: 'ove-row' },
-                  h('div', { className: 'ove-row-text' },
-                    h('div', { className: 'ove-row-title' }, tr('window.mode')),
-                    h('div', { className: 'ove-row-desc' }, tr('window.mode.desc'))),
-                  h('div', { className: 'ove-size-group', role: 'group', 'aria-label': tr('window.mode') },
-                    ['native', 'panel'].map(id => h('button', {
-                      key: id,
+                  settingRow(
+                    tr('recall.saved').replace('{n}', String(count)),
+                    tr('recall.saved.desc'),
+                    h('button', {
                       type: 'button',
-                      className: `ove-size${appearance.mode === id ? ' is-on' : ''}`,
-                      'aria-pressed': appearance.mode === id,
-                      onClick: () => setWindow({ mode: id }),
-                    }, tr(`window.mode.${id}`))))),
-                h('div', { className: 'ove-row' },
-                  h('div', { className: 'ove-row-text' },
-                    h('div', { className: 'ove-row-title' }, tr('window.opacity')),
-                    h('div', { className: 'ove-row-desc' }, tr('window.opacity.desc'))),
-                  h('div', { className: 'ove-window-opacity' },
-                    h('input', {
-                      type: 'range',
-                      className: 'ove-range',
-                      min: 30,
-                      max: 100,
-                      step: 1,
-                      value: appearance.opacity,
-                      'aria-label': tr('window.opacity'),
-                      onChange: (event) => setWindow({ opacity: Number(event.target.value) }),
-                    }),
-                    h('span', { className: 'ove-range-value' }, `${appearance.opacity}%`))),
+                      className: 'ove-btn ove-btn-quiet',
+                      disabled: count === 0,
+                      onClick: () => clearAllSentHistory(),
+                    }, tr('recall.clear')),
+                  ),
+                ])
+                : null,
 
-                h('div', { className: 'ove-row' },
-                  h('div', { className: 'ove-row-text' },
-                    h('div', { className: 'ove-row-title' }, tr('window.size')),
-                    h('div', { className: 'ove-row-desc' }, tr('window.size.desc'))),
-                  h('div', { className: 'ove-size-group', role: 'group', 'aria-label': tr('window.size') },
-                    ['compact', 'standard', 'wide'].map(id => h('button', {
-                      key: id,
-                      type: 'button',
-                      className: `ove-size${appearance.size === id ? ' is-on' : ''}`,
-                      'aria-pressed': appearance.size === id,
-                      onClick: () => setWindow({ size: id }),
-                    }, tr(`window.size.${id}`)))))),
+              switchRow('switch.automation', flags.automation, () => toggle('automation')),
+              flags.automation === true
+                ? childBlock([
+                  switchRow('switch.bindScopes', flags.bindScopes, () => toggle('bindScopes')),
+                ])
+                : null,
 
-                h('div', { className: 'ove-row' },
-                  h('div', { className: 'ove-row-text' },
-                    h('div', { className: 'ove-row-title' }, tr('window.mute')),
-                    h('div', { className: 'ove-row-desc' }, tr('window.mute.desc'))),
-                  h('button', {
-                    type: 'button',
-                    className: 'ove-switch',
-                    role: 'switch',
-                    'aria-checked': appearance.mute,
-                    'aria-label': tr('window.mute'),
-                    onClick: () => setWindow({ mute: !appearance.mute }),
-                  }, h('span', { className: 'ove-switch-thumb' })))),
+              switchRow('switch.detached', flags.detached, () => toggle('detached')),
+              flags.detached === true
+                ? childBlock([
+                  note(tr('window.desc')),
+                  settingRow(tr('window.mode'), tr('window.mode.desc'),
+                    h('div', { className: 'ove-size-group', role: 'group', 'aria-label': tr('window.mode') },
+                      ['native', 'panel'].map(id => h('button', {
+                        key: id,
+                        type: 'button',
+                        className: `ove-size${appearance.mode === id ? ' is-on' : ''}`,
+                        'aria-pressed': appearance.mode === id,
+                        onClick: () => setWindow({ mode: id }),
+                      }, tr(`window.mode.${id}`))))),
+                  settingRow(tr('window.opacity'), tr('window.opacity.desc'),
+                    h('div', { className: 'ove-window-opacity' },
+                      h('input', {
+                        type: 'range',
+                        className: 'ove-range',
+                        min: 30,
+                        max: 100,
+                        step: 1,
+                        value: appearance.opacity,
+                        'aria-label': tr('window.opacity'),
+                        onChange: (event) => setWindow({ opacity: Number(event.target.value) }),
+                      }),
+                      h('span', { className: 'ove-range-value' }, `${appearance.opacity}%`))),
+                  settingRow(tr('window.size'), tr('window.size.desc'),
+                    h('div', { className: 'ove-size-group', role: 'group', 'aria-label': tr('window.size') },
+                      ['compact', 'standard', 'wide'].map(id => h('button', {
+                        key: id,
+                        type: 'button',
+                        className: `ove-size${appearance.size === id ? ' is-on' : ''}`,
+                        'aria-pressed': appearance.size === id,
+                        onClick: () => setWindow({ size: id }),
+                      }, tr(`window.size.${id}`))))),
+                  switchRow('window.mute', appearance.mute, () => setWindow({ mute: !appearance.mute })),
+                ])
+                : null,
 
-          h(SubagentTreeSettingsSection, { t: tr }),
+              h(SubagentTreeSettingsRows, { t: tr }),
+            )),
 
           h('p', { className: 'ove-hint' }, tr('pageHint')),
           h('p', { className: 'ove-footnote' }, tr('footnote'))),
@@ -4538,12 +4461,16 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * The "子智能体" block of the plugin page: two switches for the sidebar tree
-     * and a way to forget which conversations were expanded.
+     * The 子智能体树 part of the plugin page.
+     *
+     * It renders *rows*, not a group: the parent switch owns the two settings
+     * below it (the count sub-switch and the maintenance action), so they sit
+     * indented directly under the switch that controls them, inside the same
+     * card as the other feature switches.
      * @param props - injected translator.
-     * @returns the group rendered inside the plugin page.
+     * @returns the parent row and, while it is on, its indented children.
      */
-    function SubagentTreeSettingsSection({ t }) {
+    function SubagentTreeSettingsRows({ t }) {
       const tr = typeof t === 'function' ? t : (key) => key;
       const settings = useSubagentTreeSettings();
       const [cleared, setCleared] = React.useState(false);
@@ -4557,38 +4484,48 @@ window.__ModuleLoader__.load({
         setCleared(true);
       };
 
-      const row = (key, checked, onToggle, disabled) => h('div', { className: 'ove-row' },
-        h('div', { className: 'ove-row-text' },
-          h('div', { className: 'ove-row-title' }, tr(`subagentTree.${key}`)),
-          h('div', { className: 'ove-row-desc' }, tr(`subagentTree.${key}.desc`))),
-        h('button', {
-          type: 'button',
-          className: 'ove-switch',
-          role: 'switch',
-          'aria-checked': checked,
-          'aria-label': tr(`subagentTree.${key}`),
-          disabled: disabled === true,
-          onClick: onToggle,
-        }, h('span', { className: 'ove-switch-thumb' })));
+      const switchOf = (key, checked, onToggle) => h('button', {
+        type: 'button',
+        className: 'ove-switch',
+        role: 'switch',
+        'aria-checked': checked === true,
+        'aria-label': tr(`subagentTree.${key}`),
+        onClick: onToggle,
+      }, h('span', { className: 'ove-switch-thumb' }));
 
-      return h('div', { className: 'ove-group' },
-        h('h2', { className: 'ove-group-title' }, tr('subagentTree.settingsTitle')),
-        h('p', { className: 'ove-group-desc' }, tr('subagentTree.settingsIntro')),
-        h('div', { className: 'ove-card' },
-          row('enable', settings.enabled, () => setSubagentTreeSetting('enabled', settings.enabled !== true)),
-          row('showCount', settings.showCount, () => setSubagentTreeSetting('showCount', settings.showCount !== true), settings.enabled !== true)),
-        h('div', { className: 'ove-card' },
-          h('div', { className: 'ove-row' },
-            h('div', { className: 'ove-row-text' },
-              h('div', { className: 'ove-row-title' }, tr('subagentTree.clearTitle')),
-              h('div', { className: 'ove-row-desc' }, tr('subagentTree.clearDesc'))),
-            h('button', {
-              type: 'button',
-              className: 'ove-btn',
-              onClick: clearExpanded,
-            }, tr('subagentTree.clearButton'))),
-          cleared ? h('p', { className: 'ove-muted ove-pad-left' }, tr('subagentTree.cleared')) : null),
-        h('p', { className: 'ove-footnote' }, tr('subagentTree.settingsNote')));
+      const row = (title, desc, control) => h('div', { className: 'ove-row' },
+        h('div', { className: 'ove-row-text' },
+          h('div', { className: 'ove-row-title' }, title),
+          h('div', { className: 'ove-row-desc' }, desc)),
+        control);
+
+      return h(React.Fragment, null,
+        row(
+          tr('subagentTree.settingsTitle'),
+          tr('subagentTree.enable.desc'),
+          switchOf('enable', settings.enabled, () => setSubagentTreeSetting('enabled', settings.enabled !== true)),
+        ),
+        settings.enabled === true
+          ? h('div', { className: 'ove-row-children' },
+            h('p', { className: 'ove-row-note' }, tr('subagentTree.settingsIntro')),
+            row(
+              tr('subagentTree.showCount'),
+              tr('subagentTree.showCount.desc'),
+              switchOf('showCount', settings.showCount, () => setSubagentTreeSetting('showCount', settings.showCount !== true)),
+            ),
+            row(
+              tr('subagentTree.clearTitle'),
+              tr('subagentTree.clearDesc'),
+              h('button', {
+                type: 'button',
+                className: 'ove-btn',
+                onClick: clearExpanded,
+              }, tr('subagentTree.clearButton')),
+            ),
+            cleared ? h('p', { className: 'ove-muted ove-row-note' }, tr('subagentTree.cleared')) : null,
+            h('p', { className: 'ove-row-note' }, tr('subagentTree.settingsNote')),
+          )
+          : null);
     }
 
     function DetachedSessionsBridge({ ctx, t }) {
@@ -8618,6 +8555,37 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * Settings-navigation glyph: the plugin mark's black, simplified form.
+     *
+     * The shipped mark (`icon.svg`) is a blue rounded square carrying four list
+     * lines with their dots. A navigation row only has room for the mark itself,
+     * so this draws just those lines and dots with `currentColor`: monochrome,
+     * no background plate, and it follows the light/dark label colour.
+     * @param props - requested square edge and whether the section is active.
+     * @returns the SVG icon.
+     */
+    function PluginSettingsIcon({ size, active }) {
+      const edge = typeof size === 'number' && size > 0 ? size : 16;
+      const dot = (cx, cy, r) => h('circle', { cx, cy, r, fill: 'currentColor', stroke: 'none' });
+      return h('svg', {
+        viewBox: '0 0 16 16',
+        width: edge,
+        height: edge,
+        fill: 'none',
+        stroke: 'currentColor',
+        strokeWidth: 1.25,
+        strokeLinecap: 'round',
+        'aria-hidden': 'true',
+        style: { opacity: active === true ? 1 : 0.82 },
+      },
+      h('path', { d: 'M2.6 3.2h9M2.6 6.4h6.2M2.6 9.6h9M2.6 12.8h4.4' }),
+      dot(13.2, 3.2, 0.95),
+      dot(11.2, 6.4, 0.8),
+      dot(13.2, 9.6, 0.95),
+      dot(9.6, 12.8, 0.8));
+    }
+
+    /**
      * Sidebar glyph for the enhancement panel.
      * @param props - requested size and selection state from the panel list.
      * @returns the SVG icon.
@@ -8681,6 +8649,16 @@ window.__ModuleLoader__.load({
           label: () => text('pageTitle'),
           inject: () => ({ t: translator }),
         }, PluginPage)), 'original-version-enhancements: plugin page');
+
+        // The settings navigation row draws a shipped fallback glyph unless the
+        // section supplies one; give it the plugin's own mark.
+        ctx.effect(() => ctx.slots.inject('settings.section.icon', () => ctx.slots.register({
+          name: 'settings.section.icon',
+          id: 'original-version-enhancements',
+          order: 22,
+          locale: NS,
+          inject: () => ({}),
+        }, PluginSettingsIcon)), 'original-version-enhancements: settings icon');
 
         // The archive page, the session menu row, and the dialog exist only
         // while the chat-manager switch is on; toggling disposes them live.

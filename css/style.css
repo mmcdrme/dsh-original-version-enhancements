@@ -72,6 +72,34 @@
 .ove-row-text { flex: 1 1 auto; min-width: 0; display: grid; gap: 2px; }
 .ove-row-title { font-size: 14px; line-height: 22px; }
 .ove-row-desc { font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-tertiary); }
+/* The settings one switch owns: a first indent step under that switch, with a
+   hairline guide so a child row reads as belonging to the row above it. A child
+   switch puts its own children one step deeper, the same way. */
+.ove-row-children { position: relative; }
+.ove-row-children > .ove-row {
+  position: relative;
+  padding-left: 22px;
+}
+.ove-row-children > .ove-row::before {
+  content: "";
+  position: absolute;
+  left: 7px;
+  top: 10px;
+  bottom: 10px;
+  width: 1px;
+  border-radius: 1px;
+  background: var(--dsw-alias-border-l2);
+}
+.ove-row-children > .ove-row:first-of-type { border-top: .5px solid var(--dsw-alias-border-l1); }
+.ove-row-children + .ove-row { border-top: .5px solid var(--dsw-alias-border-l1); }
+.ove-row-note {
+  margin: 0;
+  padding: 10px 0 10px 22px;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-tertiary);
+}
+.ove-row-note + .ove-row { border-top: .5px solid var(--dsw-alias-border-l1); }
 .ove-switch {
   box-sizing: border-box;
   flex: none;
