@@ -360,7 +360,9 @@
     "recall.clearTitle": "清除历史记录",
     "recall.clearDesc": "当前已记录 {n} 条发送内容，清空后无法恢复。",
     "setting.expand": "展开设置",
-    "setting.collapse": "收起设置"
+    "setting.collapse": "收起设置",
+    "recall.keys": "快捷键绑定",
+    "recall.keys.desc": "在输入框里用这两个组合键重溯发送过的内容；点左侧箭头展开单独修改。"
   },
   "en": {
     "group": "Work details",
@@ -723,6 +725,8 @@
     "recall.clearTitle": "Clear history",
     "recall.clearDesc": "{n} sent messages are recorded right now; clearing them cannot be undone.",
     "setting.expand": "Expand settings",
-    "setting.collapse": "Collapse settings"
+    "setting.collapse": "Collapse settings",
+    "recall.keys": "Shortcut bindings",
+    "recall.keys.desc": "The two combinations that recall recent messages in the composer; open the caret to edit each one."
   }
 }

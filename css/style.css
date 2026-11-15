@@ -144,10 +144,14 @@
 .ove-setting-window .ove-switch[aria-checked="true"]:hover {
   background: color-mix(in srgb, var(--dsw-alias-label-primary) 82%, var(--dsw-alias-bg-base));
 }
-/* One switch inside a feature can own a switch of its own (独立模式 →
-   「重新启动保留历史记录」): one more blank indent step, no guide line. */
-.ove-setting-sub { padding-left: 7px; }
-.ove-setting-sub > .ove-row { padding: 10px 0; }
+/* A foldable row inside a box (the recall shortcut pair): the head is a normal
+   row, its settings fold away one blank indent step under it. */
+.ove-fold { position: relative; }
+.ove-fold-head { padding: 10px 0; }
+.ove-fold-head .ove-fold-caret { margin: 0 -4px 0 -2px; }
+.ove-fold-body { min-height: 0; overflow: hidden; padding-left: 7px; }
+.ove-fold-body > .ove-row { padding: 10px 0; }
+.ove-fold-body > .ove-row + .ove-row { border-top: .5px solid var(--dsw-alias-border-l1); }
 /* The destructive row closes the recall level and keeps the boxed red look of
    the previous layout: it is the same level as the bindings above, but drawn
    as its own red-bordered block so it never reads like another setting. */

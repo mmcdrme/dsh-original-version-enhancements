@@ -1932,6 +1932,60 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * A row inside a settings box whose own settings fold away under it.
+     *
+     * Same shape as a normal row, plus a caret and an animated fold, so a pair
+     * of related controls (the recall shortcut bindings) reads as one item.
+     * @param props - title/description, optional trailing control, the folded
+     *   settings, and the folded state.
+     * @returns the foldable row.
+     */
+    function FoldRow({ t, title, desc, control, children, open, onToggleOpen }) {
+      const tr = typeof t === 'function' ? t : (key) => key;
+      const unfolded = open !== false;
+      const toggle = () => {
+        if (typeof onToggleOpen === 'function') onToggleOpen(unfolded !== true);
+      };
+      const caret = h('button', {
+        type: 'button',
+        className: `ove-setting-caret ove-fold-caret${unfolded ? ' is-open' : ''}`,
+        'aria-expanded': unfolded,
+        'aria-label': tr(unfolded ? 'setting.collapse' : 'setting.expand'),
+        onClick: (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          toggle();
+        },
+      }, h('svg', {
+        viewBox: '0 0 16 16',
+        width: 12,
+        height: 12,
+        fill: 'none',
+        stroke: 'currentColor',
+        strokeWidth: 1.6,
+        strokeLinecap: 'round',
+        strokeLinejoin: 'round',
+        'aria-hidden': 'true',
+      }, h('path', { d: 'M6 3.5 10.5 8 6 12.5' })));
+      return h('div', { className: 'ove-fold' },
+        h('div', {
+          className: 'ove-row ove-fold-head',
+          onClick: (event) => {
+            const target = event.target instanceof Element ? event.target : null;
+            if (target !== null && target.closest('button, input, a, select, textarea') !== null) return;
+            toggle();
+          },
+        },
+          caret,
+          h('div', { className: 'ove-row-text' },
+            h('div', { className: 'ove-row-title' }, title),
+            desc === null || desc === undefined ? null : h('div', { className: 'ove-row-desc' }, desc)),
+          control === null || control === undefined ? null : control),
+        h('div', { className: `ove-setting-collapse${unfolded ? '' : ' is-collapsed'}` },
+          h('div', { className: 'ove-fold-body' }, children)));
+    }
+
+    /**
      * Feature switches; the archive surface now has its own settings entry.
      * @param props - injected translator.
      * @returns the plugin page.
@@ -1990,12 +2044,13 @@ window.__ModuleLoader__.load({
         : null;
 
       /** The switch itself; shared by feature heads and by sub-switches. */
-      const switchOf = (checked, onToggle, ariaLabel) => h('button', {
+      const switchOf = (checked, onToggle, ariaLabel, disabled) => h('button', {
         type: 'button',
         className: 'ove-switch',
         role: 'switch',
         'aria-checked': checked === true,
         'aria-label': ariaLabel,
+        disabled: disabled === true,
         onClick: onToggle,
       }, h('span', { className: 'ove-switch-thumb' }));
 
@@ -2054,16 +2109,42 @@ window.__ModuleLoader__.load({
               feature('switch.recall', flags.recall, () => toggle('recall'),
                 flags.recall === true
                   ? [
-                  settingRow(tr('recall.prev'), tr('recall.prev.desc'), h(KeyRecorder, {
-                    value: recall.prev,
-                    label: tr,
-                    onCapture: capture('prev'),
-                  })),
-                  settingRow(tr('recall.next'), tr('recall.next.desc'), h(KeyRecorder, {
-                    value: recall.next,
-                    label: tr,
-                    onCapture: capture('next'),
-                  })),
+                  // The two shortcut bindings are one foldable item: the row
+                  // itself is the pair, the caret opens the two key recorders.
+                  h(FoldRow, {
+                    t: tr,
+                    title: tr('recall.keys'),
+                    desc: tr('recall.keys.desc'),
+                    open: settingsOpen['recall.keys'] !== false,
+                    onToggleOpen: (open) => setSettingOpen('recall.keys', open),
+                    children: [
+                      settingRow(tr('recall.prev'), tr('recall.prev.desc'), h(KeyRecorder, {
+                        value: recall.prev,
+                        label: tr,
+                        onCapture: capture('prev'),
+                      })),
+                      settingRow(tr('recall.next'), tr('recall.next.desc'), h(KeyRecorder, {
+                        value: recall.next,
+                        label: tr,
+                        onCapture: capture('next'),
+                      })),
+                    ],
+                  }),
+                  // Whether each conversation keeps its own history.
+                  settingRow(tr('recall.scope'), tr('recall.scope.desc'), switchOf(
+                    recall.perSession === true,
+                    () => setScopeConfirm(true),
+                    tr('recall.scope'),
+                  )),
+                  // Persistence is its own first-level row of this feature;
+                  // it only matters while independent mode is on.
+                  settingRow(tr('recall.persist'), tr('recall.persist.desc'), switchOf(
+                    recall.persistHistory !== false,
+                    () => setRecall({ persistHistory: recall.persistHistory === false }),
+                    tr('recall.persist'),
+                    recall.perSession !== true,
+                  )),
+                  // How deep the stack goes sits right below it.
                   settingRow(tr('recall.max'), tr('recall.max.desc'), h('input', {
                     type: 'number',
                     className: 'ove-input ove-number',
@@ -2074,24 +2155,6 @@ window.__ModuleLoader__.load({
                     'aria-label': tr('recall.max'),
                     onChange: (event) => setRecall({ max: event.target.value }),
                   })),
-                  // Same level as the bindings above: whether each
-                  // conversation keeps its own history.
-                  settingRow(tr('recall.scope'), tr('recall.scope.desc'), switchOf(
-                    recall.perSession === true,
-                    () => setScopeConfirm(true),
-                    tr('recall.scope'),
-                  )),
-                  // One level deeper: whether that history survives a restart.
-                  recall.perSession === true
-                    ? h('div', { className: 'ove-setting-sub' },
-                      settingRow(
-                        tr('recall.persist'),
-                        tr('recall.persist.desc'),
-                        switchOf(recall.persistHistory !== false,
-                          () => setRecall({ persistHistory: recall.persistHistory === false }),
-                          tr('recall.persist')),
-                      ))
-                    : null,
                   // The destructive action closes this level, at the bottom.
                   // Only its button is destructive: hovering the row must not
                   // paint the whole block red.
