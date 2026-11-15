@@ -1989,17 +1989,19 @@ window.__ModuleLoader__.load({
                       ))
                     : null,
                   // The destructive action closes this level, at the bottom.
-                  h('button', {
-                    type: 'button',
-                    className: 'ove-row ove-row-danger',
-                    disabled: count === 0,
-                    onClick: () => clearAllSentHistory(),
-                  },
+                  // Only its button is destructive: hovering the row must not
+                  // paint the whole block red.
+                  h('div', { className: 'ove-row ove-row-danger' },
                     h('span', { className: 'ove-row-text' },
                       h('span', { className: 'ove-row-title' }, tr('recall.clearTitle')),
                       h('span', { className: 'ove-row-desc' },
                         tr('recall.clearDesc').replace('{n}', String(count)))),
-                    h('span', { className: 'ove-danger-action' }, tr('recall.clear'))),
+                    h('button', {
+                      type: 'button',
+                      className: 'ove-danger-btn',
+                      disabled: count === 0,
+                      onClick: () => clearAllSentHistory(),
+                    }, tr('recall.clear'))),
                   ]
                   : null),
 

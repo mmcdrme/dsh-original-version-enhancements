@@ -150,21 +150,31 @@
   border: 1px solid color-mix(in srgb, #dc2626 55%, transparent);
   border-radius: 12px;
   background: transparent;
-  text-align: left;
-  font: inherit;
-  color: inherit;
-  cursor: pointer;
-  transition: background-color .15s ease, border-color .15s ease;
 }
 .ove-row-danger .ove-row-text { display: grid; gap: 2px; flex: 1 1 auto; min-width: 0; }
 .ove-row-danger .ove-row-title { color: #dc2626; }
-.ove-row-danger .ove-danger-action { flex: none; font-size: 13px; line-height: 20px; color: #dc2626; }
-.ove-row-danger:hover:not(:disabled) {
-  background: color-mix(in srgb, #dc2626 8%, transparent);
-  border-color: #dc2626;
+/* Only the button carries the destructive affordance: outlined red by default,
+   filled red on hover, muted while there is nothing to clear. */
+.ove-danger-btn {
+  flex: none;
+  padding: 4px 12px;
+  border: 1px solid color-mix(in srgb, #dc2626 55%, transparent);
+  border-radius: 8px;
+  background: transparent;
+  color: #dc2626;
+  font: inherit;
+  font-size: 12px;
+  line-height: 18px;
+  cursor: pointer;
+  transition: background-color .15s ease, border-color .15s ease, color .15s ease;
 }
-.ove-row-danger:hover:not(:disabled) .ove-danger-action { text-decoration: underline; }
-.ove-row-danger:disabled { opacity: .5; cursor: default; }
+.ove-danger-btn:hover:not(:disabled) {
+  background: #dc2626;
+  border-color: #dc2626;
+  color: #fff;
+}
+.ove-danger-btn:focus-visible { outline: 2px solid #dc2626; outline-offset: 2px; }
+.ove-danger-btn:disabled { opacity: .45; cursor: default; }
 .ove-row-note {
   margin: 0;
   font-size: 12px;
