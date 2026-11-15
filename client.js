@@ -1910,41 +1910,90 @@ window.__ModuleLoader__.load({
       for (const listener of settingsOpenListeners) listener();
     };
 
+    /** The fold's own animation length, shared by the scroll that follows it. */
+    const FOLD_DURATION_MS = 220;
+
+    /**
+     * Scroll the settings list to `to` in the same 0.22 s the fold takes, so the
+     * revealed rows and the viewport arrive together instead of the list
+     * jumping after the animation has already finished.
+     * @param scroller - the option list that overflows.
+     * @param to - target scroll offset in pixels.
+     */
+    const animateScrollTo = (scroller, to) => {
+      const from = scroller.scrollTop;
+      const delta = to - from;
+      if (Math.abs(delta) < 1) return;
+      let reduce = false;
+      try {
+        reduce = globalThis.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches === true;
+      } catch { /* no media query support: animate */ }
+      if (reduce) {
+        scroller.scrollTop = to;
+        return;
+      }
+      const clock = () => (typeof performance?.now === 'function' ? performance.now() : Date.now());
+      const started = clock();
+      const step = () => {
+        const progress = Math.min(1, (clock() - started) / FOLD_DURATION_MS);
+        // Same `ease` feel as the CSS transition: fast start, soft landing.
+        const eased = progress * progress * (3 - 2 * progress);
+        scroller.scrollTop = from + delta * eased;
+        if (progress < 1) window.requestAnimationFrame(step);
+      };
+      window.requestAnimationFrame(step);
+    };
+
     /**
      * Bring a fold the human just opened into view inside the settings dialog.
      *
-     * The dialog scrolls its own option list, so a box opened near the bottom
-     * would otherwise reveal rows below the fold. A box that fits entirely is
-     * pinned by its bottom edge to the bottom of the list; one too tall for
-     * the list is pinned by its top edge instead, so reading starts at its
-     * first row. The height is measured after the fold's 0.22 s animation.
+     * The list is scrolled only when it has to be: a fold already fully inside
+     * the visible area is left where it is. When the whole box fits, its bottom
+     * edge is lined up with the top of the list's bottom padding (so the box
+     * border never sits on the dialog edge); a box taller than the list is
+     * lined up by its top edge instead, at the top of the list's content area.
+     * The body is clipped rather than collapsed in layout while folded, so its
+     * full height is readable up front and the scroll can start immediately.
      * @param node - the box (or folded row) element that opened.
+     * @param body - the body element whose content is being revealed.
      */
-    const revealFoldedBox = (node) => {
+    const revealFoldedBox = (node, body) => {
       if (node === null || node === undefined) return;
-      window.setTimeout(() => {
-        try {
-          if (!node.isConnected) return;
-          let scroller = node.parentElement;
-          while (scroller !== null && scroller !== document.body) {
-            const style = getComputedStyle(scroller);
-            if (/^(auto|scroll)$/u.test(style.overflowY)) break;
-            scroller = scroller.parentElement;
-          }
-          if (scroller === null || scroller === document.body) return;
-          const box = node.getBoundingClientRect();
-          const area = scroller.getBoundingClientRect();
-          if (box.height === 0 || area.height === 0) return;
-          const fits = box.height <= area.height;
-          const target = fits
-            ? scroller.scrollTop + (box.bottom - area.bottom)
-            : scroller.scrollTop + (box.top - area.top) - 6;
-          const max = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
-          const next = Math.min(max, Math.max(0, Math.round(target)));
-          if (Math.abs(next - scroller.scrollTop) < 2) return;
-          scroller.scrollTo({ top: next, behavior: 'smooth' });
-        } catch { /* a settings page that went away needs no scrolling */ }
-      }, 250);
+      try {
+        if (!node.isConnected) return;
+        let scroller = node.parentElement;
+        while (scroller !== null && scroller !== document.body) {
+          const style = getComputedStyle(scroller);
+          if (/^(auto|scroll)$/u.test(style.overflowY)) break;
+          scroller = scroller.parentElement;
+        }
+        if (scroller === null || scroller === document.body) return;
+        const area = scroller.getBoundingClientRect();
+        const style = getComputedStyle(scroller);
+        const padTop = Number.parseFloat(style.paddingTop) || 0;
+        const padBottom = Number.parseFloat(style.paddingBottom) || 0;
+        const visibleTop = area.top + padTop;
+        const visibleBottom = area.bottom - padBottom;
+        const box = node.getBoundingClientRect();
+        const grow = body === null || body === undefined
+          ? 0
+          : Math.max(0, body.scrollHeight - body.clientHeight);
+        const bottom = box.bottom + grow;
+        if (area.height === 0 || visibleBottom - visibleTop <= 0) return;
+        // Already readable in full: leave the list alone.
+        if (box.top >= visibleTop && bottom <= visibleBottom) return;
+        const fits = bottom - box.top <= visibleBottom - visibleTop;
+        const target = fits
+          ? scroller.scrollTop + (bottom - visibleBottom)
+          : scroller.scrollTop + (box.top - visibleTop);
+        // The list can only scroll as far as the content it is about to have:
+        // the folded rows still count, otherwise the clamp would cut the move
+        // short while the body is still opening.
+        const max = Math.max(0, scroller.scrollHeight + grow - scroller.clientHeight);
+        const next = Math.min(max, Math.max(0, Math.round(target)));
+        if (Math.abs(next - scroller.scrollTop) < 2) return;
+        animateScrollTo(scroller, next);
+      } catch { /* a settings page that went away needs no scrolling */ }
     };
 
     /**
@@ -1971,8 +2020,10 @@ window.__ModuleLoader__.load({
       const toggle = () => {
         if (!hasBody || typeof onToggleOpen !== 'function') return;
         const next = unfolded !== true;
+        // Measure before the state changes: the folded body already reports the
+        // height it is about to take.
+        if (next) revealFoldedBox(rootRef.current, bodyRef.current);
         onToggleOpen(next);
-        if (next) revealFoldedBox(rootRef.current);
       };
       const caret = h('button', {
         type: 'button',
@@ -2047,11 +2098,12 @@ window.__ModuleLoader__.load({
       const tr = typeof t === 'function' ? t : (key) => key;
       const unfolded = open === true;
       const rootRef = React.useRef(null);
+      const bodyRef = React.useRef(null);
       const toggle = () => {
         if (typeof onToggleOpen !== 'function') return;
         const next = unfolded !== true;
+        if (next) revealFoldedBox(rootRef.current, bodyRef.current);
         onToggleOpen(next);
-        if (next) revealFoldedBox(rootRef.current);
       };
       const caret = h('button', {
         type: 'button',
@@ -2089,7 +2141,7 @@ window.__ModuleLoader__.load({
             desc === null || desc === undefined ? null : h('div', { className: 'ove-row-desc' }, desc)),
           control === null || control === undefined ? null : control),
         h('div', { className: `ove-setting-collapse${unfolded ? '' : ' is-collapsed'}` },
-          h('div', { className: 'ove-fold-body' }, children)));
+          h('div', { ref: bodyRef, className: 'ove-fold-body' }, children)));
     }
 
     /**
