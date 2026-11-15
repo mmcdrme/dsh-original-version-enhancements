@@ -137,28 +137,32 @@
   background: var(--dsw-alias-border-l2);
 }
 .ove-setting-sub > .ove-row { position: relative; padding: 10px 0; }
-/* The destructive row closes the recall level: same level as its bindings,
-   red so it never reads like another setting. */
-.ove-row-danger {
+/* The destructive row closes the recall level and keeps the boxed red look of
+   the previous layout: it is the same level as the bindings above, but drawn
+   as its own red-bordered block so it never reads like another setting. */
+.ove-setting-body > .ove-row-danger {
   display: flex;
   align-items: center;
   gap: 16px;
   width: 100%;
-  margin: 0;
-  padding: 10px 0;
-  border: 0;
-  border-radius: 8px;
+  margin: 10px 0 4px;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, #dc2626 55%, transparent);
+  border-radius: 12px;
   background: transparent;
   text-align: left;
   font: inherit;
   color: inherit;
   cursor: pointer;
-  transition: background-color .15s ease;
+  transition: background-color .15s ease, border-color .15s ease;
 }
 .ove-row-danger .ove-row-text { display: grid; gap: 2px; flex: 1 1 auto; min-width: 0; }
 .ove-row-danger .ove-row-title { color: #dc2626; }
 .ove-row-danger .ove-danger-action { flex: none; font-size: 13px; line-height: 20px; color: #dc2626; }
-.ove-row-danger:hover:not(:disabled) { background: color-mix(in srgb, #dc2626 8%, transparent); }
+.ove-row-danger:hover:not(:disabled) {
+  background: color-mix(in srgb, #dc2626 8%, transparent);
+  border-color: #dc2626;
+}
 .ove-row-danger:hover:not(:disabled) .ove-danger-action { text-decoration: underline; }
 .ove-row-danger:disabled { opacity: .5; cursor: default; }
 .ove-row-note {
