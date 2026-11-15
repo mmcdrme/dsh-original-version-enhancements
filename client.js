@@ -2001,6 +2001,10 @@ window.__ModuleLoader__.load({
       const [scopeConfirm, setScopeConfirm] = React.useState(false);
       const scopePanelRef = React.useRef(null);
       useModalKeyboard(scopePanelRef, () => setScopeConfirm(false), false, scopeConfirm);
+      /** The pending "clear the recorded history" confirmation. */
+      const [clearConfirm, setClearConfirm] = React.useState(false);
+      const clearPanelRef = React.useRef(null);
+      useModalKeyboard(clearPanelRef, () => setClearConfirm(false), false, clearConfirm);
 
       const toggle = (key) => setFlag(key, !flags[key]);
 
@@ -2090,6 +2094,35 @@ window.__ModuleLoader__.load({
       });
       const note = (text) => h('p', { className: 'ove-row-note' }, text);
 
+      const clearDialog = clearConfirm
+        ? ReactDOM.createPortal(h('div', { className: 'ove-overlay ove-overlay-portal' },
+          h('div', {
+            className: 'ove-dialog',
+            role: 'dialog',
+            'aria-modal': 'true',
+            'aria-label': tr('recall.clearConfirmTitle'),
+            ref: clearPanelRef,
+            tabIndex: -1,
+          },
+            h('h2', { className: 'ove-dialog-title' }, tr('recall.clearConfirmTitle')),
+            h('p', { className: 'ove-dialog-desc' },
+              tr('recall.clearConfirmDesc').replace('{n}', String(count))),
+            h('div', { className: 'ove-dialog-actions' },
+              h('button', {
+                type: 'button',
+                className: 'ove-btn',
+                onClick: () => setClearConfirm(false),
+              }, tr('cancel')),
+              h('button', {
+                type: 'button',
+                className: 'ove-btn ove-btn-danger',
+                onClick: () => {
+                  setClearConfirm(false);
+                  clearAllSentHistory();
+                },
+              }, tr('recall.clearConfirmAction'))))), document.body)
+        : null;
+
       return h(React.Fragment, null,
         h('style', { key: 'styles', 'data-plugin-css': `${NS}-page` }, CSS),
         h('div', { className: 'ove-page' },
@@ -2167,7 +2200,7 @@ window.__ModuleLoader__.load({
                       type: 'button',
                       className: 'ove-danger-btn',
                       disabled: count === 0,
-                      onClick: () => clearAllSentHistory(),
+                      onClick: () => setClearConfirm(true),
                     }, tr('recall.clear'))),
                   ]
                   : null),
@@ -2224,6 +2257,7 @@ window.__ModuleLoader__.load({
           h('p', { className: 'ove-hint' }, tr('pageHint')),
           h('p', { className: 'ove-footnote' }, tr('footnote'))),
         dialog,
+        clearDialog,
       );
     }
 
