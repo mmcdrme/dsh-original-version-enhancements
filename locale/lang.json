@@ -39,12 +39,8 @@
     "recall.recording": "按下组合键…",
     "recall.needModifier": "请至少按住 Ctrl / Alt / Shift / Meta 中的一个再按字母或数字键。",
     "recall.duplicate": "这个组合键已经用于另一个方向，请换一个。",
-    "recall.scope": "独立会话回溯",
-    "recall.scopeEnableDesc": "是否启用「独立会话回溯」这一功能：关闭后不再记录新的发送历史，之前/下一条快捷键也随之停用（已记录的内容保留），重新开启后继续记录。",
-    "recall.scopeMode": "当前模式",
-    "recall.scopeMode.independent": "独立会话",
-    "recall.scopeMode.shared": "共享历史",
-    "recall.scope.desc": "开启后每个会话只重溯自己发送过的内容；关闭时所有会话共享最近的一份历史。更改此项会清空已记录的历史。",
+    "recall.scope": "独立模式",
+    "recall.scope.desc": "开启后每个会话只重溯自己发送过的内容；关闭时所有会话共享最近一份历史。切换模式会清空已记录的历史。",
     "recall.scopeConfirmTitle": "切换回溯范围",
     "recall.scopeConfirmDesc": "更改此项将自动清空历史记录（当前共 {n} 条），且无法撤销。是否继续？",
     "recall.scopeConfirmAction": "清空并切换",
@@ -358,7 +354,11 @@
     "auto.bindScope.hidden": "不可见的会话",
     "auto.bindScope.tip": "「可见的会话」是客户端侧边栏里能看到的会话；「不可见的会话」是子智能体等侧边栏不显示的会话。",
     "auto.bindScope.hiddenEmpty": "没有可绑定的不可见会话。",
-    "auto.bindScope.visibleEmpty": "没有可绑定的可见会话。"
+    "auto.bindScope.visibleEmpty": "没有可绑定的可见会话。",
+    "recall.persist": "重新启动保留历史记录",
+    "recall.persist.desc": "关闭后独立模式的历史只保存在本次运行的内存里，重新启动应用后丢失（共享历史不受影响）。",
+    "recall.clearTitle": "清除历史记录",
+    "recall.clearDesc": "当前已记录 {n} 条发送内容，清空后无法恢复。"
   },
   "en": {
     "group": "Work details",
@@ -400,12 +400,8 @@
     "recall.recording": "Press a combination…",
     "recall.needModifier": "Hold Ctrl, Alt, Shift or Meta together with a letter or digit.",
     "recall.duplicate": "That combination is already used for the other direction.",
-    "recall.scope": "Per-conversation recall",
-    "recall.scopeEnableDesc": "Whether per-conversation recall is on at all: off stops recording new history and disables the recall keys (what was already recorded is kept); turning it back on resumes recording.",
-    "recall.scopeMode": "Current mode",
-    "recall.scopeMode.independent": "Per conversation",
-    "recall.scopeMode.shared": "Shared history",
-    "recall.scope.desc": "When on, each conversation recalls only what was sent in it; when off, every conversation shares one recent history. Changing this clears the recorded history.",
+    "recall.scope": "Independent mode",
+    "recall.scope.desc": "When on, each conversation recalls only what was sent in it; when off, every conversation shares one recent history. Switching the mode clears the recorded history.",
     "recall.scopeConfirmTitle": "Change recall scope",
     "recall.scopeConfirmDesc": "Changing this clears the recorded history ({n} messages) and cannot be undone. Continue?",
     "recall.scopeConfirmAction": "Clear and switch",
@@ -719,6 +715,10 @@
     "auto.bindScope.hidden": "Hidden conversations",
     "auto.bindScope.tip": "\"Visible\" means conversations the sidebar lists; \"hidden\" means conversations such as subagents that the sidebar does not show.",
     "auto.bindScope.hiddenEmpty": "No hidden conversations to bind.",
-    "auto.bindScope.visibleEmpty": "No visible conversations to bind."
+    "auto.bindScope.visibleEmpty": "No visible conversations to bind.",
+    "recall.persist": "Keep history across restarts",
+    "recall.persist.desc": "When off, the independent-mode history lives only in this run’s memory and is gone after a restart (shared history is unaffected).",
+    "recall.clearTitle": "Clear history",
+    "recall.clearDesc": "{n} sent messages are recorded right now; clearing them cannot be undone."
   }
 }

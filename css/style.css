@@ -110,20 +110,43 @@
 }
 .ove-setting-body > .ove-row + .ove-row { border-top: .5px solid var(--dsw-alias-border-l1); }
 .ove-setting-body > .ove-row-note { padding: 8px 0 4px; }
-/* A switch inside a feature can own a switch of its own (the per-conversation
-   recall enable → its current mode): one more indent step, same guide. */
-.ove-setting-sub { position: relative; padding-left: 18px; }
-.ove-setting-sub::before {
-  content: "";
-  position: absolute;
-  left: 7px;
-  top: 8px;
-  bottom: 8px;
-  width: 1px;
-  border-radius: 1px;
-  background: var(--dsw-alias-border-l2);
+/* The independent-window box speaks the page's own tone instead of the brand
+   blue: filled segments, the slider and its switch all use the main label
+   colour (near-black on the light theme). */
+.ove-setting-window .ove-size.is-on {
+  background: var(--dsw-alias-label-primary);
+  border-color: var(--dsw-alias-label-primary);
+  color: var(--dsw-alias-bg-base);
 }
-.ove-setting-sub > .ove-row { position: relative; padding: 10px 0; }
+.ove-setting-window .ove-range { accent-color: var(--dsw-alias-label-primary); }
+.ove-setting-window .ove-switch[aria-checked="true"] { background: var(--dsw-alias-label-primary); }
+.ove-setting-window .ove-switch[aria-checked="true"]:hover {
+  background: color-mix(in srgb, var(--dsw-alias-label-primary) 82%, var(--dsw-alias-bg-base));
+}
+/* The destructive first-level item: a whole box as one red action row. */
+.ove-setting-danger {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  width: 100%;
+  margin: 0;
+  padding: 0 14px;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  border-color: color-mix(in srgb, #dc2626 55%, transparent);
+  transition: background-color .15s ease, border-color .15s ease;
+}
+.ove-setting-danger .ove-setting-text { display: grid; gap: 2px; flex: 1 1 auto; min-width: 0; padding: 12px 0; }
+.ove-setting-danger .ove-setting-title { color: #dc2626; }
+.ove-setting-danger .ove-danger-action { flex: none; font-size: 13px; line-height: 20px; color: #dc2626; }
+.ove-setting-danger:hover:not(:disabled) {
+  background: color-mix(in srgb, #dc2626 8%, var(--dsw-alias-bg-layer-2));
+  border-color: #dc2626;
+}
+.ove-setting-danger:hover:not(:disabled) .ove-danger-action { text-decoration: underline; }
+.ove-setting-danger:disabled { opacity: .5; cursor: default; }
 .ove-row-note {
   margin: 0;
   font-size: 12px;

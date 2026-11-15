@@ -136,10 +136,10 @@ window.__ModuleLoader__.load({
     const HISTORY_KEY = 'original-version-enhancements.history.v1';
     const HISTORY_SESSIONS_KEY = 'original-version-enhancements.history.sessions.v1';
     const HISTORY_LIMIT_MAX = 100;
-    // `scopeEnabled` is the per-conversation feature's own switch: off means
-    // "stop recording" (the mode below is then irrelevant), on means "record and
-    // answer the keys", with `perSession` choosing which store it uses.
-    const DEFAULT_RECALL = { prev: 'alt+p', next: 'alt+b', max: 100, perSession: false, scopeEnabled: true };
+    // `persistHistory` keeps the independent mode's histories across restarts.
+    // Off means they live in this page's memory only and disappear when the
+    // application is restarted; `perSession` chooses the scope itself.
+    const DEFAULT_RECALL = { prev: 'alt+p', next: 'alt+b', max: 100, perSession: false, persistHistory: true };
 
     const clampHistoryLimit = (value) => {
       const count = Math.round(Number(value));
@@ -297,8 +297,8 @@ window.__ModuleLoader__.load({
           next,
           max: clampHistoryLimit(saved.max),
           perSession: saved.perSession === true,
-          // Older builds stored no flag: their behaviour was "always on".
-          scopeEnabled: saved.scopeEnabled !== false,
+          // Older builds stored no flag: their behaviour was "always kept".
+          persistHistory: saved.persistHistory !== false,
         };
       } catch {
         return { ...DEFAULT_RECALL };
@@ -315,6 +315,7 @@ window.__ModuleLoader__.load({
     const useRecall = () => React.useSyncExternalStore(subscribeRecall, getRecall, getRecall);
 
     const setRecall = (patch) => {
+      const previous = recallState;
       const next = { ...recallState, ...patch };
       next.max = clampHistoryLimit(next.max);
       if (next.next === next.prev) next.next = next.prev === 'alt+b' ? 'alt+n' : 'alt+b';
@@ -322,10 +323,27 @@ window.__ModuleLoader__.load({
       try {
         globalThis.localStorage?.setItem(RECALL_KEY, JSON.stringify(next));
       } catch { /* a blocked storage keeps the setting for this page only */ }
+      // Persistence is a storage policy, not a value: move the live lists with
+      // the switch. Off keeps this run's history in memory (so the page keeps
+      // working) and stops writing; on flushes that memory back to storage.
+      if (next.persistHistory === false && previous.persistHistory !== false) {
+        memoryHistory = readStoredHistory();
+        memorySessionHistories = readStoredSessionHistories();
+      } else if (next.persistHistory !== false && previous.persistHistory === false) {
+        try {
+          globalThis.localStorage?.setItem(HISTORY_KEY, JSON.stringify(memoryHistory));
+          globalThis.localStorage?.setItem(HISTORY_SESSIONS_KEY, JSON.stringify(memorySessionHistories));
+        } catch { /* a blocked storage cannot keep them either */ }
+      }
       for (const listener of recallListeners) listener();
     };
 
-    const readHistory = () => {
+    /** The sent-message lists, in memory while persistence is off. */
+    let memoryHistory = [];
+    let memorySessionHistories = {};
+
+    /** The shared list as storage holds it (no memory fallback). */
+    const readStoredHistory = () => {
       try {
         const raw = JSON.parse(globalThis.localStorage?.getItem(HISTORY_KEY) ?? '[]');
         if (!Array.isArray(raw)) return [];
@@ -334,6 +352,9 @@ window.__ModuleLoader__.load({
         return [];
       }
     };
+
+    /** The shared list this page walks: disk, or this run's memory. */
+    const readHistory = () => (recallState.persistHistory === false ? memoryHistory : readStoredHistory());
 
     /** Newest first; consecutive duplicates collapse, the tail is trimmed to `max`. */
     const nextHistory = (list, text, max) => {
@@ -356,9 +377,12 @@ window.__ModuleLoader__.load({
 
     const publishHistory = (list) => {
       historySnapshot = list;
-      try {
-        globalThis.localStorage?.setItem(HISTORY_KEY, JSON.stringify(list));
-      } catch { /* a blocked storage keeps the history for this page only */ }
+      memoryHistory = list;
+      if (recallState.persistHistory !== false) {
+        try {
+          globalThis.localStorage?.setItem(HISTORY_KEY, JSON.stringify(list));
+        } catch { /* a blocked storage keeps the history for this page only */ }
+      }
       for (const listener of historyListeners) listener();
     };
 
@@ -376,7 +400,7 @@ window.__ModuleLoader__.load({
     /* Per-session histories: one list per Session id, used only while the
        "independent recall" option is on. Switching the option clears both
        stores, so the two shapes never have to be merged. */
-    const readSessionHistories = () => {
+    const readStoredSessionHistories = () => {
       try {
         const raw = JSON.parse(globalThis.localStorage?.getItem(HISTORY_SESSIONS_KEY) ?? '{}');
         if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return {};
@@ -392,14 +416,22 @@ window.__ModuleLoader__.load({
       }
     };
 
+    /** The per-Session table this page walks: disk, or this run's memory. */
+    const readSessionHistories = () => (
+      recallState.persistHistory === false ? memorySessionHistories : readStoredSessionHistories()
+    );
+
     let sessionHistorySnapshot = readSessionHistories();
     const getSessionHistories = () => sessionHistorySnapshot;
 
     const publishSessionHistories = (next) => {
       sessionHistorySnapshot = next;
-      try {
-        globalThis.localStorage?.setItem(HISTORY_SESSIONS_KEY, JSON.stringify(next));
-      } catch { /* a blocked storage keeps the history for this page only */ }
+      memorySessionHistories = next;
+      if (recallState.persistHistory !== false) {
+        try {
+          globalThis.localStorage?.setItem(HISTORY_SESSIONS_KEY, JSON.stringify(next));
+        } catch { /* a blocked storage keeps the history for this page only */ }
+      }
       for (const listener of historyListeners) listener();
     };
 
@@ -472,6 +504,8 @@ window.__ModuleLoader__.load({
 
     if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
       window.addEventListener('storage', (event) => {
+        // Memory-only mode has no storage to follow.
+        if (recallState.persistHistory === false) return;
         // `key === null` is a whole-store clear from another window.
         if (event?.key !== null && event?.key !== HISTORY_KEY && event?.key !== HISTORY_SESSIONS_KEY) return;
         syncSentHistory();
@@ -1608,8 +1642,6 @@ window.__ModuleLoader__.load({
     function RecallBridge({ inputActions, useInput, sessionId }) {
       const flags = useFlags();
       const recall = useRecall();
-      /** The per-conversation feature is off: no recording, no keys. */
-      const recallOff = recall.scopeEnabled === false;
       const subscribe = typeof useInput === 'function' ? useInput : () => (state) => state;
       const draft = subscribe((state) => (typeof state?.draft === 'string' ? state.draft : ''));
       const phase = subscribe((state) => (typeof state?.phase === 'string' ? state.phase : 'plain'));
@@ -1677,7 +1709,7 @@ window.__ModuleLoader__.load({
         } else if (pendingSend.current !== null) {
           // Back to `plain`. The draft is still there if the Host refused the
           // submission; it is blank only when the submission was accepted.
-          if (text.trim().length === 0 && !recallOff) rememberSentTextFor(sessionRef.current, pendingSend.current);
+          if (text.trim().length === 0) rememberSentTextFor(sessionRef.current, pendingSend.current);
           pendingSend.current = null;
         }
         lastText.current = text.trim().length > 0 ? text : null;
@@ -1687,10 +1719,10 @@ window.__ModuleLoader__.load({
           shown.current = null;
           cursor.current = -1;
         }
-      }, [draft, phase, sessionId, recallOff]);
+      }, [draft, phase, sessionId]);
 
       React.useEffect(() => {
-        if (!flags.recall || recallOff) return undefined;
+        if (!flags.recall) return undefined;
         const onKeyDown = (event) => {
           if (event.defaultPrevented || event.isComposing || event.keyCode === 229) return;
           const target = event.target instanceof HTMLElement ? event.target : null;
@@ -1720,7 +1752,7 @@ window.__ModuleLoader__.load({
         };
         document.addEventListener('keydown', onKeyDown, true);
         return () => document.removeEventListener('keydown', onKeyDown, true);
-      }, [flags.recall, recallOff, recall.prev, recall.next]);
+      }, [flags.recall, recall.prev, recall.next]);
 
       return null;
     }
@@ -1888,7 +1920,9 @@ window.__ModuleLoader__.load({
        * without children is the same box with only a head, so the page reads as
        * a list of independent settings instead of one long wall of rows.
        */
-      const feature = (key, checked, onToggle, body) => h('div', { className: 'ove-setting' },
+      const feature = (key, checked, onToggle, body, extraClass) => h('div', {
+        className: extraClass === undefined ? 'ove-setting' : `ove-setting ${extraClass}`,
+      },
         h('div', { className: 'ove-setting-head' },
           h('div', { className: 'ove-setting-text' },
             h('div', { className: 'ove-setting-title' }, tr(key)),
@@ -1911,9 +1945,8 @@ window.__ModuleLoader__.load({
 
               feature('switch.chat', flags.chatManager, () => toggle('chatManager'), null),
 
-              // Sent-message recall: the history store, then the two switches
-              // that belong to it — "is per-conversation recall on" and, under
-              // it, the current mode.
+              // Sent-message recall: the shortcut bindings and how deep the
+              // stack goes. The scope is its own first-level setting below.
               feature('switch.recall', flags.recall, () => toggle('recall'),
                 flags.recall === true
                   ? [
@@ -1937,36 +1970,22 @@ window.__ModuleLoader__.load({
                     'aria-label': tr('recall.max'),
                     onChange: (event) => setRecall({ max: event.target.value }),
                   })),
-                  settingRow(
-                    tr('recall.saved').replace('{n}', String(count)),
-                    tr('recall.saved.desc'),
-                    h('button', {
-                      type: 'button',
-                      className: 'ove-btn ove-btn-quiet',
-                      disabled: count === 0,
-                      onClick: () => clearAllSentHistory(),
-                    }, tr('recall.clear')),
-                  ),
-                  // Whether the per-conversation feature is on at all. Off
-                  // means "stop recording", not "switch to shared history".
-                  settingRow(tr('recall.scope'), tr('recall.scopeEnableDesc'),
-                    switchOf(recall.scopeEnabled !== false, () => setRecall({ scopeEnabled: recall.scopeEnabled === false }), tr('recall.scope'))),
-                  // The mode lives one level down: it only chooses which
-                  // store the (enabled) feature records into.
-                  h('div', { className: 'ove-setting-sub' },
+                  ]
+                  : null),
+
+              // Independent mode is a first-level setting: it decides whether
+              // every conversation keeps its own history. What it controls —
+              // whether that history survives a restart — sits inside its box.
+              feature('recall.scope', recall.perSession === true, () => setScopeConfirm(true),
+                recall.perSession === true
+                  ? [
                     settingRow(
-                      `${tr('recall.scopeMode')}：${tr(recall.perSession === true ? 'recall.scopeMode.independent' : 'recall.scopeMode.shared')}`,
-                      tr('recall.scope.desc'),
-                      h('button', {
-                        type: 'button',
-                        className: 'ove-switch',
-                        role: 'switch',
-                        'aria-checked': recall.perSession === true,
-                        'aria-label': tr('recall.scopeMode'),
-                        disabled: recall.scopeEnabled === false,
-                        onClick: () => setScopeConfirm(true),
-                      }, h('span', { className: 'ove-switch-thumb' })),
-                    )),
+                      tr('recall.persist'),
+                      tr('recall.persist.desc'),
+                      switchOf(recall.persistHistory !== false,
+                        () => setRecall({ persistHistory: recall.persistHistory === false }),
+                        tr('recall.persist')),
+                    ),
                   ]
                   : null),
 
@@ -2014,9 +2033,23 @@ window.__ModuleLoader__.load({
                       }, tr(`window.size.${id}`))))),
                     switchRow('window.mute', appearance.mute, () => setWindow({ mute: !appearance.mute })),
                   ]
-                  : null),
+                  : null, 'ove-setting-window'),
 
               h(SubagentTreeSettingsRows, { t: tr }),
+
+              // The destructive action is its own first-level item at the very
+              // bottom, in red so it never reads like another switch.
+              h('button', {
+                type: 'button',
+                className: 'ove-setting ove-setting-danger',
+                disabled: count === 0,
+                onClick: () => clearAllSentHistory(),
+              },
+                h('span', { className: 'ove-setting-text' },
+                  h('span', { className: 'ove-setting-title' }, tr('recall.clearTitle')),
+                  h('span', { className: 'ove-setting-desc' },
+                    tr('recall.clearDesc').replace('{n}', String(count)))),
+                h('span', { className: 'ove-danger-action' }, tr('recall.clear'))),
             )),
 
           h('p', { className: 'ove-hint' }, tr('pageHint')),

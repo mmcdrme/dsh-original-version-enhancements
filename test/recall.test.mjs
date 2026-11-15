@@ -37,14 +37,15 @@ const stroke = (key, modifiers = {}, code = '') => ({
 
 test('the defaults are Alt+P upward, Alt+B downward and 100 entries', () => {
   assert.deepEqual(keys.DEFAULT_RECALL, {
-    prev: 'alt+p', next: 'alt+b', max: 100, perSession: false, scopeEnabled: true,
+    prev: 'alt+p', next: 'alt+b', max: 100, perSession: false, persistHistory: true,
   })
   assert.equal(keys.HISTORY_LIMIT_MAX, 100)
 })
 
-test('the per-conversation feature defaults to on and migrates an old record as on', () => {
-  // A record written before the switch existed has no flag; it must keep
-  // working (always-on behaviour) instead of silently disabling the feature.
+test('history persistence defaults to on and migrates an old record as on', () => {
+  // A record written before the switch existed has no flag; it must keep the
+  // old behaviour (history kept across restarts) instead of silently dropping
+  // everything on the next start.
   // The sliced region carries readRecall but not the storage key constant, so
   // the stub answers every key with the one record under test.
   let stored = JSON.stringify({ prev: 'alt+p', next: 'alt+b', max: 10, perSession: true })
@@ -55,11 +56,11 @@ test('the per-conversation feature defaults to on and migrates an old record as 
   }
   try {
     const migrated = keys.readRecall()
-    assert.equal(migrated.scopeEnabled, true)
+    assert.equal(migrated.persistHistory, true)
     assert.equal(migrated.perSession, true)
     // Turning it off is remembered, and survives a read.
-    stored = JSON.stringify({ ...migrated, scopeEnabled: false })
-    assert.equal(keys.readRecall().scopeEnabled, false)
+    stored = JSON.stringify({ ...migrated, persistHistory: false })
+    assert.equal(keys.readRecall().persistHistory, false)
   } finally {
     if (previous === undefined) delete globalThis.localStorage
     else globalThis.localStorage = previous
