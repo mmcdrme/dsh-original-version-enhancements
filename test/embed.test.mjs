@@ -72,6 +72,16 @@ test('in-page windows do not spend a connection on the shell floats', () => {
   assert.match(embed, /return new NativeEvents\(url, config\)/u)
 })
 
+test('a press inside the frame is reported back to the hosting page', () => {
+  // An iframe swallows its own pointer events, so the page cannot learn that
+  // the human moved to another in-page window without this message.
+  assert.match(embed, /data-ove-embed-focus/u)
+  assert.match(embed, /source: 'ove-detached-raise'/u)
+  assert.match(embed, /window\.parent\.postMessage\([^)]*location\.origin\)/u)
+  assert.match(embed, /document\.addEventListener\('pointerdown', tell, true\)/u)
+  assert.match(embed, /if \(window\.top === window\) return/u)
+})
+
 test('every injected script parses on its own', () => {
   const bodies = scripts(embed)
   assert.ok(bodies.length >= 3, `expected at least three injected scripts, got ${bodies.length}`)

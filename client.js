@@ -825,8 +825,32 @@ window.__ModuleLoader__.load({
     };
     const getPanels = () => panelIds;
     const usePanels = () => React.useSyncExternalStore(subscribePanels, getPanels, getPanels);
+    /**
+     * Stacking order of the in-page windows, kept apart from their render order.
+     *
+     * Moving an iframe in the DOM reloads its document, so raising a window must
+     * never reorder the elements: only this list changes, and the frames take
+     * their z-index from it.
+     */
+    let panelOrder = [];
+    const panelOrderListeners = new Set();
+    const subscribePanelOrder = (listener) => {
+      panelOrderListeners.add(listener);
+      return () => { panelOrderListeners.delete(listener); };
+    };
+    const getPanelOrder = () => panelOrder;
+    const usePanelOrder = () => React.useSyncExternalStore(subscribePanelOrder, getPanelOrder, getPanelOrder);
+    const publishPanelOrder = (next) => {
+      panelOrder = next;
+      for (const listener of panelOrderListeners) listener();
+    };
     const publishPanels = (next) => {
       panelIds = next;
+      // Keep the stack in step with the membership without disturbing the
+      // relative order the human created by clicking windows.
+      const kept = panelOrder.filter(id => next.has(id));
+      for (const id of next) if (!kept.includes(id)) kept.push(id);
+      publishPanelOrder(kept);
       for (const listener of panelListeners) listener();
     };
     const openDetachedPanel = (sessionId) => {
@@ -834,13 +858,11 @@ window.__ModuleLoader__.load({
       next.add(sessionId);
       publishPanels(next);
     };
-    /** Bring one in-page window to the front by moving it to the end of the stack. */
+    /** Bring one in-page window to the front; the frames themselves stay put. */
     const raiseDetachedPanel = (sessionId) => {
       if (!panelIds.has(sessionId)) return;
-      if ([...panelIds].at(-1) === sessionId) return;
-      const next = new Set([...panelIds].filter(id => id !== sessionId));
-      next.add(sessionId);
-      publishPanels(next);
+      if (panelOrder.at(-1) === sessionId) return;
+      publishPanelOrder([...panelOrder.filter(id => id !== sessionId), sessionId]);
     };
     const dropDetachedPanel = (sessionId) => {
       if (!panelIds.has(sessionId)) return;
@@ -1889,6 +1911,43 @@ window.__ModuleLoader__.load({
     };
 
     /**
+     * Bring a fold the human just opened into view inside the settings dialog.
+     *
+     * The dialog scrolls its own option list, so a box opened near the bottom
+     * would otherwise reveal rows below the fold. A box that fits entirely is
+     * pinned by its bottom edge to the bottom of the list; one too tall for
+     * the list is pinned by its top edge instead, so reading starts at its
+     * first row. The height is measured after the fold's 0.22 s animation.
+     * @param node - the box (or folded row) element that opened.
+     */
+    const revealFoldedBox = (node) => {
+      if (node === null || node === undefined) return;
+      window.setTimeout(() => {
+        try {
+          if (!node.isConnected) return;
+          let scroller = node.parentElement;
+          while (scroller !== null && scroller !== document.body) {
+            const style = getComputedStyle(scroller);
+            if (/^(auto|scroll)$/u.test(style.overflowY)) break;
+            scroller = scroller.parentElement;
+          }
+          if (scroller === null || scroller === document.body) return;
+          const box = node.getBoundingClientRect();
+          const area = scroller.getBoundingClientRect();
+          if (box.height === 0 || area.height === 0) return;
+          const fits = box.height <= area.height;
+          const target = fits
+            ? scroller.scrollTop + (box.bottom - area.bottom)
+            : scroller.scrollTop + (box.top - area.top) - 6;
+          const max = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+          const next = Math.min(max, Math.max(0, Math.round(target)));
+          if (Math.abs(next - scroller.scrollTop) < 2) return;
+          scroller.scrollTo({ top: next, behavior: 'smooth' });
+        } catch { /* a settings page that went away needs no scrolling */ }
+      }, 250);
+    };
+
+    /**
      * One "big setting" box: a switch head that can fold the settings it owns.
      *
      * Folding is animated with a grid row transition (`1fr` → `0fr`), so the
@@ -1901,9 +1960,19 @@ window.__ModuleLoader__.load({
       const tr = typeof t === 'function' ? t : (key) => key;
       const hasBody = children !== null && children !== undefined;
       const unfolded = hasBody ? open === true : true;
+      /** A switched-off box still folds open, but its rows stop taking input. */
+      const locked = hasBody && checked === false;
+      const rootRef = React.useRef(null);
+      const bodyRef = React.useRef(null);
+      React.useEffect(() => {
+        const node = bodyRef.current;
+        if (node !== null) node.inert = locked;
+      }, [locked]);
       const toggle = () => {
         if (!hasBody || typeof onToggleOpen !== 'function') return;
-        onToggleOpen(unfolded !== true);
+        const next = unfolded !== true;
+        onToggleOpen(next);
+        if (next) revealFoldedBox(rootRef.current);
       };
       const caret = h('button', {
         type: 'button',
@@ -1930,7 +1999,9 @@ window.__ModuleLoader__.load({
         'aria-hidden': 'true',
       }, h('path', { d: 'M6 3.5 10.5 8 6 12.5' })));
       return h('div', {
+        ref: rootRef,
         className: extraClass === undefined ? 'ove-setting' : `ove-setting ${extraClass}`,
+        'data-locked': locked ? 'true' : undefined,
       },
         h('div', {
           className: 'ove-setting-head',
@@ -1955,7 +2026,11 @@ window.__ModuleLoader__.load({
           }, h('span', { className: 'ove-switch-thumb' }))),
         hasBody
           ? h('div', { className: `ove-setting-collapse${unfolded ? '' : ' is-collapsed'}` },
-            h('div', { className: 'ove-setting-body' }, children))
+            h('div', {
+              ref: bodyRef,
+              className: `ove-setting-body${locked ? ' is-locked' : ''}`,
+              'aria-disabled': locked ? 'true' : undefined,
+            }, children))
           : null);
     }
 
@@ -1971,8 +2046,12 @@ window.__ModuleLoader__.load({
     function FoldRow({ t, title, desc, control, children, open, onToggleOpen }) {
       const tr = typeof t === 'function' ? t : (key) => key;
       const unfolded = open === true;
+      const rootRef = React.useRef(null);
       const toggle = () => {
-        if (typeof onToggleOpen === 'function') onToggleOpen(unfolded !== true);
+        if (typeof onToggleOpen !== 'function') return;
+        const next = unfolded !== true;
+        onToggleOpen(next);
+        if (next) revealFoldedBox(rootRef.current);
       };
       const caret = h('button', {
         type: 'button',
@@ -1995,7 +2074,7 @@ window.__ModuleLoader__.load({
         strokeLinejoin: 'round',
         'aria-hidden': 'true',
       }, h('path', { d: 'M6 3.5 10.5 8 6 12.5' })));
-      return h('div', { className: 'ove-fold' },
+      return h('div', { ref: rootRef, className: 'ove-fold' },
         h('div', {
           className: 'ove-row ove-fold-head',
           onClick: (event) => {
@@ -2114,10 +2193,10 @@ window.__ModuleLoader__.load({
         title: tr(key),
         desc: tr(`${key}.desc`),
         checked,
-        // Turning a feature on reveals the rows it owns, so open the box at the
-        // same time instead of leaving them folded out of sight.
+        // Switching a feature off folds the rows it owns away; switching it on
+        // leaves the fold where the human left it (they can open it anyway).
         onSwitch: () => {
-          if (checked !== true && body !== null && body !== undefined) setSettingOpen(key, true);
+          if (checked === true) setSettingOpen(key, false);
           onToggle();
         },
         children: body,
@@ -2173,8 +2252,7 @@ window.__ModuleLoader__.load({
               // Sent-message recall: the shortcut bindings and how deep the
               // stack goes. The scope is its own first-level setting below.
               feature('switch.recall', flags.recall, () => toggle('recall'),
-                flags.recall === true
-                  ? [
+                  [
                   // The two shortcut bindings are one foldable item: the row
                   // itself is the pair, the caret opens the two key recorders.
                   h(FoldRow, {
@@ -2235,19 +2313,15 @@ window.__ModuleLoader__.load({
                       disabled: count === 0,
                       onClick: () => setClearConfirm(true),
                     }, tr('recall.clear'))),
-                  ]
-                  : null),
+                  ]),
 
               feature('switch.automation', flags.automation, () => toggle('automation'),
-                flags.automation === true
-                  ? [
+                  [
                     switchRow('switch.bindScopes', flags.bindScopes, () => toggle('bindScopes')),
-                  ]
-                  : null),
+                  ]),
 
               feature('switch.detached', flags.detached, () => toggle('detached'),
-                flags.detached === true
-                  ? [
+                  [
                   note(tr('window.desc')),
                   settingRow(tr('window.mode'), tr('window.mode.desc'),
                     h('div', { className: 'ove-size-group', role: 'group', 'aria-label': tr('window.mode') },
@@ -2281,8 +2355,7 @@ window.__ModuleLoader__.load({
                         onClick: () => setWindow({ size: id }),
                       }, tr(`window.size.${id}`))))),
                     switchRow('window.mute', appearance.mute, () => setWindow({ mute: !appearance.mute })),
-                  ]
-                  : null, 'ove-setting-window'),
+                  ], 'ove-setting-window'),
 
               h(SubagentTreeSettingsRows, { t: tr }),
             )),
@@ -3422,7 +3495,7 @@ window.__ModuleLoader__.load({
      * @param props - conversation id, translator and stacking index.
      * @returns the floating frame, or its minimised pill.
      */
-    function DetachedPanel({ sessionId, tr, index }) {
+    function DetachedPanel({ sessionId, tr, index, zIndex }) {
       const appearance = useWindow();
       const [place, setPlace] = React.useState(() => initialPanelPlace(index));
       const [minimized, setMinimized] = React.useState(false);
@@ -3473,6 +3546,22 @@ window.__ModuleLoader__.load({
         };
         window.addEventListener('message', onMessage);
         return () => { window.removeEventListener('message', onMessage); };
+      }, [sessionId]);
+
+      // A press inside the embedded document belongs to that document, so it
+      // never reaches this page: the frame reports it and the window comes to
+      // the front. Only the stack changes — moving the element in the DOM would
+      // reload the document.
+      React.useEffect(() => {
+        const onPress = (event) => {
+          const data = event.data;
+          if (data === null || typeof data !== 'object') return;
+          if (data.source !== 'ove-detached-raise') return;
+          if (data.sessionId !== sessionId) return;
+          raiseDetachedPanel(sessionId);
+        };
+        window.addEventListener('message', onPress);
+        return () => { window.removeEventListener('message', onPress); };
       }, [sessionId]);
 
       /** The conversation title, from the document this window hosts. */
@@ -3576,7 +3665,8 @@ window.__ModuleLoader__.load({
           height: `${place.height}px`,
           opacity: appearance.opacity / 100,
           display: minimized ? 'none' : 'flex',
-          zIndex: 2147483002 + index,
+          // Stacking follows the last click, not the render order.
+          zIndex: 2147483002 + (typeof zIndex === 'number' && zIndex >= 0 ? zIndex : index),
         },
       },
       h('div', {
@@ -3624,7 +3714,7 @@ window.__ModuleLoader__.load({
           type: 'button',
           className: 'ove-detached-pill',
           'data-session': sessionId,
-          style: { zIndex: 2147483002 + index },
+          style: { zIndex: 2147483002 + (typeof zIndex === 'number' && zIndex >= 0 ? zIndex : index) },
           title: tr('detachedRestore'),
           onClick: () => setMinimized(false),
         },
@@ -4813,13 +4903,14 @@ window.__ModuleLoader__.load({
         desc: tr('subagentTree.enable.desc'),
         checked: settings.enabled,
         onSwitch: () => {
-          if (settings.enabled !== true) setSettingOpen('subagentTree', true);
+          // Same rule as the other boxes: off folds the rows, on keeps them.
+          if (settings.enabled === true) setSettingOpen('subagentTree', false);
           setSubagentTreeSetting('enabled', settings.enabled !== true);
         },
         open: settingsOpen['subagentTree'] === true,
         onToggleOpen: (open) => setSettingOpen('subagentTree', open),
-        children: settings.enabled === true
-          ? [
+        children:
+          [
             h('p', { className: 'ove-row-note' }, tr('subagentTree.settingsIntro')),
             row(
               tr('subagentTree.showCount'),
@@ -4837,8 +4928,7 @@ window.__ModuleLoader__.load({
             ),
             cleared ? h('p', { className: 'ove-muted ove-row-note' }, tr('subagentTree.cleared')) : null,
             h('p', { className: 'ove-row-note' }, tr('subagentTree.settingsNote')),
-          ]
-          : null,
+          ],
       });
     }
 
@@ -4856,6 +4946,7 @@ window.__ModuleLoader__.load({
       });
       const detached = useDetached();
       const panels = usePanels();
+      const panelOrder = usePanelOrder();
 
       // The Host owns the independent OS windows, so its report is the only
       // place their liveness can come from: mirror it while this page lives.
@@ -5058,7 +5149,13 @@ window.__ModuleLoader__.load({
       // plugin surface would have no rule to apply.
       return h(React.Fragment, null,
         h('style', { key: 'styles', 'data-plugin-css': `${NS}-detached` }, CSS),
-        [...panels].map((sessionId, index) => h(DetachedPanel, { key: sessionId, sessionId, tr, index })));
+        [...panels].map((sessionId, index) => h(DetachedPanel, {
+          key: sessionId,
+          sessionId,
+          tr,
+          index,
+          zIndex: panelOrder.indexOf(sessionId),
+        })));
     }
 
     /* ------------------------------------------------------------------ */

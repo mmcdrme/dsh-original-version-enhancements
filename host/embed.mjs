@@ -70,6 +70,30 @@ const SIDEBAR_TRACK_SCRIPT = `(() => {
 `
 
 /**
+ * A click inside the embedded document never reaches the page that hosts it,
+ * so the frame announces the first pointer press (and keyboard focus) instead.
+ * The hosting page then brings that window forward without touching the DOM.
+ */
+const FOCUS_SCRIPT = `(() => {
+  if (window.top === window) return
+  const session = (() => {
+    try { return new URLSearchParams(location.search).get('session') || '' } catch { return '' }
+  })()
+  if (session.length === 0) return
+  let last = 0
+  const tell = () => {
+    const now = Date.now()
+    if (now - last < 250) return
+    last = now
+    try {
+      window.parent.postMessage({ source: 'ove-detached-raise', sessionId: session }, location.origin)
+    } catch { /* the opener is gone */ }
+  }
+  document.addEventListener('pointerdown', tell, true)
+  document.addEventListener('focusin', tell, true)
+})()`
+
+/**
  * A conversation needs a moment to mount, and the app's own skeleton is not
  * worth showing. The companion exe already paints one loading state of its own
  * and keeps it until the page says it is ready, so this script only reports
@@ -282,6 +306,7 @@ export function renderEmbed(html, baseUrl) {
     `<style data-ove-embed>${EMBED_CSS}${LOADING_CSS}</style>`,
     `<script data-ove-embed-boot>${LOADING_SCRIPT}</script>`,
     `<script data-ove-embed-track>${SIDEBAR_TRACK_SCRIPT}</script>`,
+    `<script data-ove-embed-focus>${FOCUS_SCRIPT}</script>`,
     `<script data-ove-embed-audio>${LAST_TURN_GUARD_SCRIPT}</script>`,
   ].join('')
   return /<head[^>]*>/iu.test(html)

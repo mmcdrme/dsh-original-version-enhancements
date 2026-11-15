@@ -131,6 +131,11 @@
 .ove-setting-body > .ove-row { position: relative; padding: 10px 0; }
 .ove-setting-body > .ove-row + .ove-row { border-top: .5px solid var(--dsw-alias-border-l1); }
 .ove-setting-body > .ove-row-note { padding: 8px 0 4px; }
+/* A switched-off box still folds open, so the rows it owns stay readable, but
+   nothing inside takes input until the switch is back on (`inert` is set on
+   the body itself; the dimming is only the visual half of it). */
+.ove-setting-body.is-locked { opacity: .48; }
+.ove-setting[data-locked="true"] .ove-setting-caret { opacity: .8; }
 /* The independent-window box speaks the page's own tone instead of the brand
    blue: filled segments, the slider and its switch all use the main label
    colour (near-black on the light theme). */
