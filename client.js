@@ -1970,22 +1970,36 @@ window.__ModuleLoader__.load({
                     'aria-label': tr('recall.max'),
                     onChange: (event) => setRecall({ max: event.target.value }),
                   })),
-                  ]
-                  : null),
-
-              // Independent mode is a first-level setting: it decides whether
-              // every conversation keeps its own history. What it controls —
-              // whether that history survives a restart — sits inside its box.
-              feature('recall.scope', recall.perSession === true, () => setScopeConfirm(true),
-                recall.perSession === true
-                  ? [
-                    settingRow(
-                      tr('recall.persist'),
-                      tr('recall.persist.desc'),
-                      switchOf(recall.persistHistory !== false,
-                        () => setRecall({ persistHistory: recall.persistHistory === false }),
-                        tr('recall.persist')),
-                    ),
+                  // Same level as the bindings above: whether each
+                  // conversation keeps its own history.
+                  settingRow(tr('recall.scope'), tr('recall.scope.desc'), switchOf(
+                    recall.perSession === true,
+                    () => setScopeConfirm(true),
+                    tr('recall.scope'),
+                  )),
+                  // One level deeper: whether that history survives a restart.
+                  recall.perSession === true
+                    ? h('div', { className: 'ove-setting-sub' },
+                      settingRow(
+                        tr('recall.persist'),
+                        tr('recall.persist.desc'),
+                        switchOf(recall.persistHistory !== false,
+                          () => setRecall({ persistHistory: recall.persistHistory === false }),
+                          tr('recall.persist')),
+                      ))
+                    : null,
+                  // The destructive action closes this level, at the bottom.
+                  h('button', {
+                    type: 'button',
+                    className: 'ove-row ove-row-danger',
+                    disabled: count === 0,
+                    onClick: () => clearAllSentHistory(),
+                  },
+                    h('span', { className: 'ove-row-text' },
+                      h('span', { className: 'ove-row-title' }, tr('recall.clearTitle')),
+                      h('span', { className: 'ove-row-desc' },
+                        tr('recall.clearDesc').replace('{n}', String(count)))),
+                    h('span', { className: 'ove-danger-action' }, tr('recall.clear'))),
                   ]
                   : null),
 
@@ -2036,20 +2050,6 @@ window.__ModuleLoader__.load({
                   : null, 'ove-setting-window'),
 
               h(SubagentTreeSettingsRows, { t: tr }),
-
-              // The destructive action is its own first-level item at the very
-              // bottom, in red so it never reads like another switch.
-              h('button', {
-                type: 'button',
-                className: 'ove-setting ove-setting-danger',
-                disabled: count === 0,
-                onClick: () => clearAllSentHistory(),
-              },
-                h('span', { className: 'ove-setting-text' },
-                  h('span', { className: 'ove-setting-title' }, tr('recall.clearTitle')),
-                  h('span', { className: 'ove-setting-desc' },
-                    tr('recall.clearDesc').replace('{n}', String(count)))),
-                h('span', { className: 'ove-danger-action' }, tr('recall.clear'))),
             )),
 
           h('p', { className: 'ove-hint' }, tr('pageHint')),
