@@ -96,18 +96,8 @@
 .ove-setting-desc { font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-tertiary); }
 /* Everything the switch owns starts one indent step in, with a hairline guide
    running down the left edge of the group. */
-.ove-setting-body { padding: 0 0 4px 18px; }
+.ove-setting-body { padding: 0 0 4px 7px; }
 .ove-setting-body > .ove-row { position: relative; padding: 10px 0; }
-.ove-setting-body > .ove-row::before {
-  content: "";
-  position: absolute;
-  left: -11px;
-  top: 8px;
-  bottom: 8px;
-  width: 1px;
-  border-radius: 1px;
-  background: var(--dsw-alias-border-l2);
-}
 .ove-setting-body > .ove-row + .ove-row { border-top: .5px solid var(--dsw-alias-border-l1); }
 .ove-setting-body > .ove-row-note { padding: 8px 0 4px; }
 /* The independent-window box speaks the page's own tone instead of the brand
@@ -124,19 +114,9 @@
   background: color-mix(in srgb, var(--dsw-alias-label-primary) 82%, var(--dsw-alias-bg-base));
 }
 /* One switch inside a feature can own a switch of its own (独立模式 →
-   「重新启动保留历史记录」): one more indent step, same guide as the body. */
-.ove-setting-sub { position: relative; padding-left: 18px; }
-.ove-setting-sub::before {
-  content: "";
-  position: absolute;
-  left: 7px;
-  top: 8px;
-  bottom: 8px;
-  width: 1px;
-  border-radius: 1px;
-  background: var(--dsw-alias-border-l2);
-}
-.ove-setting-sub > .ove-row { position: relative; padding: 10px 0; }
+   「重新启动保留历史记录」): one more blank indent step, no guide line. */
+.ove-setting-sub { padding-left: 7px; }
+.ove-setting-sub > .ove-row { padding: 10px 0; }
 /* The destructive row closes the recall level and keeps the boxed red look of
    the previous layout: it is the same level as the bindings above, but drawn
    as its own red-bordered block so it never reads like another setting. */
@@ -144,6 +124,7 @@
   display: flex;
   align-items: center;
   gap: 16px;
+  box-sizing: border-box;
   width: 100%;
   margin: 10px 0 4px;
   padding: 12px 14px;
@@ -169,9 +150,9 @@
   transition: background-color .15s ease, border-color .15s ease, color .15s ease;
 }
 .ove-danger-btn:hover:not(:disabled) {
-  background: #dc2626;
+  background: color-mix(in srgb, #dc2626 10%, transparent);
   border-color: #dc2626;
-  color: #fff;
+  color: #dc2626;
 }
 .ove-danger-btn:focus-visible { outline: 2px solid #dc2626; outline-offset: 2px; }
 .ove-danger-btn:disabled { opacity: .45; cursor: default; }
