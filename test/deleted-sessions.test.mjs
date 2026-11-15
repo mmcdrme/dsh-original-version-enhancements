@@ -320,3 +320,50 @@ test('stale trash entries are dropped on the next start, fresh ones kept', async
   assert.equal(entries[old.token], undefined)
   await rm(work, { recursive: true, force: true })
 })
+
+test('concurrent retains all reach the index and stay undoable', async () => {
+  // Two windows (or a delete overlapping the previous receipt's purge) used to
+  // read the same index snapshot and overwrite each other: the receipt said
+  // "deleted" while the entry was never written, so its undo answered
+  // `undo-expired` and the hourly sweep later removed the only copy.
+  const { work, profileDir, projectDir } = await makeRemovedSession()
+  const count = 8
+  const sources = []
+  for (let index = 0; index < count; index += 1) {
+    const sessionId = `session-concurrent-${index}`
+    const directory = join(projectDir, sessionId)
+    await mkdir(directory, { recursive: true })
+    await writeFile(join(directory, 'session.jsonl'), `${JSON.stringify({ ...HEADER, id: sessionId })}\n`)
+    sources.push({ sessionId, directory })
+  }
+
+  const retained = await Promise.all(sources.map(source => retainDeletedSession({
+    profileDir,
+    sessionId: source.sessionId,
+    projectDir,
+    name: source.sessionId,
+    sourceDirectory: source.directory,
+    header: { ...HEADER, id: source.sessionId },
+  })))
+
+  assert.equal(retained.length, count)
+  assert.equal(new Set(retained.map(item => item.token)).size, count)
+
+  const state = await readRetainedState(profileDir)
+  const indexed = Object.keys(state.entries)
+  assert.equal(indexed.length, count)
+  for (const item of retained) assert.ok(state.entries[item.token], `token ${item.token} missing from the index`)
+
+  // No writer may leave its unique temporary file behind either.
+  const leftovers = (await readdir(profileDir)).filter(name => name.endsWith('.tmp'))
+  assert.deepEqual(leftovers, [])
+
+  // Every receipt can still be undone.
+  const restored = await Promise.all(retained.map(item => restoreRetainedSession({ profileDir }, { token: item.token })))
+  for (const result of restored) assert.equal(result.ok, true, JSON.stringify(result))
+  assert.deepEqual((await readRetainedState(profileDir)).entries, {})
+  for (const source of sources) {
+    assert.match(await readFile(join(source.directory, 'session.jsonl'), 'utf8'), /session-concurrent/)
+  }
+  await rm(work, { recursive: true, force: true })
+})

@@ -78,14 +78,41 @@ export async function readRetainedState(profileDir, warn = () => undefined) {
   return emptyState()
 }
 
+/**
+ * Write the trash index atomically.
+ *
+ * Two concurrent writes used to share one `<file>.tmp`, so one rename could
+ * consume the other's temporary file (`ENOENT`) or publish a stale snapshot. A
+ * unique temporary name removes that collision; the retry covers a transient
+ * share/permission hiccup (an AV scanner reading the freshly written file) and
+ * the caller still sees a real failure if the write cannot be completed.
+ * @param profileDir - the profile directory.
+ * @param state - the state object to persist.
+ * @returns nothing.
+ */
 const writeRetainedState = async (profileDir, state) => {
   const file = retainedStateFile(profileDir)
   await mkdir(path.dirname(file), { recursive: true })
-  // Atomic replace, for the same reason the automation sidecar uses one: a
-  // half-written index would silently drop every pending undo.
-  const temporary = `${file}.tmp`
-  await writeFile(temporary, JSON.stringify(state), 'utf8')
-  await rename(temporary, file)
+  const payload = JSON.stringify(state)
+  const attempt = async () => {
+    // Unique per call: a fixed name is exactly what let one writer's rename
+    // consume another writer's temporary file.
+    const temporary = `${file}.${randomUUID()}.tmp`
+    try {
+      await writeFile(temporary, payload, 'utf8')
+      await rename(temporary, file)
+    } catch (error) {
+      // Never leave a `.tmp` behind: it would be mistaken for a broken index on
+      // the next start and would grow the profile directory.
+      await rm(temporary, { force: true }).catch(() => undefined)
+      throw error
+    }
+  }
+  try {
+    await attempt()
+  } catch {
+    await attempt()
+  }
 }
 
 /**
@@ -117,6 +144,36 @@ const failure = (code, message, extra) => ({
   ok: false,
   error: { code, message, ...(extra === undefined ? {} : extra) },
 })
+
+/**
+ * One read-modify-write of the index at a time, process wide.
+ *
+ * `retain`, `restore`, `purge` and the startup sweep all read the index, change
+ * one entry and write the whole file back. Without a shared lock two of them
+ * read the same snapshot and the second write silently drops the first entry —
+ * the receipt's token then answers `undo-expired` and the hourly sweep deletes
+ * the only copy of the conversation. The queue lives on `globalThis` for the
+ * same reason the delete tracker does: a plugin reload creates a new module
+ * instance while the old instance's promises may still be running.
+ * @param work - the critical section.
+ * @returns whatever the critical section returns.
+ */
+const STATE_QUEUE = Symbol.for('dsh-original-version-enhancements.retained-state-queue.v1')
+const stateQueue = () => {
+  const current = globalThis[STATE_QUEUE]
+  if (current !== undefined && typeof current.run === 'function') return current
+  let tail = Promise.resolve()
+  const created = {
+    run: (work) => {
+      const result = tail.then(work, work)
+      tail = result.then(() => undefined, () => undefined)
+      return result
+    },
+  }
+  globalThis[STATE_QUEUE] = created
+  return created
+}
+const serializeState = work => stateQueue().run(work)
 
 /**
  * One operation at a time per undo token.
@@ -170,37 +227,41 @@ export async function retainDeletedSession({
   const root = retainedRoot(profileDir)
   await mkdir(root, { recursive: true })
   const directory = path.join(root, token)
-  await moveDirectory(sourceDirectory, directory)
-  const state = await readRetainedState(profileDir, warn)
-  state.entries[token] = {
-    token,
-    sessionId,
-    projectDir,
-    name,
-    directory,
-    header,
-    archived: archived === true,
-    pinned: pinned === true,
-    createdAt: now,
-  }
-  try {
-    await writeRetainedState(profileDir, state)
-  } catch (error) {
-    try {
-      await moveDirectory(directory, sourceDirectory)
-      error.retained = 'rolled-back'
-    } catch (restoreError) {
-      // Both halves are now wrong: the index cannot name this directory, and the
-      // original location is empty. Report where the data actually is so the
-      // deletion is not confirmed as successful.
-      error.retained = 'orphaned'
-      error.trashDirectory = directory
-      error.rollbackError = String(restoreError?.message ?? restoreError)
-      warn(`deleted-sessions: could not index or roll back ${directory}: ${String(restoreError)}`)
+  // The move and the index write share the queue: a concurrent sweep must never
+  // observe this directory before the entry that makes it reachable exists.
+  return serializeState(async () => {
+    await moveDirectory(sourceDirectory, directory)
+    const state = await readRetainedState(profileDir, warn)
+    state.entries[token] = {
+      token,
+      sessionId,
+      projectDir,
+      name,
+      directory,
+      header,
+      archived: archived === true,
+      pinned: pinned === true,
+      createdAt: now,
     }
-    throw error
-  }
-  return { token }
+    try {
+      await writeRetainedState(profileDir, state)
+    } catch (error) {
+      try {
+        await moveDirectory(directory, sourceDirectory)
+        error.retained = 'rolled-back'
+      } catch (restoreError) {
+        // Both halves are now wrong: the index cannot name this directory, and the
+        // original location is empty. Report where the data actually is so the
+        // deletion is not confirmed as successful.
+        error.retained = 'orphaned'
+        error.trashDirectory = directory
+        error.rollbackError = String(restoreError?.message ?? restoreError)
+        warn(`deleted-sessions: could not index or roll back ${directory}: ${String(restoreError)}`)
+      }
+      throw error
+    }
+    return { token }
+  })
 }
 
 /**
@@ -214,7 +275,9 @@ export async function retainDeletedSession({
 export async function restoreRetainedSession(deps, request) {
   const token = typeof request?.token === 'string' ? request.token : ''
   if (token.length === 0) return failure('undo-expired', '撤销期限已过，该会话已彻底删除。')
-  return serializeToken(token, () => restoreRetainedSessionOwned(deps, token))
+  // Token first (one undo/purge pair per token), then the process-wide index
+  // queue: both operations take the same order, so they cannot deadlock.
+  return serializeToken(token, () => serializeState(() => restoreRetainedSessionOwned(deps, token)))
 }
 
 /**
@@ -341,7 +404,7 @@ async function restoreRetainedSessionOwned(deps, token) {
 export async function purgeRetainedSession(deps, request) {
   const token = typeof request?.token === 'string' ? request.token : ''
   if (token.length === 0) return { ok: true, value: { purged: false } }
-  return serializeToken(token, () => purgeRetainedSessionOwned(deps, token))
+  return serializeToken(token, () => serializeState(() => purgeRetainedSessionOwned(deps, token)))
 }
 
 /**
@@ -372,6 +435,16 @@ async function purgeRetainedSessionOwned(deps, token) {
  * @returns how many entries were dropped.
  */
 export async function purgeStaleRetainedSessions(deps) {
+  return serializeState(() => purgeStaleRetainedSessionsOwned(deps))
+}
+
+/**
+ * The sweep itself; runs with the index queue held so an in-flight retain's
+ * entry (or its just-moved directory) is never treated as residue.
+ * @param deps - profile directory, lifetime bound and clock.
+ * @returns how many entries were dropped.
+ */
+async function purgeStaleRetainedSessionsOwned(deps) {
   const { profileDir, maxAgeMs = RETAIN_LIFETIME_MS, now = Date.now(), warn = () => undefined } = deps
   const state = await readRetainedState(profileDir, warn)
   let dropped = 0

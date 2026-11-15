@@ -662,12 +662,12 @@ window.__ModuleLoader__.load({
       while (Date.now() - started <= timeoutMs) {
         const state = await pullHostWindows();
         if (state !== undefined) {
-          const entry = (state.windows ?? []).find(item => String(item?.sessionId) === sessionId);
+          const windows = Array.isArray(state.windows) ? state.windows : [];
+          const entry = windows.find(item => String(item?.sessionId) === sessionId);
           if (entry?.ready === true) return true;
-          // The Host no longer knows this window: its process exited.
-          if (!Array.isArray(state.windows) || state.windows.length === 0) {
-            if (Date.now() - started > 1500) return false;
-          }
+          // This conversation's own window is gone (its process exited): the
+          // old wait sat the full 45 s on a window that no longer existed.
+          if (entry === undefined && Date.now() - started > 1500) return false;
         }
         await new Promise((resolve) => { window.setTimeout(resolve, 400); });
       }
@@ -878,11 +878,13 @@ window.__ModuleLoader__.load({
           const state = await pullHostWindows();
           const alive = (state?.windows ?? []).some(item => String(item?.sessionId) === sessionId);
           if (alive) {
-            // It is up but never finished loading: close it and say so rather
-            // than silently swapping the window type.
+            // It is up but never finished loading: close it rather than
+            // silently swapping the window type.
             await closeNativeWindow(sessionId);
-            note('detachedLoadFailed');
           }
+          // Gone (closed by the user or its process exited): report the failure
+          // once instead of leaving the click with no feedback at all.
+          note('detachedLoadFailed');
           return false;
         }
         // The companion window could not be started at all.
@@ -1200,6 +1202,10 @@ window.__ModuleLoader__.load({
             code: typeof failure.code === 'string' ? failure.code : '',
           };
         }
+        // The conversation is gone: its detached window / in-app panel would
+        // otherwise sit forever on a session that no longer exists.
+        dropDetachedPanel(target.id);
+        releaseDetached(target.id);
         await refreshStores(ctx);
         leaveRemovedSession(ctx, target.id);
         const token = body.value?.retained?.token;
@@ -1591,6 +1597,9 @@ window.__ModuleLoader__.load({
      * @param props - the Session's standard input props.
      * @returns null.
      */
+    /** Composer phases that really mean "this text is being submitted". */
+    const SENT_PHASES = new Set(['sending', 'submitting']);
+
     function RecallBridge({ inputActions, useInput, sessionId }) {
       const flags = useFlags();
       const recall = useRecall();
@@ -1652,7 +1661,10 @@ window.__ModuleLoader__.load({
           return;
         }
         const text = typeof draft === 'string' ? draft : '';
-        if (phase !== 'plain') {
+        // Only a real submission is in flight. `claimed` is the composer
+        // turning the text into a command chip; counting it recorded a message
+        // that was never sent (the "/" ghosts in the send history).
+        if (SENT_PHASES.has(phase)) {
           // The composer is in flight: remember exactly what it is sending.
           if (pendingSend.current === null && lastText.current !== null) pendingSend.current = lastText.current;
         } else if (pendingSend.current !== null) {
@@ -1792,6 +1804,8 @@ window.__ModuleLoader__.load({
       const count = useSentHistoryCount();
       /** The pending scope switch, which must confirm that history is dropped. */
       const [scopeConfirm, setScopeConfirm] = React.useState(false);
+      const scopePanelRef = React.useRef(null);
+      useModalKeyboard(scopePanelRef, () => setScopeConfirm(false), false, scopeConfirm);
 
       const toggle = (key) => setFlag(key, !flags[key]);
 
@@ -1804,7 +1818,14 @@ window.__ModuleLoader__.load({
 
       const dialog = scopeConfirm
         ? ReactDOM.createPortal(h('div', { className: 'ove-overlay ove-overlay-portal' },
-          h('div', { className: 'ove-dialog', role: 'dialog', 'aria-modal': 'true', 'aria-label': tr('recall.scope') },
+          h('div', {
+            className: 'ove-dialog',
+            role: 'dialog',
+            'aria-modal': 'true',
+            'aria-label': tr('recall.scope'),
+            ref: scopePanelRef,
+            tabIndex: -1,
+          },
             h('h2', { className: 'ove-dialog-title' }, tr('recall.scopeConfirmTitle')),
             h('p', { className: 'ove-dialog-desc' },
               tr('recall.scopeConfirmDesc').replace('{n}', String(count))),
@@ -2057,16 +2078,27 @@ window.__ModuleLoader__.load({
     const ARCHIVE_SORT_KEY = 'original-version-enhancements.archives.sort.v1';
     /** When each Session entered the archive set (the store keeps no times). */
     const ARCHIVE_TIME_KEY = 'original-version-enhancements.archives.times.v1';
+    /** Cached copy so subscriptions get a stable snapshot per change. */
+    let archiveTimesCache = null;
+    const archiveTimesListeners = new Set();
+    const subscribeArchiveTimes = (listener) => {
+      archiveTimesListeners.add(listener);
+      return () => { archiveTimesListeners.delete(listener); };
+    };
     const readArchiveTimes = () => {
+      if (archiveTimesCache !== null) return archiveTimesCache;
       try {
         const raw = JSON.parse(globalThis.localStorage?.getItem(ARCHIVE_TIME_KEY) ?? '{}');
-        return raw !== null && typeof raw === 'object' ? raw : {};
+        archiveTimesCache = raw !== null && typeof raw === 'object' ? raw : {};
       } catch {
-        return {};
+        archiveTimesCache = {};
       }
+      return archiveTimesCache;
     };
     const writeArchiveTimes = (times) => {
+      archiveTimesCache = times;
       try { globalThis.localStorage?.setItem(ARCHIVE_TIME_KEY, JSON.stringify(times)); } catch { /* best effort */ }
+      for (const listener of archiveTimesListeners) listener();
     };
     /** The archive action happens elsewhere; remember the moment we see it. */
     const rememberArchiveTimes = (ids) => {
@@ -2132,8 +2164,16 @@ window.__ModuleLoader__.load({
         return [...byName.values()]
           .sort((left, right) => left.label.localeCompare(right.label, 'zh-Hans-CN'));
       }
+      // The input order is the page's stored order, not a time order: the
+      // confirmation list used to keep whatever came in, so switching to
+      // 「时间排序」 only regrouped. Sort first, newest first, unknown last.
+      const ordered = [...rows].sort((left, right) => {
+        const leftAt = typeof left.stamp === 'number' ? left.stamp : 0;
+        const rightAt = typeof right.stamp === 'number' ? right.stamp : 0;
+        return rightAt - leftAt;
+      });
       const byMonth = new Map();
-      for (const row of rows) {
+      for (const row of ordered) {
         const parts = archiveCalendarOf(row.stamp, tr);
         const monthKey = parts === null ? 'unknown' : parts.monthKey;
         let month = byMonth.get(monthKey);
@@ -2149,7 +2189,20 @@ window.__ModuleLoader__.load({
         }
         day.rows.push(row);
       }
-      return [...byMonth.values()];
+      const months = [...byMonth.values()];
+      months.sort((left, right) => {
+        if (left.key === 'm:unknown') return 1;
+        if (right.key === 'm:unknown') return -1;
+        return right.key.localeCompare(left.key);
+      });
+      for (const month of months) {
+        month.days.sort((left, right) => {
+          if (left.key === 'd:unknown') return 1;
+          if (right.key === 'd:unknown') return -1;
+          return right.key.localeCompare(left.key);
+        });
+      }
+      return months;
     };
 
     /**
@@ -2282,11 +2335,25 @@ window.__ModuleLoader__.load({
       // deleted child can stay listed until the parent is reopened. Remember
       // what this page just removed and drop those rows immediately.
       const [hiddenCleaned, setHiddenCleaned] = React.useState(() => new Set());
+      // Both confirmation dialogs are modals: Escape closes them, Tab stays in.
+      const batchPanelRef = React.useRef(null);
+      const hiddenPanelRef = React.useRef(null);
+      useModalKeyboard(batchPanelRef, () => setBatchKind(null), batchBusy, batchKind !== null);
+      useModalKeyboard(hiddenPanelRef, () => setHiddenOpen(false), hiddenBusy, hiddenOpen);
       const deleteNotices = React.useSyncExternalStore(subscribeDeleteNotice, getDeleteNotices, getDeleteNotices);
+      // Highest undo receipt already handled: the toast carries a structural
+      // flag, so a language switch or a partial failure cannot confuse it.
+      const undoneSeen = React.useRef(0);
       React.useEffect(() => {
+        let latest = 0;
+        for (const notice of deleteNotices) {
+          if (notice.undone === true && notice.seq > latest) latest = notice.seq;
+        }
+        if (latest <= undoneSeen.current) return;
+        undoneSeen.current = latest;
         // Undoing a removal puts the session back: stop hiding the rows, the
         // catalogue still knows them.
-        if (deleteNotices.some((notice) => notice.text === tr('deleteUndone'))) setHiddenCleaned(new Set());
+        setHiddenCleaned(new Set());
       }, [deleteNotices]);
 
       const normalized = query.trim();
@@ -2554,7 +2621,7 @@ window.__ModuleLoader__.load({
         }
       };
 
-      const archiveTimes = readArchiveTimes();
+      const archiveTimes = React.useSyncExternalStore(subscribeArchiveTimes, readArchiveTimes, readArchiveTimes);
       const timeText = (stamp) => {
         if (!stamp) return tr('archiveUnknownDate');
         const date = new Date(stamp);
@@ -2872,6 +2939,8 @@ window.__ModuleLoader__.load({
             role: 'dialog',
             'aria-modal': 'true',
             'aria-label': batchKind === 'restore' ? tr('batchRestoreTitle') : tr('batchDeleteTitle'),
+            ref: batchPanelRef,
+            tabIndex: -1,
           },
             h('h2', { className: 'ove-dialog-title' },
               batchKind === 'restore' ? tr('batchRestoreTitle') : tr('batchDeleteTitle')),
@@ -2915,6 +2984,8 @@ window.__ModuleLoader__.load({
             role: 'dialog',
             'aria-modal': 'true',
             'aria-label': tr('hiddenManageTitle'),
+            ref: hiddenPanelRef,
+            tabIndex: -1,
           },
             h('h2', { className: 'ove-dialog-title' }, tr('hiddenManageTitle')),
             h('p', { className: 'ove-dialog-desc' },
@@ -3162,6 +3233,11 @@ window.__ModuleLoader__.load({
           const data = event.data;
           if (data === null || typeof data !== 'object' || data.source !== 'ove-detached') return;
           if (data.sessionId !== sessionId) return;
+          if (data.type === 'failed') {
+            window.clearTimeout(failTimer.current);
+            setFailed(true);
+            return;
+          }
           if (data.type !== 'ready') return;
           loadedRef.current = true;
           setLoaded(true);
@@ -3361,6 +3437,9 @@ window.__ModuleLoader__.load({
           }
         };
         announce('boot');
+        // Bounded: a session that never becomes selectable must not be
+        // re-selected forever (the loop used to run for the window's lifetime).
+        let tries = 0;
         const timer = window.setInterval(() => {
           const current = ctx?.uiWorkspace?.mainReference?.sessionId ?? '';
           if (current === detachedId) {
@@ -3368,6 +3447,12 @@ window.__ModuleLoader__.load({
             ready = true;
             window.clearInterval(timer);
             announce('ready');
+            return;
+          }
+          tries += 1;
+          if (tries > 75) {
+            window.clearInterval(timer);
+            announce('failed');
             return;
           }
           try {
@@ -3463,8 +3548,8 @@ window.__ModuleLoader__.load({
 .ove-sub-toggle {
   position: relative;
   display: inline-flex; align-items: center; justify-content: center; gap: 0;
-  height: 18px; margin: 0; padding: 0 6px; border-radius: 6px;
-  border: 0; border-radius: 5px; background: transparent;
+  height: 18px; margin: 0; padding: 0 6px;
+  border: 0; border-radius: 6px; background: transparent;
   color: var(--dsw-alias-label-tertiary);
   font: inherit; font-size: 10px; line-height: 18px; font-variant-numeric: tabular-nums;
   cursor: pointer; transition: background-color .12s ease, color .12s ease;
@@ -4064,6 +4149,9 @@ window.__ModuleLoader__.load({
           event.stopPropagation();
         });
         row.addEventListener('keydown', (event) => {
+          // Only keys on the row itself: the inline expander is a button and
+          // owns its Enter/Space, which used to be swallowed here.
+          if (event.target !== event.currentTarget) return;
           // The menu key and Shift+F10 open the same menu as a right click.
           if (event.key === 'ContextMenu' || (event.key === 'F10' && event.shiftKey)) {
             event.preventDefault();
@@ -4171,7 +4259,11 @@ window.__ModuleLoader__.load({
         const title = rowTitleOf(row, button);
         if (title !== null) {
           if (button.nextElementSibling !== title) row.insertBefore(button, title);
-          // No gap between the arrow/count and the name.
+          // No gap between the arrow/count and the name. The stock title's own
+          // margin is remembered so turning the feature off restores it.
+          if (title.dataset.oveMarginLeft === undefined) {
+            title.dataset.oveMarginLeft = title.style.marginLeft;
+          }
           if (title.style.marginLeft !== '0px') title.style.marginLeft = '0px';
         }
         const signature = `${count}|${open}|${settings.showCount === true}`;
@@ -4210,7 +4302,8 @@ window.__ModuleLoader__.load({
             ];
           });
         };
-        return JSON.stringify([parentId, active, walk(parentId, parentId)]);
+        const settings = getSubagentTreeSettings();
+        return JSON.stringify([parentId, active, settings.showCount === true, walk(parentId, parentId)]);
       };
 
       const paint = () => {
@@ -4315,8 +4408,16 @@ window.__ModuleLoader__.load({
             if (!wanted.has(id) || !button.isConnected) {
               const hostRow = button.parentElement;
               if (hostRow !== null) {
-                hostRow.style.position = '';
                 delete hostRow.dataset.oveSubagentHost;
+                const title = rowTitleOf(hostRow, button);
+                if (title !== null) {
+                  if (title.dataset.oveMarginLeft !== undefined) {
+                    title.style.marginLeft = title.dataset.oveMarginLeft;
+                    delete title.dataset.oveMarginLeft;
+                  } else {
+                    title.style.marginLeft = '';
+                  }
+                }
               }
               button.remove();
               toggles.delete(id);
@@ -4396,8 +4497,13 @@ window.__ModuleLoader__.load({
         for (const button of toggles.values()) {
           const hostRow = button.parentElement;
           if (hostRow !== null) {
-            hostRow.style.position = '';
             delete hostRow.dataset.oveSubagentHost;
+            // Give the stock title back the margin it had before the arrow.
+            const title = rowTitleOf(hostRow, button);
+            if (title !== null && title.dataset.oveMarginLeft !== undefined) {
+              title.style.marginLeft = title.dataset.oveMarginLeft;
+              delete title.dataset.oveMarginLeft;
+            }
           }
           button.remove();
         }
@@ -4610,6 +4716,11 @@ window.__ModuleLoader__.load({
           const target = event.target instanceof Element ? event.target : null;
           const row = target === null ? null : target.closest('[data-row-key^="session:"]');
           if (row === null) return '';
+          // A control inside the row (the subagent expander, the stock actions,
+          // a checkbox) owns its click: capturing it here used to make the
+          // expander dead on a detached conversation's row.
+          const control = target.closest('button, a, input, select, textarea, [role="button"], [contenteditable="true"]');
+          if (control !== null && control !== row) return '';
           const id = String(row.getAttribute('data-row-key') ?? '').slice('session:'.length);
           // This window *is* that conversation: its own row must stay usable.
           if (!detachedSet.has(id)) return '';
@@ -4906,16 +5017,12 @@ window.__ModuleLoader__.load({
       const workspaceSnapshot = useWorkspaceSnapshot(ctx);
       const [busy, setBusy] = React.useState(false);
 
-      React.useEffect(() => {
-        if (state.target === null) return undefined;
-        const onKey = (event) => {
-          if (event.key === 'Escape' && !transferState.busy) {
-            publishTransfer({ target: null, picks: [], busy: false, error: '', done: '' });
-          }
-        };
-        window.addEventListener('keydown', onKey);
-        return () => window.removeEventListener('keydown', onKey);
-      }, [state.target]);
+      const panelRef = React.useRef(null);
+      const closeTransfer = () => {
+        if (transferState.busy) return;
+        publishTransfer({ target: null, picks: [], busy: false, error: '', done: '' });
+      };
+      useModalKeyboard(panelRef, closeTransfer, transferState.busy === true, state.target !== null);
 
       if (state.target === null) return null;
 
@@ -5056,6 +5163,8 @@ window.__ModuleLoader__.load({
         role: 'dialog',
         'aria-modal': 'true',
         'aria-label': tr(move ? 'transferMoveTitle' : 'transferCopyTitle'),
+        ref: panelRef,
+        tabIndex: -1,
       },
         h('h2', { className: `ove-dialog-title ove-transfer-tone-${move ? 'move' : 'copy'}` }, tr(move ? 'transferMoveTitle' : 'transferCopyTitle')),
         h('p', { className: 'ove-dialog-desc' }, tr(move ? 'transferMoveDesc' : 'transferCopyDesc')),
@@ -5205,6 +5314,10 @@ window.__ModuleLoader__.load({
       const tr = typeof t === 'function' ? t : (key) => key;
       const [busy, setBusy] = React.useState(false);
       const [remaining, setRemaining] = React.useState(typeof notice.seconds === 'number' ? notice.seconds : 10);
+      /** The last undo failure; it keeps the receipt (and its token) alive. */
+      const [failure, setFailure] = React.useState('');
+      /** Bumped on a failed undo so the countdown restarts. */
+      const [attempt, setAttempt] = React.useState(0);
       // A batch deletion retains one token per session; a single one retains one.
       const tokens = noticeTokens(notice);
       const tokenKey = tokens.join(',');
@@ -5230,7 +5343,7 @@ window.__ModuleLoader__.load({
           window.clearInterval(tick);
           window.clearTimeout(purgeTimer.current);
         };
-      }, [notice.seq, tokenKey, seconds]);
+      }, [notice.seq, tokenKey, seconds, attempt]);
 
       // A receipt without an undo (the outcome of an undo, or a failure) is a
       // plain notice and clears itself.
@@ -5248,14 +5361,22 @@ window.__ModuleLoader__.load({
         const outcomes = await Promise.all(tokens.map((token) => requestRestore(ctx, token)));
         const failed = outcomes.find((outcome) => !outcome.ok);
         setBusy(false);
+        if (failed !== undefined) {
+          // The Host still holds the retained copy, and this token is the only
+          // way back to it: keep the receipt (and give the countdown a fresh
+          // start) instead of destroying the undo on a transient failure.
+          undoStarted.current = false;
+          setFailure(failed.error);
+          setAttempt((current) => current + 1);
+          return;
+        }
         dismissDeleteNotice(notice.seq);
         pushDeleteNotice({
-          text: failed === undefined
-            ? tr('deleteUndone')
-            : `${tr('deleteUndoFailed')}${failed.error}`,
-          tone: failed === undefined ? 'success' : 'warning',
+          text: tr('deleteUndone'),
+          tone: 'success',
           token: '',
           seconds: 0,
+          undone: true,
         });
       };
 
@@ -5265,15 +5386,19 @@ window.__ModuleLoader__.load({
         style: { top: `${24 + (shifted ? 44 : 0) + index * 52}px` },
         role: 'status',
       },
-        h('span', { className: 'ove-toast-text' }, notice.text),
+        h('span', { className: 'ove-toast-text' },
+          failure.length === 0 ? notice.text : `${tr('deleteUndoFailed')}${failure}`),
         tokenKey.length > 0 && h('span', { className: 'ove-toast-count' },
           tr('deleteUndoSeconds').replace('{n}', String(remaining))),
         tokenKey.length > 0 && h('button', {
           type: 'button',
           className: 'ove-toast-action',
           disabled: busy,
-          onClick: () => { void undo(); },
-        }, busy ? tr('restoring') : tr('deleteUndo')),
+          onClick: () => {
+            setFailure('');
+            void undo();
+          },
+        }, busy ? tr('restoring') : (failure.length > 0 ? tr('deleteUndoRetry') : tr('deleteUndo'))),
         h('button', {
           type: 'button',
           className: 'ove-toast-close',
@@ -5307,24 +5432,14 @@ window.__ModuleLoader__.load({
      */
     function DeleteConfirm({ t, target, busy, error, code, onCancel, onConfirm, overlayClass }) {
       const tr = typeof t === 'function' ? t : (key) => key;
-      const cancelRef = React.useRef(null);
+      const panelRef = React.useRef(null);
       const canForce = code === 'lifecycle-unavailable' || code === 'lifecycle-error';
-
-      React.useEffect(() => {
-        cancelRef.current?.focus?.();
-      }, []);
-
-      React.useEffect(() => {
-        const onKey = (event) => { if (event.key === 'Escape' && !busy) onCancel(); };
-        window.addEventListener('keydown', onKey);
-        return () => window.removeEventListener('keydown', onKey);
-      }, [busy, onCancel]);
+      useModalKeyboard(panelRef, onCancel, busy === true);
 
       const actions = h('div', { className: 'ove-dialog-actions' },
         h('button', {
           type: 'button',
           className: 'ove-btn',
-          ref: cancelRef,
           disabled: busy,
           onClick: onCancel,
         }, tr('cancel')),
@@ -5346,6 +5461,8 @@ window.__ModuleLoader__.load({
         role: 'dialog',
         'aria-modal': 'true',
         'aria-label': tr('dialogTitle'),
+        ref: panelRef,
+        tabIndex: -1,
       },
         h('h2', { className: 'ove-dialog-title' }, tr('dialogTitle')),
         h('p', { className: 'ove-dialog-desc' }, tr('dialogDesc')),
@@ -5803,7 +5920,7 @@ window.__ModuleLoader__.load({
       const [, date, clock] = match;
       return {
         date: `${date.slice(0, 4)}-${date.slice(4, 6)}-${date.slice(6, 8)}`,
-        time: `${clock.slice(0, 2)}:${clock.slice(2, 4)}:${clock.slice(4, 6) ?? '00'}`,
+        time: `${clock.slice(0, 2)}:${clock.slice(2, 4)}:${clock.slice(4, 6) || '00'}`,
       };
     };
 
@@ -6776,42 +6893,51 @@ window.__ModuleLoader__.load({
       });
     }
 
+    /** Everything inside a modal that can take focus, in DOM order. */
+    const MODAL_FOCUSABLE = 'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+    /** Open modals, oldest first: only the newest reacts to keys. */
+    const modalStack = [];
+
     /**
-     * The frame every schedule dialog shares.
-     *
-     * The four dialogs of this page used to be bare `aria-modal` divs with no
-     * Escape, no initial focus and no focus trap: a keyboard user stayed on the
-     * page behind the veil and could keep operating it. One frame fixes all of
-     * them, and carries the title/description/action layout they share.
-     * @param props - title, optional description, close handler, busy flag, the
-     *   dialog's own body nodes, and its action buttons.
-     * @returns the modal overlay.
+     * Keyboard behaviour every modal of this plugin shares: focus moves inside
+     * the panel when it opens, Escape closes it, and Tab cycles within it. A
+     * modal that only declared `aria-modal` used to leave focus on the page
+     * behind, which a keyboard user could keep operating.
+     * @param panelRef - ref of the dialog panel.
+     * @param onClose - closes the dialog.
+     * @param blocked - when true (busy), Escape is ignored.
+     * @param open - false while the owning component renders no dialog.
      */
-    function ScheduleDialog({ title, desc, onClose, busy, children, actions }) {
-      const panelRef = React.useRef(null);
-      const blocked = busy === true;
+    function useModalKeyboard(panelRef, onClose, blocked = false, open = true) {
+      const token = React.useMemo(() => ({ blocked: false, onClose: null }), []);
       React.useEffect(() => {
-        // Start focus inside the dialog: the first control is the safe one
-        // (Cancel before the destructive button).
-        const focusable = panelRef.current?.querySelector(
-          'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
-        );
+        if (!open) return undefined;
+        modalStack.push(token);
+        const focusable = panelRef.current?.querySelector(MODAL_FOCUSABLE);
         if (focusable instanceof HTMLElement) focusable.focus();
         else panelRef.current?.focus?.();
-      }, []);
+        return () => {
+          const index = modalStack.indexOf(token);
+          if (index >= 0) modalStack.splice(index, 1);
+        };
+      }, [open, panelRef, token]);
+      React.useEffect(() => {
+        token.blocked = blocked === true;
+        token.onClose = onClose;
+      }, [blocked, onClose, token]);
       React.useEffect(() => {
         const onKey = (event) => {
+          if (modalStack[modalStack.length - 1] !== token) return;
           if (event.key === 'Escape') {
-            if (blocked) return;
+            if (token.blocked) return;
             event.preventDefault();
             event.stopPropagation();
-            onClose();
+            token.onClose?.();
             return;
           }
           if (event.key !== 'Tab') return;
-          const nodes = [...(panelRef.current?.querySelectorAll(
-            'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
-          ) ?? [])].filter((node) => node instanceof HTMLElement && node.offsetParent !== null);
+          const nodes = [...(panelRef.current?.querySelectorAll(MODAL_FOCUSABLE) ?? [])]
+            .filter((node) => node instanceof HTMLElement && node.offsetParent !== null);
           if (nodes.length === 0) return;
           const first = nodes[0];
           const last = nodes[nodes.length - 1];
@@ -6826,7 +6952,25 @@ window.__ModuleLoader__.load({
         };
         window.addEventListener('keydown', onKey, true);
         return () => window.removeEventListener('keydown', onKey, true);
-      }, [blocked, onClose]);
+      }, [panelRef, token]);
+    }
+
+    /**
+     * The frame every schedule dialog shares.
+     *
+     * The four dialogs of this page used to be bare `aria-modal` divs with no
+     * Escape, no initial focus and no focus trap: a keyboard user stayed on the
+     * page behind the veil and could keep operating it. One frame fixes all of
+     * them, and carries the title/description/action layout they share.
+     * @param props - title, optional description, close handler, busy flag, the
+     *   dialog's own body nodes, and its action buttons.
+     * @returns the modal overlay.
+     */
+    function ScheduleDialog({ title, desc, onClose, busy, children, actions }) {
+      const panelRef = React.useRef(null);
+      const blocked = busy === true;
+      // Initial focus, Escape and the Tab trap, shared with every other modal.
+      useModalKeyboard(panelRef, onClose, blocked);
       return overlayPortal(h('div', {
         className: 'ove-overlay ove-overlay-portal',
         onMouseDown: (event) => { if (event.target === event.currentTarget && !blocked) onClose(); },
@@ -6906,9 +7050,15 @@ window.__ModuleLoader__.load({
 
       const announce = (text, tone = 'success') => setNotice(text.length > 0 ? { text, tone } : null);
 
+      // Every fetch carries an increasing sequence: the 20 s poll, a post-write
+      // refresh and a manual reload may overlap, and the slower one used to
+      // write its older rows over the newer state.
+      const loadSeq = React.useRef(0);
       const load = React.useCallback(async (signal) => {
+        loadSeq.current += 1;
+        const sequence = loadSeq.current;
         const result = await automationCall('catalog');
-        if (signal?.aborted) return undefined;
+        if (signal?.aborted || sequence !== loadSeq.current) return undefined;
         if (!result.ok) {
           setLoadError(result.error);
           setLoading(false);
@@ -7073,8 +7223,21 @@ window.__ModuleLoader__.load({
         const pending = pendingOpen;
         setPendingOpen(null);
         if (pending === null) return;
+        if (pending.close === true) {
+          closeDraft();
+          return;
+        }
         if (pending.task === null) openNew();
         else openEdit(pending.task);
+      };
+
+      /** Closing the drawer with the same unsaved-edit guard as opening. */
+      const requestCloseDraft = () => {
+        if (draft !== null && draftDirty) {
+          setPendingOpen({ close: true });
+          return;
+        }
+        closeDraft();
       };
 
       // Escape closes the unsaved-edit prompt, like the other dialogs.
@@ -7363,12 +7526,16 @@ window.__ModuleLoader__.load({
       };
 
       const confirmBind = async () => {
-        if (bindTasks.length === 0 || bindPicks.size === 0 || busy !== '') return;
+        // Only what the picker really offers: a stale id (scope switched after
+        // it was ticked) must not be bound.
+        const allowed = new Set(bindCandidates.map((session) => session.id));
+        const picks = [...bindPicks].filter((id) => allowed.has(id));
+        if (bindTasks.length === 0 || picks.length === 0 || busy !== '') return;
         setBusy('bind');
         setActionError('');
         const result = await automationCall('bind', {
           ids: bindTasks.map((task) => task.id),
-          sessionIds: [...bindPicks],
+          sessionIds: picks,
         });
         setBusy('');
         if (!result.ok) {
@@ -7534,6 +7701,18 @@ window.__ModuleLoader__.load({
       /** Rows in the bind picker that need their short id to stay distinct. */
       const bindDuplicates = React.useMemo(() => duplicateIdsOf(bindCandidates), [bindCandidates]);
 
+      // Switching the visible/hidden scope (or a task update) can drop rows the
+      // picker used to show; keeping those ids in the selection silently bound
+      // conversations nobody could see any more.
+      React.useEffect(() => {
+        if (bindTasks.length === 0) return;
+        setBindPicks((current) => {
+          const allowed = new Set(bindCandidates.map((session) => session.id));
+          const next = new Set([...current].filter((id) => allowed.has(id)));
+          return next.size === current.size ? current : next;
+        });
+      }, [bindCandidates, bindTasks.length]);
+
       const workspaceOptions = React.useMemo(() => {
         const items = Array.isArray(workspaces?.items) ? workspaces.items : [];
         return items
@@ -7664,7 +7843,7 @@ window.__ModuleLoader__.load({
               type: 'button',
               className: 'ove-icon-btn',
               'aria-label': tr('cancel'),
-              onClick: closeDraft,
+              onClick: requestCloseDraft,
             }, '×'))),
         draft.id === ''
           ? null
@@ -8168,11 +8347,14 @@ window.__ModuleLoader__.load({
                     }),
                     h('span', null, tr('auto.selectAll'))))
                 : null,
-              h('div', { className: 'ove-task-list' }, filtered.map((task) => h('div', {
+              h('div', { className: 'ove-task-list', role: 'list' }, filtered.map((task) => h('div', {
                 key: task.id,
                 className: 'ove-task',
                 'data-active': draft !== null && draft.id === task.id,
-                role: 'button',
+                // A row is a list item, not a button: `role="button"` flattened
+                // its checkbox and inline buttons in the accessibility tree.
+                role: 'listitem',
+                'aria-label': task.title,
                 tabIndex: 0,
                 onClick: () => requestOpenTask(task),
                 onKeyDown: (event) => {

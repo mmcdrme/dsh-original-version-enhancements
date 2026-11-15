@@ -15,7 +15,7 @@ import test from 'node:test'
 
 const moduleUrl = new URL('../host/automation.mjs', import.meta.url)
 const {
-  createAutomationSurface, sameTiming, targetOf, targetRequestOf, timingOf,
+  createAutomationSurface, rowOf, sameTiming, targetOf, targetRequestOf, timingOf,
 } = await import(moduleUrl)
 
 const NOW = Date.now()
@@ -725,4 +725,29 @@ test('two immediate deliveries cannot each build a clone', async () => {
   // Exactly one clone was built and removed: the reminder went out once.
   assert.equal(service.created.length, 1)
   assert.deepEqual(state.ephemeral, {})
+})
+
+test('a legacy task without updatedAt reports no revision instead of inventing one', async () => {
+  // Pre-`updatedAt` tasks have no revision. Filling the gap with `createdAt`
+  // gave the panel a revision the Host never stored, so every save was refused
+  // as `schedule_conflict` until the user chose "overwrite".
+  const legacy = { ...baseTask(), id: 'task-legacy' }
+  delete legacy.updatedAt
+  const legacyRow = rowOf(legacy)
+  assert.equal(legacyRow.updatedAt, undefined)
+  // The wire shape simply omits the key, so the client sends no `expectedUpdatedAt`.
+  assert.equal('updatedAt' in JSON.parse(JSON.stringify(legacyRow)), false)
+
+  // A task that does carry a revision keeps it untouched.
+  const freshRow = rowOf({ ...legacy, updatedAt: '2026-02-02T00:00:00.000Z' })
+  assert.equal(freshRow.updatedAt, '2026-02-02T00:00:00.000Z')
+
+  // The catalog route is the path the panel actually reads.
+  const service = makeService([{ ...baseTask(), id: 'task-legacy' }])
+  delete service.tasks[0].updatedAt
+  const surface = makeSurface(service, { version: 2, autoClean: {}, ephemeral: {} })
+  const catalog = await call(surface.handlers.catalog, {})
+  assert.equal(catalog.status, 200)
+  const row = catalog.body.value.tasks.find(task => task.id === 'task-legacy')
+  assert.equal('updatedAt' in row, false)
 })

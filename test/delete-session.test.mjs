@@ -7,7 +7,7 @@
 // until its lifecycle handle is disposed.
 
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rename, rm, stat, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import test from 'node:test'
@@ -16,6 +16,7 @@ const moduleUrl = new URL('../host/delete-session.mjs', import.meta.url)
 const {
   deleteSessionSafely,
   installAgentHandleTracker,
+  sweepQuarantineDirectories,
 } = await import(moduleUrl)
 
 const SESSION_ID = 'session-12345678-1234-1234-1234-123456789abc'
@@ -539,4 +540,60 @@ test('a refused deletion leaves the workspace accounting untouched', async () =>
   assert.deepEqual(workspace.calls, [])
   assert.deepEqual(table.deleted, [])
   await rm(root, { recursive: true, force: true })
+})
+
+/**
+ * Create one quarantine-shaped directory with a transcript inside.
+ * @param parent - the directory that receives it.
+ * @param name - its name (one of the quarantine prefixes).
+ * @returns its absolute path.
+ */
+const makeQuarantine = async (parent, name) => {
+  const directory = join(parent, name)
+  await mkdir(directory, { recursive: true })
+  await writeFile(join(directory, 'session.jsonl'), `${JSON.stringify(HEADER)}\n`)
+  return directory
+}
+
+const exists = async target => {
+  try {
+    await stat(target)
+    return true
+  } catch {
+    return false
+  }
+}
+
+test('the startup sweep empties quarantine folders that live next to the session root', async () => {
+  // Delete/move/transfer rollback all create their quarantine via
+  // `mkdtemp(join(dirname(root), prefix))`, so the real folder is a *sibling* of
+  // the session root. The old sweep only looked inside the root, which is why a
+  // crashed delete could leave the only copy of a transcript on disk forever.
+  const work = await mkdtemp(join(tmpdir(), 'ove-sweep-'))
+  const sessionRoot = join(work, 'sessions')
+  const project = join(sessionRoot, 'project')
+  await mkdir(project, { recursive: true })
+  const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000)
+
+  const oldDelete = await makeQuarantine(work, '.dsh-session-delete-olddelete')
+  const oldMove = await makeQuarantine(work, '.dsh-session-move-oldmove')
+  const oldRollback = await makeQuarantine(work, '.ove-transfer-rollback-oldrollback')
+  const oldInRoot = await makeQuarantine(project, '.dsh-session-delete-inproject')
+  const freshDelete = await makeQuarantine(work, '.dsh-session-delete-fresh')
+  const unrelated = await makeQuarantine(work, 'keep-me')
+  for (const directory of [oldDelete, oldMove, oldRollback, oldInRoot]) {
+    await utimes(directory, twoHoursAgo, twoHoursAgo)
+  }
+
+  const removed = await sweepQuarantineDirectories(sessionRoot, { maxAgeMs: 60 * 60 * 1000 })
+
+  // Three siblings plus the in-root folder the older layout left behind.
+  assert.equal(removed, 4)
+  for (const directory of [oldDelete, oldMove, oldRollback, oldInRoot]) {
+    assert.equal(await exists(directory), false, `${directory} should have been swept`)
+  }
+  // Fresh in-flight folders and unrelated sibling directories are untouched.
+  assert.equal(await exists(freshDelete), true)
+  assert.equal(await exists(unrelated), true)
+  await rm(work, { recursive: true, force: true })
 })

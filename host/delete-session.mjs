@@ -1004,9 +1004,18 @@ export async function sweepQuarantineDirectories(sessionRoot, options = {}) {
     }
     return count
   }
-  // A real delete/move quarantines inside the project directory; the phantom
-  // path creates one directly under the root.
-  let removed = await sweepIn(sessionRoot)
+  // Quarantine folders are created with `mkdtemp(join(dirname(root), ...))`,
+  // i.e. as siblings of the session root (default: right under `~/.dsh`), not
+  // inside it. Sweeping only `sessionRoot` therefore never found the residue a
+  // crashed delete left behind — the unclaimable folder with the only copy of
+  // the transcript. Keep the in-root scans for older layouts and add the real
+  // parent directory.
+  const parents = [sessionRoot, dirname(sessionRoot)]
+  let removed = 0
+  for (const parent of new Set(parents)) {
+    if (typeof parent !== 'string' || parent.length === 0) continue
+    removed += await sweepIn(parent)
+  }
   let projects
   try {
     projects = await readdir(sessionRoot, { withFileTypes: true })

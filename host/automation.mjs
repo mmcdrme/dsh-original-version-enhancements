@@ -348,17 +348,23 @@ export function targetRequestOf(record) {
 
 /**
  * One catalog entry reduced to what the enhancement panel renders.
+ *
+ * `updatedAt` is passed through as-is (possibly absent): the Host treats a
+ * missing revision as "no revision", and filling it with `createdAt` made every
+ * save of a pre-revision task look like a stale edit and fail with
+ * `schedule_conflict`. JSON.stringify drops an `undefined` value, so the key is
+ * simply absent on the wire.
  * @param record - one ScheduleCatalogEntry.
  * @returns the compact row payload.
  */
-const rowOf = record => ({
+export const rowOf = record => ({
   id: record.id,
   title: record.title,
   prompt: record.prompt,
   kind: record.kind,
   status: record.status,
   scheduledAt: record.scheduledAt,
-  updatedAt: record.updatedAt ?? record.createdAt,
+  updatedAt: record.updatedAt,
   lastDelivery: record.lastDelivery === undefined ? null : record.lastDelivery,
   executionActive: record.executionActive === true,
   // Present only while the Host's minimum delivery interval still runs; the
