@@ -1848,10 +1848,19 @@ window.__ModuleLoader__.load({
               }, tr('recall.scopeConfirmAction'))))), document.body)
         : null;
 
+      /** The switch itself; shared by feature heads and by sub-switches. */
+      const switchOf = (checked, onToggle, ariaLabel) => h('button', {
+        type: 'button',
+        className: 'ove-switch',
+        role: 'switch',
+        'aria-checked': checked === true,
+        'aria-label': ariaLabel,
+        onClick: onToggle,
+      }, h('span', { className: 'ove-switch-thumb' }));
+
       /**
-       * One settings row: explanation on the left, its single control on the
-       * right. Every switch of the page is built from this, so the layout stays
-       * identical whether the control is a switch, a key recorder or a slider.
+       * One row inside a feature's body: explanation on the left, its single
+       * control on the right.
        */
       const settingRow = (title, desc, control) => h('div', { className: 'ove-row' },
         h('div', { className: 'ove-row-text' },
@@ -1859,26 +1868,26 @@ window.__ModuleLoader__.load({
           desc === null || desc === undefined ? null : h('div', { className: 'ove-row-desc' }, desc)),
         control);
 
-      /** One switch row, labelled by its `switch.*` locale pair. */
-      const switchRow = (key, checked, onToggle, ariaLabel) => settingRow(
+      /** One switch row inside a feature's body, labelled by a locale pair. */
+      const switchRow = (key, checked, onToggle) => settingRow(
         tr(key),
         tr(`${key}.desc`),
-        h('button', {
-          type: 'button',
-          className: 'ove-switch',
-          role: 'switch',
-          'aria-checked': checked === true,
-          'aria-label': ariaLabel === undefined ? tr(key) : ariaLabel,
-          onClick: onToggle,
-        }, h('span', { className: 'ove-switch-thumb' })),
+        switchOf(checked, onToggle, tr(key)),
       );
 
       /**
-       * The settings a switch owns. They render directly under that switch and
-       * indented, so a parent switch reads as a heading for its children, and a
-       * child switch keeps the same relationship one level down.
+       * One "big setting": the switch keeps its own head row and everything it
+       * controls is boxed together with it, indented under the head. A feature
+       * without children is the same box with only a head, so the page reads as
+       * a list of independent settings instead of one long wall of rows.
        */
-      const childBlock = (nodes) => h('div', { className: 'ove-row-children' }, nodes);
+      const feature = (key, checked, onToggle, body) => h('div', { className: 'ove-setting' },
+        h('div', { className: 'ove-setting-head' },
+          h('div', { className: 'ove-setting-text' },
+            h('div', { className: 'ove-setting-title' }, tr(key)),
+            h('div', { className: 'ove-setting-desc' }, tr(`${key}.desc`))),
+          switchOf(checked, onToggle, tr(key))),
+        body === null || body === undefined ? null : h('div', { className: 'ove-setting-body' }, body));
       const note = (text) => h('p', { className: 'ove-row-note' }, text);
 
       return h(React.Fragment, null,
@@ -1890,12 +1899,12 @@ window.__ModuleLoader__.load({
 
           h('div', { className: 'ove-group' },
             h('h2', { className: 'ove-group-title' }, tr('featuresTitle')),
-            h('div', { className: 'ove-card' },
-              switchRow('switch.steps', flags.stepSwitcher, () => toggle('stepSwitcher')),
+            h('div', { className: 'ove-settings' },
+              feature('switch.steps', flags.stepSwitcher, () => toggle('stepSwitcher'), null),
 
-              switchRow('switch.chat', flags.chatManager, () => toggle('chatManager')),
-              flags.chatManager === true
-                ? childBlock([
+              feature('switch.chat', flags.chatManager, () => toggle('chatManager'),
+                flags.chatManager === true
+                  ? [
                   note(tr('recall.desc')),
                   settingRow(tr('recall.prev'), tr('recall.prev.desc'), h(KeyRecorder, {
                     value: recall.prev,
@@ -1935,19 +1944,19 @@ window.__ModuleLoader__.load({
                       onClick: () => clearAllSentHistory(),
                     }, tr('recall.clear')),
                   ),
-                ])
-                : null,
+                  ]
+                  : null),
 
-              switchRow('switch.automation', flags.automation, () => toggle('automation')),
-              flags.automation === true
-                ? childBlock([
-                  switchRow('switch.bindScopes', flags.bindScopes, () => toggle('bindScopes')),
-                ])
-                : null,
+              feature('switch.automation', flags.automation, () => toggle('automation'),
+                flags.automation === true
+                  ? [
+                    switchRow('switch.bindScopes', flags.bindScopes, () => toggle('bindScopes')),
+                  ]
+                  : null),
 
-              switchRow('switch.detached', flags.detached, () => toggle('detached')),
-              flags.detached === true
-                ? childBlock([
+              feature('switch.detached', flags.detached, () => toggle('detached'),
+                flags.detached === true
+                  ? [
                   note(tr('window.desc')),
                   settingRow(tr('window.mode'), tr('window.mode.desc'),
                     h('div', { className: 'ove-size-group', role: 'group', 'aria-label': tr('window.mode') },
@@ -1980,9 +1989,9 @@ window.__ModuleLoader__.load({
                         'aria-pressed': appearance.size === id,
                         onClick: () => setWindow({ size: id }),
                       }, tr(`window.size.${id}`))))),
-                  switchRow('window.mute', appearance.mute, () => setWindow({ mute: !appearance.mute })),
-                ])
-                : null,
+                    switchRow('window.mute', appearance.mute, () => setWindow({ mute: !appearance.mute })),
+                  ]
+                  : null),
 
               h(SubagentTreeSettingsRows, { t: tr }),
             )),
@@ -4499,14 +4508,14 @@ window.__ModuleLoader__.load({
           h('div', { className: 'ove-row-desc' }, desc)),
         control);
 
-      return h(React.Fragment, null,
-        row(
-          tr('subagentTree.settingsTitle'),
-          tr('subagentTree.enable.desc'),
-          switchOf('enable', settings.enabled, () => setSubagentTreeSetting('enabled', settings.enabled !== true)),
-        ),
+      return h('div', { className: 'ove-setting' },
+        h('div', { className: 'ove-setting-head' },
+          h('div', { className: 'ove-setting-text' },
+            h('div', { className: 'ove-setting-title' }, tr('subagentTree.settingsTitle')),
+            h('div', { className: 'ove-setting-desc' }, tr('subagentTree.enable.desc'))),
+          switchOf('enable', settings.enabled, () => setSubagentTreeSetting('enabled', settings.enabled !== true))),
         settings.enabled === true
-          ? h('div', { className: 'ove-row-children' },
+          ? h('div', { className: 'ove-setting-body' },
             h('p', { className: 'ove-row-note' }, tr('subagentTree.settingsIntro')),
             row(
               tr('subagentTree.showCount'),
