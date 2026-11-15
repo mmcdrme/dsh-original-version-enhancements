@@ -171,6 +171,70 @@ const LAST_TURN_GUARD_SCRIPT = `(() => {
   }
 })()`
 
+/**
+ * In-page windows may sit side by side, and the browser gives one origin a
+ * small pool of HTTP connections. The app's global widgets poll their own
+ * routes and hold a server-sent stream open once per window (QQ approval /
+ * question floats see nothing in a detached conversation, and its workspace
+ * watch holds a whole connection); a handful of extra documents is enough to
+ * queue every remaining request behind them, which leaves a second in-page
+ * window stuck on the workspace picker forever. Those widgets already have
+ * their main-window instance, so an in-page window answers "nothing pending"
+ * locally and skips that stream: it stays a conversation, not a second copy of
+ * the shell's floats.
+ */
+const QUIET_POLL_SCRIPT = `(() => {
+  const QUIET_FETCH = [
+    { path: '/api/qqbot-settings/approval/pending', body: '{"ok":true,"pending":[]}' },
+    { path: '/api/qqbot-settings/questions/pending', body: '{"ok":true,"pending":[]}' },
+    { path: '/dsh-whale/wait.json', body: '{"ok":true,"pending":null,"sessionName":""}' },
+  ]
+  const QUIET_EVENTS = ['/api/qqbot-settings/workspace/watch']
+  const entryOf = (url) => {
+    for (const entry of QUIET_FETCH) {
+      const at = url.indexOf(entry.path)
+      if (at < 0) continue
+      const tail = url.slice(at + entry.path.length)
+      if (tail === '' || tail.startsWith('?') || tail.startsWith('#')) return entry
+    }
+    return null
+  }
+  const nativeFetch = window.fetch
+  if (typeof nativeFetch === 'function') {
+    window.fetch = function (input, init) {
+      const url = typeof input === 'string' ? input : (input && input.url) || ''
+      const entry = entryOf(url)
+      if (entry !== null) {
+        return Promise.resolve(new Response(entry.body, {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }))
+      }
+      return nativeFetch.apply(this, arguments)
+    }
+  }
+  const NativeEvents = window.EventSource
+  if (typeof NativeEvents === 'function') {
+    /** An inert stream: same shape as EventSource, never opens a connection. */
+    const QuietEvents = function (url, config) {
+      const text = String(url)
+      if (!QUIET_EVENTS.some(path => text.indexOf(path) >= 0)) return new NativeEvents(url, config)
+      this.url = text
+      this.readyState = 2
+      this.withCredentials = false
+      this.addEventListener = () => {}
+      this.removeEventListener = () => {}
+      this.dispatchEvent = () => false
+      this.close = () => {}
+    }
+    QuietEvents.CONNECTING = 0
+    QuietEvents.OPEN = 1
+    QuietEvents.CLOSED = 2
+    QuietEvents.prototype = Object.create(NativeEvents.prototype)
+    window.EventSource = QuietEvents
+  }
+})()`
+
 /** Spinner chrome; the palette follows the shell's own boot background. */
 const LOADING_CSS = [
   'html.ove-embed-loading{overflow:hidden !important}',
@@ -214,6 +278,7 @@ export function renderEmbed(html, baseUrl) {
   const head = [
     '<base href="/">',
     `<script>window.__DSH_TRANSPORT__=${transport};window.__OVE_EMBED__=true;</script>`,
+    `<script data-ove-embed-quiet>${QUIET_POLL_SCRIPT}</script>`,
     `<style data-ove-embed>${EMBED_CSS}${LOADING_CSS}</style>`,
     `<script data-ove-embed-boot>${LOADING_SCRIPT}</script>`,
     `<script data-ove-embed-track>${SIDEBAR_TRACK_SCRIPT}</script>`,

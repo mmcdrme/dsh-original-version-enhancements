@@ -834,6 +834,14 @@ window.__ModuleLoader__.load({
       next.add(sessionId);
       publishPanels(next);
     };
+    /** Bring one in-page window to the front by moving it to the end of the stack. */
+    const raiseDetachedPanel = (sessionId) => {
+      if (!panelIds.has(sessionId)) return;
+      if ([...panelIds].at(-1) === sessionId) return;
+      const next = new Set([...panelIds].filter(id => id !== sessionId));
+      next.add(sessionId);
+      publishPanels(next);
+    };
     const dropDetachedPanel = (sessionId) => {
       if (!panelIds.has(sessionId)) return;
       const next = new Set(panelIds);
@@ -885,21 +893,30 @@ window.__ModuleLoader__.load({
       };
       if (typeof sessionId !== 'string' || sessionId.length === 0) return false;
       const already = readDetachedBeat(sessionId) > 0;
-      // Only one window may host a client document at a time: the Host gives a
-      // browser session a single connection, so a second live document would
-      // sit on the welcome screen forever. Opening another conversation moves
-      // the window instead of adding one.
-      const others = [...panelIds].filter(id => id !== sessionId);
-      if (others.length > 0) {
-        for (const id of others) releaseDetached(id);
-        publishPanels(new Set());
-        refreshDetached();
-        await new Promise((resolve) => { window.setTimeout(resolve, 250); });
+      const appearance = getWindow();
+      // In-page windows can live side by side: each one is its own document.
+      // The native companion is the one that moves, because an OS window per
+      // conversation is not what this switch promises.
+      if (appearance.mode === 'panel') {
+        if (panelIds.has(sessionId)) {
+          raiseDetachedPanel(sessionId);
+          return true;
+        }
+      } else {
+        // The OS windows are separate processes with their own connection, so
+        // they may stay open side by side; only in-app windows used to be
+        // limited, because every one of them shares this page's connections.
+        const others = [...panelIds].filter(id => id !== sessionId);
+        if (others.length > 0) {
+          for (const id of others) releaseDetached(id);
+          publishPanels(new Set());
+          refreshDetached();
+          await new Promise((resolve) => { window.setTimeout(resolve, 250); });
+        }
       }
       // 1) A real OS window, owned by the Host: it has its own taskbar entry,
       // its own minimise/restore, and keeps running while this window is
       // minimised. It is the normal outcome on Windows.
-      const appearance = getWindow();
       if (appearance.mode !== 'panel') {
         const opened = await openNativeWindow(sessionId, appearance);
         if (opened) {
@@ -1830,12 +1847,23 @@ window.__ModuleLoader__.load({
         error.length > 0 ? h('p', { className: 'ove-key-error' }, error) : null);
     }
 
-    /** Which settings boxes the human folded away (absent = expanded). */
-    const SETTINGS_OPEN_KEY = 'original-version-enhancements.settings-open.v1';
+    /**
+     * Which settings boxes the human unfolded.
+     *
+     * Only unfolded boxes are stored, so a profile that never touched one opens
+     * the page fully folded: the page is a list of switches first, and the rows
+     * a switch owns are one click away.
+     */
+    const SETTINGS_OPEN_KEY = 'original-version-enhancements.settings-open.v2';
     const readSettingsOpen = () => {
       try {
         const raw = JSON.parse(globalThis.localStorage?.getItem(SETTINGS_OPEN_KEY) ?? '{}');
-        return raw !== null && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+        if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return {};
+        const next = {};
+        for (const [key, open] of Object.entries(raw)) {
+          if (open === true) next[key] = true;
+        }
+        return next;
       } catch {
         return {};
       }
@@ -1848,11 +1876,11 @@ window.__ModuleLoader__.load({
     };
     const getSettingsOpen = () => settingsOpenState;
     const useSettingsOpen = () => React.useSyncExternalStore(subscribeSettingsOpen, getSettingsOpen, getSettingsOpen);
-    /** Fold or unfold one box; only folded boxes are stored. */
+    /** Fold or unfold one box; only unfolded boxes are stored. */
     const setSettingOpen = (key, open) => {
       const next = { ...settingsOpenState };
-      if (open === true) delete next[key];
-      else next[key] = false;
+      if (open === true) next[key] = true;
+      else delete next[key];
       settingsOpenState = next;
       try {
         globalThis.localStorage?.setItem(SETTINGS_OPEN_KEY, JSON.stringify(next));
@@ -1872,7 +1900,7 @@ window.__ModuleLoader__.load({
     function SettingBox({ t, title, desc, checked, onSwitch, children, extraClass, open, onToggleOpen }) {
       const tr = typeof t === 'function' ? t : (key) => key;
       const hasBody = children !== null && children !== undefined;
-      const unfolded = hasBody ? open !== false : true;
+      const unfolded = hasBody ? open === true : true;
       const toggle = () => {
         if (!hasBody || typeof onToggleOpen !== 'function') return;
         onToggleOpen(unfolded !== true);
@@ -1942,7 +1970,7 @@ window.__ModuleLoader__.load({
      */
     function FoldRow({ t, title, desc, control, children, open, onToggleOpen }) {
       const tr = typeof t === 'function' ? t : (key) => key;
-      const unfolded = open !== false;
+      const unfolded = open === true;
       const toggle = () => {
         if (typeof onToggleOpen === 'function') onToggleOpen(unfolded !== true);
       };
@@ -2086,10 +2114,15 @@ window.__ModuleLoader__.load({
         title: tr(key),
         desc: tr(`${key}.desc`),
         checked,
-        onSwitch: onToggle,
+        // Turning a feature on reveals the rows it owns, so open the box at the
+        // same time instead of leaving them folded out of sight.
+        onSwitch: () => {
+          if (checked !== true && body !== null && body !== undefined) setSettingOpen(key, true);
+          onToggle();
+        },
         children: body,
         extraClass,
-        open: settingsOpen[key] !== false,
+        open: settingsOpen[key] === true,
         onToggleOpen: (open) => setSettingOpen(key, open),
       });
       const note = (text) => h('p', { className: 'ove-row-note' }, text);
@@ -2148,7 +2181,7 @@ window.__ModuleLoader__.load({
                     t: tr,
                     title: tr('recall.keys'),
                     desc: tr('recall.keys.desc'),
-                    open: settingsOpen['recall.keys'] !== false,
+                    open: settingsOpen['recall.keys'] === true,
                     onToggleOpen: (open) => setSettingOpen('recall.keys', open),
                     children: [
                       settingRow(tr('recall.prev'), tr('recall.prev.desc'), h(KeyRecorder, {
@@ -3326,8 +3359,13 @@ window.__ModuleLoader__.load({
       const tr = typeof t === 'function' ? t : (key) => key;
       const [, closeMenu] = useMenuOpenState();
       const detached = useDetached();
+      const appearance = useWindow();
       const open = typeof sessionId === 'string' && detached.has(sessionId);
-      const label = open ? tr('menuDetachedBack') : tr('menuDetachedOpen');
+      // The row names where the conversation actually goes: the in-page window
+      // is a different place from an independent OS window.
+      const label = open
+        ? tr('menuDetachedBack')
+        : tr(appearance.mode === 'panel' ? 'menuDetachedOpenPanel' : 'menuDetachedOpen');
 
       const select = () => {
         closeMenu(false);
@@ -3530,6 +3568,7 @@ window.__ModuleLoader__.load({
         'data-session': sessionId,
         role: 'dialog',
         'aria-label': tr('detachedWindowTitle'),
+        onPointerDown: () => raiseDetachedPanel(sessionId),
         style: {
           left: `${place.left}px`,
           top: `${place.top}px`,
@@ -4773,8 +4812,11 @@ window.__ModuleLoader__.load({
         title: tr('subagentTree.settingsTitle'),
         desc: tr('subagentTree.enable.desc'),
         checked: settings.enabled,
-        onSwitch: () => setSubagentTreeSetting('enabled', settings.enabled !== true),
-        open: settingsOpen['subagentTree'] !== false,
+        onSwitch: () => {
+          if (settings.enabled !== true) setSettingOpen('subagentTree', true);
+          setSubagentTreeSetting('enabled', settings.enabled !== true);
+        },
+        open: settingsOpen['subagentTree'] === true,
         onToggleOpen: (open) => setSettingOpen('subagentTree', open),
         children: settings.enabled === true
           ? [

@@ -55,6 +55,23 @@ test('the boot chime of a fresh window is rebased instead of replayed', () => {
   assert.match(embed, /data\.seq = data\.seq > baseline \? data\.seq - baseline : 0/u)
 })
 
+test('in-page windows do not spend a connection on the shell floats', () => {
+  // Side-by-side in-page windows share the browser's small HTTP pool with the
+  // main window: the widgets that poll once per window must answer locally.
+  assert.match(embed, /data-ove-embed-quiet/u)
+  assert.match(embed, /\/api\/qqbot-settings\/approval\/pending/u)
+  assert.match(embed, /\/api\/qqbot-settings\/questions\/pending/u)
+  assert.match(embed, /\/dsh-whale\/wait\.json/u)
+  // The QQ workspace watch is a server-sent stream: one open connection per
+  // document, so the in-page window skips it by shape, not by failing later.
+  assert.match(embed, /\/api\/qqbot-settings\/workspace\/watch/u)
+  assert.match(embed, /window\.EventSource = QuietEvents/u)
+  assert.match(embed, /this\.readyState = 2/u)
+  // Everything else still reaches the Host.
+  assert.match(embed, /return nativeFetch\.apply\(this, arguments\)/u)
+  assert.match(embed, /return new NativeEvents\(url, config\)/u)
+})
+
 test('every injected script parses on its own', () => {
   const bodies = scripts(embed)
   assert.ok(bodies.length >= 3, `expected at least three injected scripts, got ${bodies.length}`)
