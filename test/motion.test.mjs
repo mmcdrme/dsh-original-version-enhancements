@@ -75,6 +75,8 @@ test('the entrance style defaults to jelly and rejects unknown picks', () => {
   const motion = motionWith({})
   assert.deepEqual(motion.MOTION_STYLES, ['jelly', 'soft', 'slide', 'snap'])
   assert.equal(motion.getMotion().style, 'jelly')
+  // The backdrop blur is an independent setting, on by default.
+  assert.equal(motion.getMotion().blur, true)
 
   const key = 'original-version-enhancements.motion.v1'
   assert.equal(motionWith({ [key]: { style: 'slide' } }).getMotion().style, 'slide')
@@ -82,11 +84,29 @@ test('the entrance style defaults to jelly and rejects unknown picks', () => {
   assert.equal(motionWith({ [key]: 'nonsense' }).getMotion().style, 'jelly')
 })
 
+test('the blur has its own stored switch, apart from the style', () => {
+  const key = 'original-version-enhancements.motion.v1'
+  assert.equal(motionWith({ [key]: { style: 'snap', blur: false } }).getMotion().blur, false)
+  assert.equal(motionWith({ [key]: { style: 'snap', blur: true } }).getMotion().blur, true)
+  // An old record that predates the switch keeps the blur on.
+  assert.equal(motionWith({ [key]: { style: 'snap' } }).getMotion().blur, true)
+
+  const motion = motionWith({})
+  motion.setMotion({ blur: false })
+  assert.equal(motion.getMotion().style, 'jelly', 'turning the blur off must not change the style')
+  assert.equal(motion.getMotion().blur, false)
+  motion.setMotion({ style: 'slide' })
+  assert.equal(motion.getMotion().blur, false, 'picking a style must not turn the blur back on')
+})
+
 test('picking a style stores it and ignores a stale key', () => {
   const motion = motionWith({})
   motion.setMotion({ style: 'soft' })
   assert.equal(motion.getMotion().style, 'soft')
-  assert.deepEqual(JSON.parse(motion.storage.get('original-version-enhancements.motion.v1')), { style: 'soft' })
+  assert.deepEqual(
+    JSON.parse(motion.storage.get('original-version-enhancements.motion.v1')),
+    { style: 'soft', blur: true },
+  )
   // An unknown value keeps the current pick instead of resetting the store.
   motion.setMotion({ style: 'nope' })
   assert.equal(motion.getMotion().style, 'soft')
@@ -112,20 +132,25 @@ test('the settings page shows the motion switch as the last box', () => {
   assert.match(body, /'aria-pressed': motion\.style === id/u)
   assert.match(body, /onClick: \(\) => setMotion\(\{ style: id \}\)/u)
   assert.match(body, /tr\(`motion\.\$\{id\}`\)/u)
+  // And its own switch for the backdrop blur, beneath the style chips.
+  assert.match(body, /settingRow\(tr\('motion\.blur'\), tr\('motion\.blur\.desc'\), switchOf\(/u)
+  assert.match(body, /setMotion\(\{ blur: motion\.blur === false \}\)/u)
 })
 
 test('the root classes follow both the switch and the picked style', () => {
   assert.match(
     clientSource,
-    /ctx\.effect\(\(\) => \{\n\s+const root = globalThis\.document\?\.documentElement;[\s\S]*?root\.classList\.toggle\('ove-motion-off', !motion\);[\s\S]*?root\.classList\.toggle\(`ove-motion-\$\{id\}`, motion && id === style\);[\s\S]*?\}, 'original-version-enhancements: entrance motion switch'\);/u,
+    /ctx\.effect\(\(\) => \{\n\s+const root = globalThis\.document\?\.documentElement;[\s\S]*?root\.classList\.toggle\('ove-motion-off', !motion\);[\s\S]*?root\.classList\.toggle\('ove-blur-off', !blur\);[\s\S]*?root\.classList\.toggle\(`ove-motion-\$\{id\}`, motion && id === style\);[\s\S]*?\}, 'original-version-enhancements: entrance motion switch'\);/u,
   )
   const label = "'original-version-enhancements: entrance motion switch'"
-  const effect = clientSource.slice(clientSource.indexOf(label) - 1400, clientSource.indexOf(label))
+  const effect = clientSource.slice(clientSource.indexOf(label) - 1600, clientSource.indexOf(label))
   assert.match(effect, /subscribeFlags\(sync\)/u)
   assert.match(effect, /subscribeMotion\(sync\)/u)
   assert.match(effect, /const style = getMotion\(\)\.style;/u)
+  assert.match(effect, /const blur = getMotion\(\)\.blur !== false;/u)
   assert.match(effect, /for \(const id of MOTION_STYLES\)/u)
   assert.match(effect, /root\.classList\.remove\('ove-motion-off'\)/u)
+  assert.match(effect, /root\.classList\.remove\('ove-blur-off'\)/u)
   assert.match(effect, /root\.classList\.remove\(`ove-motion-\$\{id\}`\)/u)
 })
 
@@ -266,9 +291,25 @@ test('the four style chips are black, not brand blue', () => {
 })
 
 
+test('the backdrop blur has its own class, independent of the motion switch', () => {
+  assert.match(
+    stylesheet,
+    /html\.ove-blur-off \.ove-overlay \{\n\s+backdrop-filter: none;\n\s+-webkit-backdrop-filter: none;/u,
+  )
+  // Turning the entrances off only stops animation: the blur switch still
+  // decides whether the backdrop is blurred.
+  const offAt = stylesheet.indexOf('html.ove-motion-off .ove-overlay')
+  assert.ok(offAt >= 0)
+  const rule = stylesheet.slice(offAt, stylesheet.indexOf('}', offAt) + 1)
+  assert.doesNotMatch(rule, /backdrop-filter/u)
+})
+
 test('every style has a name in both languages', () => {
   for (const language of ['zh', 'en']) {
-    for (const key of ['motion.style', 'motion.style.desc', 'motion.jelly', 'motion.soft', 'motion.slide', 'motion.snap']) {
+    for (const key of [
+      'motion.style', 'motion.style.desc', 'motion.jelly', 'motion.soft', 'motion.slide', 'motion.snap',
+      'motion.blur', 'motion.blur.desc',
+    ]) {
       assert.ok(Object.hasOwn(catalogue[language], key), `${language} is missing ${key}`)
       assert.ok(catalogue[language][key].trim().length > 0, `${language}.${key} is empty`)
     }

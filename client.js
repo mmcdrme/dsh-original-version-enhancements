@@ -82,21 +82,25 @@ window.__ModuleLoader__.load({
     /* ------------------------------------------------------------------ */
 
     /**
-     * Which entrance the popup surfaces play. The switch above decides whether
-     * anything plays at all; this only picks the shape of the motion, and each
-     * style is a root class the stylesheet keys off, so switching is instant
-     * and needs no re-render of the surfaces themselves.
+     * Which entrance the popup surfaces play, and whether the backdrop behind
+     * them is blurred. The switch above decides whether anything plays at all;
+     * these two pick the shape of the motion and the blur, each stored as a
+     * root class the stylesheet keys off, so switching is instant and needs no
+     * re-render of the surfaces themselves.
      */
     const MOTION_KEY = 'original-version-enhancements.motion.v1';
     const MOTION_STYLES = ['jelly', 'soft', 'slide', 'snap'];
-    const DEFAULT_MOTION = { style: 'jelly' };
+    const DEFAULT_MOTION = { style: 'jelly', blur: true };
     const motionListeners = new Set();
 
     const readMotion = () => {
       try {
         const raw = JSON.parse(globalThis.localStorage?.getItem(MOTION_KEY) ?? '{}');
         const saved = raw !== null && typeof raw === 'object' ? raw : {};
-        return { style: MOTION_STYLES.includes(saved.style) ? saved.style : DEFAULT_MOTION.style };
+        return {
+          style: MOTION_STYLES.includes(saved.style) ? saved.style : DEFAULT_MOTION.style,
+          blur: saved.blur !== false,
+        };
       } catch {
         return { ...DEFAULT_MOTION };
       }
@@ -113,10 +117,11 @@ window.__ModuleLoader__.load({
 
     const setMotion = (patch) => {
       const style = MOTION_STYLES.includes(patch?.style) ? patch.style : motionState.style;
-      motionState = { style };
+      const blur = patch?.blur === undefined ? motionState.blur : patch.blur !== false;
+      motionState = { style, blur };
       try {
         globalThis.localStorage?.setItem(MOTION_KEY, JSON.stringify(motionState));
-      } catch { /* a blocked storage keeps the style for this page only */ }
+      } catch { /* a blocked storage keeps the picks for this page only */ }
       for (const listener of motionListeners) listener();
     };
 
@@ -2551,6 +2556,13 @@ window.__ModuleLoader__.load({
                         'aria-pressed': motion.style === id,
                         onClick: () => setMotion({ style: id }),
                       }, tr(`motion.${id}`))))),
+                  // The blur is its own switch: it changes how the backdrop
+                  // looks and stays on even while the entrances do not play.
+                  settingRow(tr('motion.blur'), tr('motion.blur.desc'), switchOf(
+                    motion.blur !== false,
+                    () => setMotion({ blur: motion.blur === false }),
+                    tr('motion.blur'),
+                  )),
                   ]),
             )),
 
@@ -9365,14 +9377,18 @@ window.__ModuleLoader__.load({
         // in-page windows all key off these classes, so neither the flag nor
         // the picked style has to be threaded through every component that
         // can pop up. The stylesheet animates them by default; the classes
-        // only choose the shape and turn the motion off.
+        // only choose the shape and turn the motion off. The backdrop blur is
+        // its own class and its own switch, so it can stay on while the
+        // entrance does not play at all.
         ctx.effect(() => {
           const root = globalThis.document?.documentElement;
           if (root === null || root === undefined) return undefined;
           const sync = () => {
             const motion = getFlags().motion !== false;
             const style = getMotion().style;
+            const blur = getMotion().blur !== false;
             root.classList.toggle('ove-motion-off', !motion);
+            root.classList.toggle('ove-blur-off', !blur);
             for (const id of MOTION_STYLES) {
               root.classList.toggle(`ove-motion-${id}`, motion && id === style);
             }
@@ -9384,6 +9400,7 @@ window.__ModuleLoader__.load({
             unsubscribeFlags();
             unsubscribeMotion();
             root.classList.remove('ove-motion-off');
+            root.classList.remove('ove-blur-off');
             for (const id of MOTION_STYLES) root.classList.remove(`ove-motion-${id}`);
           };
         }, 'original-version-enhancements: entrance motion switch');
