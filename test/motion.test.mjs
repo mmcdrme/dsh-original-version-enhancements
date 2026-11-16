@@ -229,6 +229,43 @@ test('the alternate styles keep the compositor contract', () => {
   }
 })
 
+test('the two middle styles cannot be mistaken for each other', () => {
+  /** Everything from one `{` to its matching `}`, nested rules included. */
+  const blockOf = (source, at) => {
+    let depth = 0
+    for (let index = at; index < source.length; index += 1) {
+      if (source[index] === '{') depth += 1
+      else if (source[index] === '}') {
+        depth -= 1
+        if (depth === 0) return source.slice(at, index + 1)
+      }
+    }
+    return source.slice(at)
+  }
+  const keyframes = (name) => blockOf(stylesheet, stylesheet.indexOf(`@keyframes ${name} {`))
+  // Soft fade: opacity only, so it stays a cross-fade in place.
+  for (const name of ['ove-dialog-soft', 'ove-toast-soft']) {
+    const block = keyframes(name)
+    assert.doesNotMatch(block, /transform|translate|scale/u, `${name} moved: it must be a pure fade`)
+    assert.match(block, /opacity/u)
+  }
+  // Slide up: a clear travel from below, far enough to read as movement.
+  assert.match(keyframes('ove-dialog-slide'), /transform: translateY\(44px\)/u)
+  assert.match(keyframes('ove-toast-slide'), /translate\(-50%, -28px\)/u)
+  assert.match(keyframes('ove-panel-slide'), /translate: 0 30px/u)
+})
+
+test('the four style chips are black, not brand blue', () => {
+  assert.match(
+    stylesheet,
+    /\.ove-motion-styles \.ove-size\.is-on \{\n\s+background: var\(--dsw-alias-label-primary\);\n\s+border-color: var\(--dsw-alias-label-primary\);\n\s+color: var\(--dsw-alias-bg-base\);/u,
+  )
+  // The settings page puts the modifier on that group, so the shared `.ove-size`
+  // styling (brand blue elsewhere) is left alone.
+  assert.match(clientSource, /className: 'ove-size-group ove-motion-styles'/u)
+})
+
+
 test('every style has a name in both languages', () => {
   for (const language of ['zh', 'en']) {
     for (const key of ['motion.style', 'motion.style.desc', 'motion.jelly', 'motion.soft', 'motion.slide', 'motion.snap']) {

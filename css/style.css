@@ -156,6 +156,14 @@
 .ove-setting-window .ove-switch[aria-checked="true"]:hover {
   background: color-mix(in srgb, var(--dsw-alias-label-primary) 82%, var(--dsw-alias-bg-base));
 }
+/* The four entrance-style chips speak the same tone as the window options:
+   only the picked one fills, and it fills with the main label colour (near
+   black on the light theme) instead of the brand blue. */
+.ove-motion-styles .ove-size.is-on {
+  background: var(--dsw-alias-label-primary);
+  border-color: var(--dsw-alias-label-primary);
+  color: var(--dsw-alias-bg-base);
+}
 /* A foldable row inside a box (the recall shortcut pair): it carries the same
    dark border as a settings box, its head is a normal row and its settings fold
    away one blank indent step under it. */
@@ -1100,41 +1108,44 @@
    shape and the timing change: the backdrop blur is still painted once and
    every variant still animates transform/opacity (scale for the in-page
    window) only, so all of them stay on the compositor. */
+/* Soft fade: a pure cross-fade in place — no lift, no zoom — so it cannot be
+   mistaken for the slide below. The in-page window fades to the exact opacity
+   the human configured instead of snapping back to it when the animation ends. */
 @keyframes ove-dialog-soft {
-  0% { opacity: 0; transform: translateY(8px) scale(.988); }
-  100% { opacity: 1; transform: none; }
+  0% { opacity: 0; }
+  100% { opacity: 1; }
 }
 @keyframes ove-toast-soft {
-  0% { opacity: 0; transform: translate(-50%, -8px) scale(.99); }
-  100% { opacity: 1; transform: translate(-50%, 0); }
+  0% { opacity: 0; }
+  100% { opacity: 1; }
 }
 @keyframes ove-panel-soft {
-  0% { scale: .99; }
-  100% { scale: 1; }
+  0% { opacity: 0; }
+  100% { opacity: var(--ove-panel-opacity, 1); }
 }
-html.ove-motion-soft .ove-overlay { animation-duration: .3s; }
-html.ove-motion-soft .ove-dialog { animation: ove-dialog-soft .28s cubic-bezier(.2, .8, .3, 1); }
+html.ove-motion-soft .ove-overlay { animation-duration: .34s; }
+html.ove-motion-soft .ove-dialog { animation: ove-dialog-soft .34s ease-out; }
 html.ove-motion-soft .ove-toast,
-html.ove-motion-soft .ove-detached-toast { animation: ove-toast-soft .28s cubic-bezier(.2, .8, .3, 1); }
-html.ove-motion-soft .ove-detached-panel { animation: ove-panel-soft .26s ease-out; }
+html.ove-motion-soft .ove-detached-toast { animation: ove-toast-soft .32s ease-out; }
+html.ove-motion-soft .ove-detached-panel { animation: ove-panel-soft .3s ease-out; }
 
 @keyframes ove-dialog-slide {
-  0% { opacity: 0; transform: translateY(28px); }
+  0% { opacity: 0; transform: translateY(44px); }
   100% { opacity: 1; transform: none; }
 }
 @keyframes ove-toast-slide {
-  0% { opacity: 0; transform: translate(-50%, -18px); }
+  0% { opacity: 0; transform: translate(-50%, -28px); }
   100% { opacity: 1; transform: translate(-50%, 0); }
 }
 @keyframes ove-panel-slide {
-  0% { translate: 0 18px; }
+  0% { translate: 0 30px; }
   100% { translate: 0 0; }
 }
-html.ove-motion-slide .ove-overlay { animation-duration: .26s; }
-html.ove-motion-slide .ove-dialog { animation: ove-dialog-slide .3s cubic-bezier(.16, .84, .3, 1); }
+html.ove-motion-slide .ove-overlay { animation-duration: .3s; }
+html.ove-motion-slide .ove-dialog { animation: ove-dialog-slide .34s cubic-bezier(.16, .84, .3, 1); }
 html.ove-motion-slide .ove-toast,
-html.ove-motion-slide .ove-detached-toast { animation: ove-toast-slide .3s cubic-bezier(.16, .84, .3, 1); }
-html.ove-motion-slide .ove-detached-panel { animation: ove-panel-slide .3s cubic-bezier(.16, .84, .3, 1); }
+html.ove-motion-slide .ove-detached-toast { animation: ove-toast-slide .34s cubic-bezier(.16, .84, .3, 1); }
+html.ove-motion-slide .ove-detached-panel { animation: ove-panel-slide .34s cubic-bezier(.16, .84, .3, 1); }
 
 @keyframes ove-dialog-snap {
   0% { opacity: 0; transform: scale(.972); }

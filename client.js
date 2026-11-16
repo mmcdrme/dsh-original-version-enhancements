@@ -2539,7 +2539,11 @@ window.__ModuleLoader__.load({
                   // shape of the motion. Same segmented control as the window
                   // options, so switching is one click.
                   settingRow(tr('motion.style'), tr('motion.style.desc'),
-                    h('div', { className: 'ove-size-group', role: 'group', 'aria-label': tr('motion.style') },
+                    h('div', {
+                      className: 'ove-size-group ove-motion-styles',
+                      role: 'group',
+                      'aria-label': tr('motion.style'),
+                    },
                       MOTION_STYLES.map(id => h('button', {
                         key: id,
                         type: 'button',
@@ -3854,6 +3858,9 @@ window.__ModuleLoader__.load({
           width: `${place.width}px`,
           height: `${place.height}px`,
           opacity: appearance.opacity / 100,
+          // The soft entrance fades the window from 0 to this exact value, so
+          // the end of the animation cannot snap to a different opacity.
+          '--ove-panel-opacity': appearance.opacity / 100,
           display: minimized ? 'none' : 'flex',
           // Stacking follows the last click, not the render order.
           zIndex: 2147483002 + (typeof zIndex === 'number' && zIndex >= 0 ? zIndex : index),
