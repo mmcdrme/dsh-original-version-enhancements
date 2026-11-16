@@ -486,13 +486,16 @@
 }
 .ove-menu-icon { flex: none; display: block; }
 
-/* Entrance motion for the popup surfaces. A dimmed, progressively blurred
-   backdrop resolves while the card springs in; the plugin page's motion
-   switch (a class on the document root) and the OS reduced-motion preference
-   both turn the whole thing off. */
+/* Entrance motion for the popup surfaces. The blur is painted once and only
+   fades in with the overlay (animating `backdrop-filter` itself re-blurs the
+   whole page every frame, which is what made the old entrance stutter); the
+   card then springs with transform and opacity only, so the compositor can
+   run the whole thing off the main thread. The plugin page's motion switch (a
+   class on the document root) and the OS reduced-motion preference both turn
+   it off. */
 @keyframes ove-overlay-in {
-  from { background: rgba(0, 0, 0, 0); backdrop-filter: blur(0px); -webkit-backdrop-filter: blur(0px); }
-  to { background: rgba(0, 0, 0, .4); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 .ove-overlay {
   position: fixed;
@@ -503,16 +506,18 @@
   justify-content: center;
   padding: 24px;
   background: rgba(0, 0, 0, .4);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
   pointer-events: auto;
-  animation: ove-overlay-in .3s ease-out both;
+  animation: ove-overlay-in .24s ease-out both;
 }
 .ove-overlay-top { z-index: 2147483000; }
-/* Jelly entrance: unblur while the card overshoots full size, then settle. */
+/* Jelly entrance: the card overshoots full size and settles back. */
 @keyframes ove-dialog-jelly {
-  0% { opacity: 0; transform: translateY(12px) scale(.9); filter: blur(10px); }
-  60% { opacity: 1; transform: translateY(-2px) scale(1.022); filter: blur(0); }
-  82% { transform: translateY(1px) scale(.996); }
-  100% { opacity: 1; transform: none; filter: blur(0); }
+  0% { opacity: 0; transform: translateY(12px) scale(.92); }
+  60% { opacity: 1; transform: translateY(-2px) scale(1.02); }
+  82% { transform: translateY(1px) scale(.997); }
+  100% { opacity: 1; transform: none; }
 }
 .ove-dialog {
   box-sizing: border-box;
@@ -525,7 +530,7 @@
   background: var(--dsw-alias-bg-layer-2);
   color: var(--dsw-alias-label-primary);
   box-shadow: 0 12px 40px rgba(0, 0, 0, .35);
-  animation: ove-dialog-jelly .42s cubic-bezier(.22, .9, .3, 1.04);
+  animation: ove-dialog-jelly .4s cubic-bezier(.22, .9, .3, 1.04);
   transform-origin: 50% 42%;
 }
 .ove-dialog-title { margin: 0; font-size: 16px; line-height: 24px; font-weight: 600; }
@@ -643,13 +648,14 @@
   background: #1f2124; color: #fff;
   box-shadow: 0 10px 30px rgba(0, 0, 0, .35);
   font-size: 13px; line-height: 20px;
-  animation: ove-toast-jelly .38s cubic-bezier(.2, .9, .3, 1.04);
+  animation: ove-toast-jelly .34s cubic-bezier(.2, .9, .3, 1.04);
 }
+/* Transform and opacity only: no filter, so the receipt stays composited. */
 @keyframes ove-toast-jelly {
-  0% { opacity: 0; transform: translate(-50%, -10px) scale(.94); filter: blur(8px); }
-  60% { opacity: 1; transform: translate(-50%, 2px) scale(1.018); filter: blur(0); }
+  0% { opacity: 0; transform: translate(-50%, -10px) scale(.96); }
+  60% { opacity: 1; transform: translate(-50%, 2px) scale(1.015); }
   82% { transform: translate(-50%, -1px) scale(.998); }
-  100% { opacity: 1; transform: translate(-50%, 0); filter: blur(0); }
+  100% { opacity: 1; transform: translate(-50%, 0); }
 }
 .ove-toast-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* The remaining undo window, next to the receipt's undo action. */
@@ -1006,15 +1012,15 @@
   padding: 8px 14px; border-radius: 10px; background: #1f2124; color: #fff;
   font-size: 13px; line-height: 20px; box-shadow: 0 10px 30px rgba(0, 0, 0, .35);
   pointer-events: none;
-  animation: ove-toast-jelly .38s cubic-bezier(.2, .9, .3, 1.04);
+  animation: ove-toast-jelly .34s cubic-bezier(.2, .9, .3, 1.04);
 }
-/* An in-page window arrives the same way: blurred and slightly small, then a
-   small overshoot. `scale` is its own property so the drag keeps `transform`
-   to itself (the animation ends at the identity and overrides nothing). */
+/* An in-page window arrives the same way. `scale` is its own property so the
+   drag keeps `transform` to itself; a filter here would re-read the embedded
+   page every frame, so the window only scales. */
 @keyframes ove-panel-jelly {
-  0% { scale: .96; filter: blur(10px); }
-  60% { scale: 1.01; filter: blur(0); }
-  100% { scale: 1; filter: blur(0); }
+  0% { scale: .96; }
+  60% { scale: 1.008; }
+  100% { scale: 1; }
 }
 /* An in-app window: the fallback for environments that refuse popups. It is a
    real frame around a second client document, movable and resizable. */

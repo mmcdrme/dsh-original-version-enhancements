@@ -82,15 +82,40 @@ test('the stylesheet animates every popup surface', () => {
   for (const name of ['ove-overlay-in', 'ove-dialog-jelly', 'ove-toast-jelly', 'ove-panel-jelly']) {
     assert.match(stylesheet, new RegExp(`@keyframes ${name} \\{`, 'u'), `missing ${name}`)
   }
-  // Progressive blur on the backdrop and on the card itself.
-  assert.match(stylesheet, /@keyframes ove-overlay-in \{\n\s+from \{[^}]*blur\(0px\)[^}]*\}\n\s+to \{[^}]*blur\(6px\)[^}]*\}/u)
-  assert.match(stylesheet, /@keyframes ove-dialog-jelly \{\n\s+0% \{[^}]*filter: blur\(10px\)[^}]*\}/u)
-  // Each surface carries its entrance animation.
+  // The blur is painted once (a static backdrop-filter) and only its opacity
+  // fades; animating `backdrop-filter` itself re-blurs the page every frame and
+  // was what made the entrance stutter.
+  assert.match(stylesheet, /@keyframes ove-overlay-in \{\n\s+from \{ opacity: 0; \}\n\s+to \{ opacity: 1; \}/u)
+  assert.match(stylesheet, /\.ove-overlay \{[^}]*backdrop-filter: blur\(6px\);/u)
+  // Every surface carries its entrance animation.
   assert.match(stylesheet, /\.ove-overlay \{[^}]*animation: ove-overlay-in/u)
   assert.match(stylesheet, /\.ove-dialog \{[^}]*animation: ove-dialog-jelly/u)
   assert.match(stylesheet, /\.ove-toast \{[^}]*animation: ove-toast-jelly/u)
   assert.match(stylesheet, /\.ove-detached-toast \{[^}]*animation: ove-toast-jelly/u)
   assert.match(stylesheet, /\.ove-detached-panel \{[^}]*animation: ove-panel-jelly/u)
+})
+
+test('no entrance animates a filter, so the compositor owns the whole move', () => {
+  /** Everything from one `{` to its matching `}`, nested rules included. */
+  const blockOf = (source, at) => {
+    let depth = 0
+    for (let index = at; index < source.length; index += 1) {
+      if (source[index] === '{') depth += 1
+      else if (source[index] === '}') {
+        depth -= 1
+        if (depth === 0) return source.slice(at, index + 1)
+      }
+    }
+    return source.slice(at)
+  }
+  for (const name of ['ove-overlay-in', 'ove-dialog-jelly', 'ove-toast-jelly', 'ove-panel-jelly']) {
+    const at = stylesheet.indexOf(`@keyframes ${name} {`)
+    assert.ok(at >= 0, `missing ${name}`)
+    assert.doesNotMatch(blockOf(stylesheet, at), /filter/u, `${name} still animates a filter`)
+  }
+  // Animated backdrop-filter was the expensive part of the first version.
+  const overlayAt = stylesheet.indexOf('@keyframes ove-overlay-in {')
+  assert.doesNotMatch(blockOf(stylesheet, overlayAt), /backdrop-filter/u)
 })
 
 test('one class and the OS preference both silence the entrances', () => {

@@ -4006,7 +4006,7 @@ window.__ModuleLoader__.load({
 }
 .ove-sub-toggle:hover { background: color-mix(in srgb, var(--dsw-alias-label-primary) 9%, transparent); color: var(--dsw-alias-label-secondary); }
 .ove-sub-toggle:focus-visible { outline: 2px solid #3b82f6; outline-offset: -1px; }
-.ove-sub-host { display: block; }
+.ove-sub-host { display: block; user-select: none; -webkit-user-select: none; }
 .ove-sub-toggle-count { flex: none; font-size: 11px; line-height: 18px; opacity: .9; }
 .ove-sub-caret {
   flex: none; width: 0; height: 0;
@@ -4022,6 +4022,9 @@ window.__ModuleLoader__.load({
   border-radius: 10px; color: var(--dsw-alias-label-primary);
   font-size: 13px; line-height: 30px; cursor: pointer;
   transition: background-color .12s ease;
+  /* A row is one action, not text: without this a horizontal drag over the
+     injected rows started a text selection (the stock rows are unselectable). */
+  user-select: none; -webkit-user-select: none;
 }
 .ove-sub-row:hover { background: color-mix(in srgb, var(--dsw-alias-label-primary) 6%, transparent); }
 .ove-sub-row.is-active { background: color-mix(in srgb, #3b82f6 12%, transparent); }
@@ -4150,25 +4153,27 @@ window.__ModuleLoader__.load({
     };
 
     /**
-     * Copy one Session id the way the stock menu does: the shipped clipboard
+     * Copy one piece of text the way the stock menu does: the shipped clipboard
      * helper, then the menu toast it already uses for copy failures.
      * @param ctx - the Client plugin context.
-     * @param sessionId - the Session id to place on the clipboard.
+     * @param value - the text to place on the clipboard.
      * @param tr - translator.
+     * @param doneKey - locale key for the success receipt.
+     * @param failedKey - locale key for the failure receipt.
      */
-    const copySubagentSessionId = async (ctx, sessionId, tr) => {
+    const copySubagentText = async (ctx, value, tr, doneKey, failedKey) => {
       let copied = false;
       try {
         if (typeof uiPrimitives?.writeClipboard === 'function') {
-          copied = (await uiPrimitives.writeClipboard(sessionId)) === true;
+          copied = (await uiPrimitives.writeClipboard(value)) === true;
         } else if (typeof navigator !== 'undefined' && typeof navigator.clipboard?.writeText === 'function') {
-          await navigator.clipboard.writeText(sessionId);
+          await navigator.clipboard.writeText(value);
           copied = true;
         }
       } catch {
         copied = false;
       }
-      const text = tr(copied ? 'subagentMenu.copyIdDone' : 'subagentMenu.copyIdFailed');
+      const text = tr(copied ? doneKey : failedKey);
       const notify = optionalService(ctx, 'contextMenus')?.notify;
       if (typeof notify === 'function') {
         try { notify(text, copied); return; } catch { /* fall back to the plugin receipt */ }
@@ -4177,13 +4182,34 @@ window.__ModuleLoader__.load({
     };
 
     /**
-     * The shipped menu row that copies one Session id. The icon is the shipped
-     * copy glyph, so the row looks exactly like its ordinary-session twin.
-     * @param props - translator and the select handler.
+     * Copy one Session id or one conversation name, each with its own receipt.
+     * @param ctx - the Client plugin context.
+     * @param sessionId - the Session id to place on the clipboard.
+     * @param tr - translator.
+     */
+    const copySubagentSessionId = (ctx, sessionId, tr) => copySubagentText(
+      ctx, sessionId, tr, 'subagentMenu.copyIdDone', 'subagentMenu.copyIdFailed',
+    );
+
+    /**
+     * Copy the conversation name shown on the menu target.
+     * @param ctx - the Client plugin context.
+     * @param name - the conversation name to place on the clipboard.
+     * @param tr - translator.
+     */
+    const copySubagentName = (ctx, name, tr) => copySubagentText(
+      ctx, name, tr, 'subagentMenu.copyNameDone', 'subagentMenu.copyNameFailed',
+    );
+
+    /**
+     * The shipped menu row that copies one piece of text. The icon is the
+     * shipped copy glyph, so every copy row looks like its ordinary-session
+     * twin.
+     * @param props - translator, the select handler and the locale key.
      * @returns the menu row.
      */
-    function SubagentCopyIdMenuItem({ t, onSelect }) {
-      const label = t('subagentMenu.copyId');
+    function SubagentCopyMenuItem({ t, onSelect, labelKey }) {
+      const label = t(labelKey);
       if (uiPrimitives?.MenuItemButton) {
         const Icon = uiPrimitives.IconCopyOutlineRegular;
         return h(uiPrimitives.MenuItemButton, {
@@ -4200,10 +4226,11 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * Rows of the subagent menu. Both rows reuse the shipped primitives: the
-     * copy-id row its own icon button, and "复制到工作区" the very component the
-     * ordinary session menu contributes (green label, copy glyph), pointed at
-     * the child Session and allowing the parent's workspace as a target.
+     * Rows of the subagent menu. All three reuse the shipped primitives: the
+     * two copy rows their own icon buttons (id first, name next), and "复制到
+     * 工作区" the very component the ordinary session menu contributes (green
+     * label, copy glyph), pointed at the child Session and allowing the
+     * parent's workspace as a target.
      * @param props - captured target, menu dismissal, translator, plugin context.
      * @returns the menu rows.
      */
@@ -4223,8 +4250,15 @@ window.__ModuleLoader__.load({
         menuState[1](false);
         void copySubagentSessionId(ctx, sessionId, tr);
       };
+      const copyName = () => {
+        menuState[1](false);
+        void copySubagentName(ctx, displayTitle, tr);
+      };
       return h(React.Fragment, null,
-        h(SubagentCopyIdMenuItem, { t: tr, onSelect: copyId }),
+        h(SubagentCopyMenuItem, { t: tr, onSelect: copyId, labelKey: 'subagentMenu.copyId' }),
+        // Between the id and the transfer action: both copy rows sit together,
+        // and the transfer action keeps the bottom of the menu.
+        h(SubagentCopyMenuItem, { t: tr, onSelect: copyName, labelKey: 'subagentMenu.copyName' }),
         h(SessionTransferMenuItem, {
           sessionId,
           displayTitle,
@@ -4271,6 +4305,30 @@ window.__ModuleLoader__.load({
     };
 
     /**
+     * How long a click on the open conversation waits before folding its
+     * subagents: a second press inside that window is a double-click, which
+     * belongs to the shipped rename dialog.
+     */
+    const PARENT_ROW_TOGGLE_DELAY_MS = 250;
+
+    /**
+     * What a plain left click on a stock conversation row means. Only the row
+     * of the conversation that is already open (and that owns subagent
+     * children) has anything to fold; every other click, and every second
+     * press of a double-click, belongs to the shipped row.
+     * @param event - the click.
+     * @param selected - whether the row is the open conversation.
+     * @param hasChildren - whether the row owns subagent children.
+     * @returns 'toggle' for a fold, 'double' for a double-click's second press,
+     *   or 'stock' when the shipped row keeps the gesture.
+     */
+    const parentRowGesture = (event, selected, hasChildren) => {
+      if (event.button !== 0) return 'stock';
+      if (selected !== true || hasChildren !== true) return 'stock';
+      return event.detail > 1 ? 'double' : 'toggle';
+    };
+
+    /**
      * Draw the subagent tree under each conversation row in the stock sidebar.
      *
      * The browser renders its rows as `[data-row-key="session:<id>"]` inside a
@@ -4293,6 +4351,10 @@ window.__ModuleLoader__.load({
       const rowSelector = '[data-row-key^="session:"]';
       const hosts = new Map();
       const toggles = new Map();
+      /** Stock rows that already carry the fold gesture. */
+      const wiredParents = new WeakSet();
+      /** The pending fold of the last click; a double-click cancels it. */
+      let parentToggleTimer = 0;
       const store = ctx?.sessions?.list;
       /** Child metadata per parent, from the catalogue projection when loaded. */
       let catalogs = new Map();
@@ -4388,6 +4450,51 @@ window.__ModuleLoader__.load({
         }
         saveSubagentTreeOpen();
         paint();
+      };
+
+      /** Drop a fold that the next click proved to be half of a double-click. */
+      const cancelParentToggle = () => {
+        if (parentToggleTimer === 0) return;
+        globalThis.clearTimeout(parentToggleTimer);
+        parentToggleTimer = 0;
+      };
+
+      /**
+       * Give one stock conversation row the "click the open one again folds its
+       * subagents" gesture. The row belongs to the shipped browser, so only the
+       * click is taken; the dblclick it does not touch is what the stock rename
+       * dialog waits for, and a click landing on one of the row's own controls
+       * is left alone. A fold is delayed just long enough for a second press to
+       * cancel it, so a double-click never flashes the tree open and closed.
+       * @param row - the stock `[data-row-key]` element.
+       */
+      const wireParentRow = (row) => {
+        if (wiredParents.has(row)) return;
+        wiredParents.add(row);
+        // Captured before the row's own handlers: a double-click is always a
+        // rename, so the fold started by its first press must not happen.
+        row.addEventListener('dblclick', cancelParentToggle, true);
+        row.addEventListener('click', (event) => {
+          const id = (row.getAttribute('data-row-key') ?? '').slice('session:'.length);
+          if (id.length === 0 || !children.has(id)) return;
+          const selected = row.getAttribute('aria-selected') === 'true';
+          const gesture = parentRowGesture(event, selected, true);
+          if (gesture === 'stock') return;
+          const target = event.target instanceof Element ? event.target : null;
+          if (target !== null
+            && target.closest('button, a, input, textarea, select, [contenteditable="true"]') !== null) return;
+          // Keep the shipped row from re-opening the conversation under the
+          // click; the rename dialog is a separate dblclick and still fires.
+          event.preventDefault();
+          event.stopPropagation();
+          cancelParentToggle();
+          if (gesture === 'double') return;
+          parentToggleTimer = globalThis.setTimeout(() => {
+            parentToggleTimer = 0;
+            if (!row.isConnected || row.getAttribute('aria-selected') !== 'true') return;
+            toggle(id);
+          }, PARENT_ROW_TOGGLE_DELAY_MS);
+        });
       };
 
       /**
@@ -4592,9 +4699,11 @@ window.__ModuleLoader__.load({
         };
         row.addEventListener('click', openOrToggle);
         // The row is injected markup, so it owns its own menu gesture: the
-        // shipped overlay is opened for this exact child conversation.
+        // shipped overlay is opened for this exact child conversation. The
+        // row's title attribute is what is actually displayed (including the
+        // sibling suffix), so copying the name copies what the human sees.
         row.addEventListener('contextmenu', (event) => {
-          if (!openSubagentMenu(ctx, itemId, titleOf(item, parentId), { x: event.clientX, y: event.clientY }, parentId)) return;
+          if (!openSubagentMenu(ctx, itemId, row.title, { x: event.clientX, y: event.clientY }, parentId)) return;
           event.preventDefault();
           event.stopPropagation();
         });
@@ -4606,7 +4715,7 @@ window.__ModuleLoader__.load({
           if (event.key === 'ContextMenu' || (event.key === 'F10' && event.shiftKey)) {
             event.preventDefault();
             const rect = row.getBoundingClientRect();
-            openSubagentMenu(ctx, itemId, titleOf(item, parentId), { x: rect.left + 24, y: rect.bottom - 2 }, parentId);
+            openSubagentMenu(ctx, itemId, row.title, { x: rect.left + 24, y: rect.bottom - 2 }, parentId);
             return;
           }
           if (event.key !== 'Enter' && event.key !== ' ') return;
@@ -4688,6 +4797,7 @@ window.__ModuleLoader__.load({
         const count = (children.get(parentId) ?? []).length;
         const open = subagentTreeOpen.has(parentId);
         const settings = getSubagentTreeSettings();
+        wireParentRow(row);
         let button = toggles.get(parentId);
         if (button === undefined || !button.isConnected || button.parentElement !== row) {
           button?.remove();
@@ -4933,6 +5043,7 @@ window.__ModuleLoader__.load({
 
       return () => {
         stopped = true;
+        cancelParentToggle();
         if (scheduled !== 0) {
           globalThis.cancelAnimationFrame?.(scheduled);
           globalThis.clearTimeout?.(scheduled);
