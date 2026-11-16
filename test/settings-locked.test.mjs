@@ -12,6 +12,7 @@ import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 
 const clientSource = await readFile(new URL('../client.js', import.meta.url), 'utf8')
+const stylesheet = await readFile(new URL('../css/style.css', import.meta.url), 'utf8')
 
 const AREA = { top: 100, bottom: 900, height: 800 }
 
@@ -185,6 +186,32 @@ test('reduced motion jumps to the target without animation', () => {
   })
   assert.equal(result.frames, 0)
   assert.equal(result.scrollTop, 209)
+})
+
+test('the fold clips on its wrapper, not on the body that holds the switch', () => {
+  // A switch sits on the body's right edge, so clipping there cut the right
+  // half of its 3 px hover ring off. The wrapper clips and is 4 px wider on the
+  // right (margin pulled back), leaving the ring its room.
+  const wrapper = stylesheet.slice(stylesheet.indexOf('.ove-setting-collapse {'))
+  const wrapperBlock = wrapper.slice(0, wrapper.indexOf('}'))
+  assert.match(wrapperBlock, /overflow: hidden;/u)
+  assert.match(wrapperBlock, /padding-right: 4px;/u)
+  assert.match(wrapperBlock, /margin-right: -4px;/u)
+  const bodyLine = stylesheet.split('\n').find(line => line.startsWith('.ove-setting-body { '))
+  assert.doesNotMatch(bodyLine, /overflow: hidden/u)
+  const foldBodyLine = stylesheet.split('\n').find(line => line.startsWith('.ove-fold-body { '))
+  assert.doesNotMatch(foldBodyLine, /overflow: hidden/u)
+})
+
+test('the persistence switch is not tied to the recall mode', () => {
+  const persist = clientSource.slice(
+    clientSource.indexOf("settingRow(tr('recall.persist')"),
+    clientSource.indexOf("// How deep the stack goes sits right below it."),
+  )
+  assert.ok(persist.length > 0, 'missing the persistence row')
+  // The control is switchOf(checked, onToggle, label) — a fourth argument used
+  // to disable it whenever shared mode was on.
+  assert.doesNotMatch(persist, /recall\.perSession !== true/u)
 })
 
 test('a switched-off box keeps its rows but makes them inert', () => {

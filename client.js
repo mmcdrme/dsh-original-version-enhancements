@@ -2408,13 +2408,13 @@ window.__ModuleLoader__.load({
                       tr('recall.scope'),
                     ),
                   ),
-                  // Persistence is its own first-level row of this feature;
-                  // it only matters while independent mode is on.
+                  // Persistence is its own first-level row of this feature and
+                  // applies to both modes, so the mode switch must not disable
+                  // it (it used to be greyed out in shared mode).
                   settingRow(tr('recall.persist'), tr('recall.persist.desc'), switchOf(
                     recall.persistHistory !== false,
                     () => setRecall({ persistHistory: recall.persistHistory === false }),
                     tr('recall.persist'),
-                    recall.perSession !== true,
                   )),
                   // How deep the stack goes sits right below it.
                   settingRow(tr('recall.max'), tr('recall.max.desc'), h('input', {

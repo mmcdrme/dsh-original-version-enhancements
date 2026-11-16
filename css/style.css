@@ -108,11 +108,18 @@
 .ove-setting-caret svg { transition: transform .2s ease; }
 .ove-setting-caret.is-open svg { transform: rotate(90deg); }
 /* Animated fold: the grid row goes 1fr → 0fr, so the body slides shut and the
-   box border simply wraps whichever part is visible. */
+   box border simply wraps whichever part is visible. The clip lives here rather
+   than on the body: the body's right edge is where the row's switch sits, and
+   clipping there cut the right half of the switch's hover ring off. The wrapper
+   is 4 px wider on the right (pulled back by the same margin), so the ring has
+   room while every row keeps its exact width. */
 .ove-setting-collapse {
   display: grid;
   grid-template-rows: 1fr;
   transition: grid-template-rows .22s ease;
+  overflow: hidden;
+  padding-right: 4px;
+  margin-right: -4px;
 }
 .ove-setting-collapse.is-collapsed { grid-template-rows: 0fr; }
 .ove-setting-text { flex: 1 1 auto; min-width: 0; display: grid; gap: 2px; }
@@ -127,7 +134,7 @@
 .ove-setting-desc { font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-tertiary); }
 /* Everything the switch owns starts one indent step in, with a hairline guide
    running down the left edge of the group. */
-.ove-setting-body { min-height: 0; overflow: hidden; padding: 0 0 4px 7px; }
+.ove-setting-body { min-height: 0; padding: 0 0 4px 7px; }
 .ove-setting-body > .ove-row { position: relative; padding: 10px 0; }
 .ove-setting-body > .ove-row + .ove-row { border-top: .5px solid var(--dsw-alias-border-l1); }
 .ove-setting-body > .ove-row-note { padding: 8px 0 4px; }
@@ -161,7 +168,7 @@
 }
 .ove-fold-head { padding: 12px 0; }
 .ove-fold-head .ove-fold-caret { margin: 0 -6px 0 -2px; }
-.ove-fold-body { min-height: 0; overflow: hidden; padding: 0 0 4px 7px; }
+.ove-fold-body { min-height: 0; padding: 0 0 4px 7px; }
 .ove-fold-body > .ove-row { padding: 10px 0; }
 .ove-fold-body > .ove-row + .ove-row { border-top: .5px solid var(--dsw-alias-border-l1); }
 /* The destructive row closes the recall level and keeps the boxed red look of
