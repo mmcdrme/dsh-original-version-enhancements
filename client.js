@@ -2397,17 +2397,17 @@ window.__ModuleLoader__.load({
                       })),
                     ],
                   }),
-                  // Whether each conversation keeps its own history. The row
-                  // says which mode is on, not what the switch would do.
-                  settingRow(tr('recall.scope'),
-                    tr('recall.scope.desc').replace('{mode}', tr(
-                      recall.perSession === true ? 'recall.mode.independent' : 'recall.mode.shared',
-                    )),
+                  // Whether each conversation keeps its own history. The
+                  // headline is the mode that is on; the sub-line explains both.
+                  settingRow(
+                    tr(recall.perSession === true ? 'recall.mode.independent' : 'recall.mode.shared'),
+                    tr('recall.scope.desc'),
                     switchOf(
                       recall.perSession === true,
                       () => setScopeConfirm(true),
                       tr('recall.scope'),
-                    )),
+                    ),
+                  ),
                   // Persistence is its own first-level row of this feature;
                   // it only matters while independent mode is on.
                   settingRow(tr('recall.persist'), tr('recall.persist.desc'), switchOf(

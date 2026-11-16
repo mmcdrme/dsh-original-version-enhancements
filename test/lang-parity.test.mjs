@@ -35,13 +35,18 @@ test('placeholders agree between the two languages', () => {
   }
 })
 
-test('the recall mode row names the mode that is on', () => {
+test('the recall mode row headlines the mode that is on', () => {
   for (const language of ['zh', 'en']) {
-    assert.match(catalogue[language]['recall.scope.desc'], /^[^{]*\{mode\}[^{]*$/u, `${language} mode description`)
     assert.ok(catalogue[language]['recall.mode.independent'].length > 0)
     assert.ok(catalogue[language]['recall.mode.shared'].length > 0)
+    // The sub-line explains both modes, so it carries no placeholder.
+    assert.doesNotMatch(catalogue[language]['recall.scope.desc'], /\{\w+\}/u)
   }
-  assert.match(clientSource, /tr\('recall\.scope\.desc'\)\.replace\('\{mode\}',/u)
+  assert.match(
+    clientSource,
+    /tr\(recall\.perSession === true \? 'recall\.mode\.independent' : 'recall\.mode\.shared'\)/u,
+  )
+  assert.doesNotMatch(clientSource, /tr\('recall\.scope\.desc'\)\.replace/u)
 })
 
 test('every literal key the client asks for exists in both languages', () => {
