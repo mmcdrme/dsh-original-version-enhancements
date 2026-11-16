@@ -33,7 +33,7 @@ window.__ModuleLoader__.load({
     /* ------------------------------------------------------------------ */
 
     const FLAGS_KEY = 'original-version-enhancements.flags.v1';
-    const DEFAULT_FLAGS = { stepSwitcher: true, chatManager: true, automation: true, recall: true, detached: true, bindScopes: false };
+    const DEFAULT_FLAGS = { stepSwitcher: true, chatManager: true, automation: true, recall: true, detached: true, bindScopes: false, motion: true };
     const flagListeners = new Set();
 
     const readFlags = () => {
@@ -49,6 +49,9 @@ window.__ModuleLoader__.load({
           // Experimental, and off on purpose: the bind picker only gains its
           // scope selector when the human turns this on.
           bindScopes: flags.bindScopes === true,
+          // Entrance motion for dialogs, receipts and in-page windows; a
+          // profile that never touched the page keeps it on.
+          motion: flags.motion !== false,
         };
       } catch {
         return { ...DEFAULT_FLAGS };
@@ -2481,6 +2484,10 @@ window.__ModuleLoader__.load({
                   ], 'ove-setting-window'),
 
               h(SubagentTreeSettingsRows, { t: tr }),
+
+              // Newest feature last: the list below the boxes follows the order
+              // features were added in, never their importance.
+              feature('switch.motion', flags.motion, () => toggle('motion'), null),
             )),
 
           h('p', { className: 'ove-hint' }, tr('pageHint')),
@@ -9175,6 +9182,25 @@ window.__ModuleLoader__.load({
         const translator = (key) => text(key);
 
         ctx.effect(() => ctx.locale.register(NS, catalogue), 'original-version-enhancements: dictionaries');
+
+        // Entrance motion is one page-level switch: dialogs, receipts and
+        // in-page windows all key off this class, so the flag does not have to
+        // be threaded through every component that can pop up. The stylesheet
+        // animates them by default; the class only turns the motion off.
+        ctx.effect(() => {
+          const root = globalThis.document?.documentElement;
+          if (root === null || root === undefined) return undefined;
+          const sync = () => {
+            const motion = getFlags().motion !== false;
+            root.classList.toggle('ove-motion-off', !motion);
+          };
+          const unsubscribe = subscribeFlags(sync);
+          sync();
+          return () => {
+            unsubscribe();
+            root.classList.remove('ove-motion-off');
+          };
+        }, 'original-version-enhancements: entrance motion switch');
 
         ctx.effect(() => ctx.slots.inject('settings.section', () => ctx.slots.register({
           name: 'settings.section',
