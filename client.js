@@ -1970,6 +1970,12 @@ window.__ModuleLoader__.load({
     const FOLD_TOP_GAP = 12;
 
     /**
+     * One pending correction per box, run once its fold has finished opening.
+     * A quick close/reopen replaces the old one, so only the latest matters.
+     */
+    const revealSettleTimers = new WeakMap();
+
+    /**
      * The scrollable ancestor of a settings element (the dialog's option list).
      * @param node - element inside the list.
      * @returns that list, or null when the page is not scrollable.
@@ -1990,8 +1996,9 @@ window.__ModuleLoader__.load({
      * jumping after the animation has already finished.
      * @param scroller - the option list that overflows.
      * @param to - target scroll offset in pixels.
+     * @param duration - how long to take; shorter for the post-open correction.
      */
-    const animateScrollTo = (scroller, to) => {
+    const animateScrollTo = (scroller, to, duration = FOLD_DURATION_MS) => {
       const from = scroller.scrollTop;
       const delta = to - from;
       if (Math.abs(delta) < 1) return;
@@ -2006,7 +2013,7 @@ window.__ModuleLoader__.load({
       const clock = () => (typeof performance?.now === 'function' ? performance.now() : Date.now());
       const started = clock();
       const step = () => {
-        const progress = Math.min(1, (clock() - started) / FOLD_DURATION_MS);
+        const progress = Math.min(1, (clock() - started) / duration);
         // Same `ease` feel as the CSS transition: fast start, soft landing.
         const eased = progress * progress * (3 - 2 * progress);
         scroller.scrollTop = from + delta * eased;
@@ -2026,10 +2033,17 @@ window.__ModuleLoader__.load({
      * taller than the list is lined up by its top edge at the content top.
      * The body is clipped rather than collapsed in layout while folded, so its
      * full height is readable up front and the scroll can start immediately.
+     * That estimate is a few pixels short (a clipped scroll box leaves out the
+     * last row's margin and the body's own bottom padding), so the box is
+     * measured once more after the fold has finished opening and nudged into
+     * place: without that, a tall box's bottom border used to land exactly on
+     * the list's clip edge and disappear.
      * @param node - the box (or folded row) element that opened.
-     * @param body - the body element whose content is being revealed.
+     * @param body - the body element whose content is being revealed; null for
+     *   the post-open correction, which measures the real height instead.
+     * @param final - true for that second pass, which must not reschedule.
      */
-    const revealFoldedBox = (node, body) => {
+    const revealFoldedBox = (node, body, final = false) => {
       if (node === null || node === undefined) return;
       try {
         if (!node.isConnected) return;
@@ -2043,10 +2057,18 @@ window.__ModuleLoader__.load({
         const contentBottom = area.bottom - padBottom;
         if (area.height === 0 || contentBottom - contentTop <= 0) return;
         const box = node.getBoundingClientRect();
-        const grow = body === null || body === undefined
+        const grow = body === null || body === undefined || final === true
           ? 0
           : Math.max(0, body.scrollHeight - body.clientHeight);
         const bottom = box.bottom + grow;
+        if (!final) {
+          const pending = revealSettleTimers.get(node);
+          if (pending !== undefined) window.clearTimeout(pending);
+          revealSettleTimers.set(node, window.setTimeout(() => {
+            revealSettleTimers.delete(node);
+            revealFoldedBox(node, null, true);
+          }, FOLD_DURATION_MS + 80));
+        }
         // Already readable in full: leave the list where it is.
         if (box.top >= contentTop && bottom <= area.bottom) return;
         const fits = bottom - box.top <= contentBottom - contentTop;
@@ -2075,7 +2097,7 @@ window.__ModuleLoader__.load({
         const max = Math.max(0, scroller.scrollHeight + grow - scroller.clientHeight);
         const next = Math.min(max, Math.max(0, Math.round(target)));
         if (Math.abs(next - scroller.scrollTop) < 2) return;
-        animateScrollTo(scroller, next);
+        animateScrollTo(scroller, next, final ? 140 : FOLD_DURATION_MS);
       } catch { /* a settings page that went away needs no scrolling */ }
     };
 

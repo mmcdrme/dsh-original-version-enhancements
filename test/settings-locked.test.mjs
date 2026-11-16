@@ -31,11 +31,20 @@ const harness = (area = AREA, options = {}) => {
     parentElement: bodySentinel,
     getBoundingClientRect: () => area,
   }
+  const timers = []
   const window = {
     requestAnimationFrame: (callback) => {
       clock += 110
       frames += 1
       callback(clock)
+    },
+    setTimeout: (callback, delay) => {
+      timers.push({ callback, delay, live: true })
+      return timers.length
+    },
+    clearTimeout: (id) => {
+      const entry = timers[id - 1]
+      if (entry !== undefined) entry.live = false
     },
   }
   const document = { body: bodySentinel }
@@ -61,7 +70,20 @@ return { revealFoldedBox, settleFoldedBox, FOLD_DURATION_MS, FOLD_TOP_GAP }`,
       : { getBoundingClientRect: () => ({ top: nextTop }) },
     getBoundingClientRect: () => box,
   })
-  return { api, scroller, node, frames: () => frames }
+  return {
+    api,
+    scroller,
+    node,
+    frames: () => frames,
+    timers,
+    runTimers: () => {
+      for (const entry of timers) {
+        if (!entry.live) continue
+        entry.live = false
+        entry.callback()
+      }
+    },
+  }
 }
 
 /** Reveal a box whose body is folded: `bodySpec` is its in-page rectangle. */
@@ -148,6 +170,30 @@ test('the open scroll runs for the fold duration and lands on the target', () =>
   // 110 ms steps: half way, then the final frame — two animation frames.
   assert.equal(result.frames, 2)
   assert.equal(result.scrollTop, 209)
+})
+
+test('opening a fold schedules one correction for after it has grown', () => {
+  const run = harness(AREA, { nextTop: 1110 })
+  run.api.revealFoldedBox(run.node({ top: 700, bottom: 1100, height: 400 }), null)
+  assert.equal(run.timers.length, 1)
+  assert.equal(run.timers[0].delay, run.api.FOLD_DURATION_MS + 80)
+})
+
+test('the post-open correction pulls the bottom border off the clip edge', () => {
+  // Real geometry after opening the recall box: the pre-open estimate left it
+  // 10 px too low, so its bottom border sat exactly on the list's clip edge and
+  // vanished. The second pass measures the true height and stops the view on
+  // the next section's border, one pixel past the edge.
+  const run = harness(AREA, { scrollTop: 99, nextTop: 911 })
+  run.api.revealFoldedBox(run.node({ top: 427, bottom: 901, height: 474 }, 911), null, true)
+  assert.equal(run.scroller.scrollTop, 109)
+})
+
+test('the correction leaves a box that ended up fully readable alone', () => {
+  const run = harness(AREA, { scrollTop: 500, nextTop: 410 })
+  run.api.revealFoldedBox(run.node({ top: 200, bottom: 400, height: 200 }, 410), null, true)
+  assert.equal(run.scroller.scrollTop, 500)
+  assert.equal(run.frames(), 0)
 })
 
 test('closing a fold that sits in the view moves nothing', () => {
