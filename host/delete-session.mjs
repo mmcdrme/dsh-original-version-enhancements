@@ -1,8 +1,8 @@
 import { lstat, mkdtemp, readdir, realpath, rename, rm } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { readJsonBody, sendJson } from './serve.mjs'
 
 const failure = (code, message) => ({ ok: false, error: { code, message } })
-const MAX_REQUEST_BYTES = 8 * 1024
 
 /* ------------------------------------------------------------------ */
 /* Agent-lifecycle tracking                                            */
@@ -135,27 +135,6 @@ export function installAgentHandleTracker(agents, sessions) {
     // reload. The wrappers only record capabilities and never act on their own.
     release() {},
   }
-}
-
-const sendJson = (res, status, body) => {
-  res.writeHead(status, {
-    'content-type': 'application/json; charset=utf-8',
-    'cache-control': 'no-store',
-    'x-content-type-options': 'nosniff',
-  })
-  res.end(JSON.stringify(body))
-}
-
-const readJsonBody = async (req) => {
-  const chunks = []
-  let size = 0
-  for await (const chunk of req) {
-    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
-    size += buffer.length
-    if (size > MAX_REQUEST_BYTES) throw new Error('request-too-large')
-    chunks.push(buffer)
-  }
-  return JSON.parse(Buffer.concat(chunks).toString('utf8'))
 }
 
 const sameHeader = (left, right) => (
@@ -383,7 +362,7 @@ const pathExists = async (path) => {
  * @param sessionId - the session to stop.
  * @returns undefined on success, or a tagged failure understood by the caller.
  */
-export async function stopLoadedSession(deps, sessionId) {
+async function stopLoadedSession(deps, sessionId) {
   if (deps.agents.get(sessionId) === undefined) return undefined
   let disposed = false
   if (typeof deps.agentHandles?.dispose === 'function') {

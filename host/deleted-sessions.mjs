@@ -12,7 +12,7 @@ import { inheritedEventCount, waitForCachedProjection } from './transfer.mjs'
 /** Shape version of the trash sidecar. */
 const STATE_VERSION = 1
 /** How long an unclaimed retained session is kept before the next start drops it. */
-export const RETAIN_LIFETIME_MS = 60 * 60 * 1000
+const RETAIN_LIFETIME_MS = 60 * 60 * 1000
 
 /**
  * Absolute path of the trash directory for one profile.

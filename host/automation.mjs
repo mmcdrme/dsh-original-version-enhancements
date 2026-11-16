@@ -12,8 +12,8 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { readJsonBody, sendJson } from './serve.mjs'
 
-const MAX_REQUEST_BYTES = 32 * 1024
 const STATE_VERSION = 2
 // The Host's own Schedule contract caps a task title at 120 characters. A
 // longer one is refused there with an English 409, so the panel rejects it up
@@ -30,27 +30,6 @@ const EPHEMERAL_GRACE_MS = 30_000
 const EPHEMERAL_MAX_AGE_MS = 10 * 60_000
 
 const failure = (code, message) => ({ ok: false, error: { code, message } })
-
-const sendJson = (res, status, payload) => {
-  res.writeHead(status, {
-    'content-type': 'application/json; charset=utf-8',
-    'cache-control': 'no-store',
-    'x-content-type-options': 'nosniff',
-  })
-  res.end(JSON.stringify(payload))
-}
-
-const readJsonBody = async (req) => {
-  const chunks = []
-  let size = 0
-  for await (const chunk of req) {
-    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
-    size += buffer.length
-    if (size > MAX_REQUEST_BYTES) throw new Error('request-too-large')
-    chunks.push(buffer)
-  }
-  return JSON.parse(Buffer.concat(chunks).toString('utf8'))
-}
 
 const sameOriginRequest = req => typeof req.headers.host === 'string'
   && req.headers.origin === `http://${req.headers.host}`
@@ -552,7 +531,7 @@ async function deleteTask(service, id) {
  * @param deps - service access and sidecar state, plus a log sink.
  * @returns the number of removed tasks.
  */
-export async function reconcileAutomation({ service, state, save, warn = () => {} }) {
+async function reconcileAutomation({ service, state, save, warn = () => {} }) {
   const cleanIds = Object.keys(state.autoClean)
   const ephemeral = state.ephemeral ?? (state.ephemeral = {})
   const ephemeralIds = Object.keys(ephemeral)
@@ -639,7 +618,6 @@ export async function reconcileAutomation({ service, state, save, warn = () => {
 }
 
 /** Backwards-compatible name for the reconciler. */
-export const reconcileAutoClean = reconcileAutomation
 
 /**
  * The copies "bind to many Sessions" created from one task.
@@ -799,7 +777,7 @@ export function createAutomationSurface(options) {
       return undefined
     }
     try {
-      return await readJsonBody(req)
+      return await readJsonBody(req, 32 * 1024)
     } catch (error) {
       const tooLarge = error instanceof Error && error.message === 'request-too-large'
       sendJson(res, tooLarge ? 413 : 400, failure(

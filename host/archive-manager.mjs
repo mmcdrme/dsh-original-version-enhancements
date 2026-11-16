@@ -1,6 +1,7 @@
+import { readJsonBody, sendJson } from './serve.mjs'
+
 const SEARCH_LIMIT = 20
 const MESSAGE_TYPES = new Set(['user/message', 'assistant/message'])
-const MAX_REQUEST_BYTES = 8 * 1024
 
 const archiveIds = workspaceRegistry => {
   const ids = workspaceRegistry?.archivedSessionIds
@@ -113,28 +114,7 @@ export async function searchArchivedSessions({ workspaceRegistry, sessionQuery }
   return { items, hasMore: page?.nextCursor !== undefined }
 }
 
-const sendJson = (res, status, payload) => {
-  res.writeHead(status, {
-    'content-type': 'application/json; charset=utf-8',
-    'cache-control': 'no-store',
-    'x-content-type-options': 'nosniff',
-  })
-  res.end(JSON.stringify(payload))
-}
-
 const failure = (code, message) => ({ ok: false, error: { code, message } })
-
-const readJsonBody = async req => {
-  const chunks = []
-  let size = 0
-  for await (const chunk of req) {
-    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
-    size += buffer.length
-    if (size > MAX_REQUEST_BYTES) throw new Error('request-too-large')
-    chunks.push(buffer)
-  }
-  return JSON.parse(Buffer.concat(chunks).toString('utf8'))
-}
 
 const sameOriginRequest = req => typeof req.headers.host === 'string' && req.headers.origin === `http://${req.headers.host}`
 

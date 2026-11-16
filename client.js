@@ -426,7 +426,6 @@ window.__ModuleLoader__.load({
     };
     /** The published list; one stable identity until the next change. */
     const getHistory = () => historySnapshot;
-    const useHistory = () => React.useSyncExternalStore(subscribeHistory, getHistory, getHistory);
 
     const publishHistory = (list) => {
       historySnapshot = list;
@@ -475,7 +474,6 @@ window.__ModuleLoader__.load({
     );
 
     let sessionHistorySnapshot = readSessionHistories();
-    const getSessionHistories = () => sessionHistorySnapshot;
 
     const publishSessionHistories = (next) => {
       sessionHistorySnapshot = next;
@@ -569,8 +567,6 @@ window.__ModuleLoader__.load({
       publishHistory([]);
       publishSessionHistories({});
     };
-
-    const clearSentHistory = () => publishHistory([]);
 
     /* ------------------------------------------------------------------ */
     /* Conversations opened in their own window                            */
@@ -6480,11 +6476,6 @@ window.__ModuleLoader__.load({
       }
     };
 
-    const localDate = () => {
-      const now = new Date();
-      return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-    };
-
     /** Local `YYYY-MM-DD` of one instant. */
     const dateOf = (when) => `${when.getFullYear()}-${String(when.getMonth() + 1).padStart(2, '0')}-${String(when.getDate()).padStart(2, '0')}`;
 
@@ -7833,11 +7824,6 @@ window.__ModuleLoader__.load({
       const sessionTitle = (id) => {
         if (typeof id !== 'string' || id.length === 0) return '';
         return sessions?.byId?.[id]?.displayTitle || id;
-      };
-
-      const targetLabel = (target) => {
-        if (target?.kind === 'session') return `${tr('auto.target.session')} · ${sessionTitle(target.sessionId)}`;
-        return tr(target?.kind === 'new' ? 'auto.target.new' : 'auto.target.newOnce');
       };
 
       const filtered = rows.filter((task) => {

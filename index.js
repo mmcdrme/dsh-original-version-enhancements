@@ -31,10 +31,9 @@ import {
   readAutomationState,
   writeAutomationState,
 } from './host/automation.mjs'
-import { createLangHandler } from './host/lang.mjs'
-import { createStyleHandler } from './host/css.mjs'
 import { createEmbedHandler } from './host/embed.mjs'
 import { createNativeWindows } from './host/native-window.mjs'
+import { createLangHandler, createStyleHandler, readJsonBody, sendJson } from './host/serve.mjs'
 import path from 'node:path'
 import { readdir } from 'node:fs/promises'
 
@@ -384,31 +383,24 @@ export function apply(ctx) {
   // back, `purge` drops it once the window has passed. Both take the same
   // confirmation header the delete takes, so no link can trigger them.
   const retainedHandler = action => async (req, res) => {
-    const send = (status, body) => {
-      res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
-      res.end(JSON.stringify(body))
-    }
+    const send = (status, body) => sendJson(res, status, body)
     if (req.method !== 'POST') return send(405, { ok: false, error: { code: 'method-not-allowed', message: '只允许使用 POST。' } })
     if (!isTrustedRequest(req) || req.headers['x-dsh-session-delete-confirmation'] !== 'delete-session') {
       return send(403, { ok: false, error: { code: 'forbidden', message: '请求未通过同源与确认校验。' } })
     }
     let body
     try {
-      // Same bound every other JSON route enforces: the confirmation header
-      // proves intent, not a right to grow the Host's heap.
-      const chunks = []
-      let size = 0
-      for await (const chunk of req) {
-        const buffer = Buffer.from(chunk)
-        size += buffer.length
-        if (size > 8 * 1024) {
-          return send(413, { ok: false, error: { code: 'request-too-large', message: '请求过大。' } })
-        }
-        chunks.push(buffer)
-      }
-      body = JSON.parse(Buffer.concat(chunks).toString('utf8'))
-    } catch {
-      return send(400, { ok: false, error: { code: 'invalid-json', message: '请求不是有效 JSON。' } })
+      // Same bounded reader every other JSON route uses: the confirmation
+      // header proves intent, not a right to grow the Host's heap.
+      body = await readJsonBody(req)
+    } catch (error) {
+      const tooLarge = error instanceof Error && error.message === 'request-too-large'
+      return send(
+        tooLarge ? 413 : 400,
+        tooLarge
+          ? { ok: false, error: { code: 'request-too-large', message: '请求过大。' } }
+          : { ok: false, error: { code: 'invalid-json', message: '请求不是有效 JSON。' } },
+      )
     }
     const token = typeof body?.token === 'string' ? body.token : ''
     if (token.length === 0 || token.length > 200) {

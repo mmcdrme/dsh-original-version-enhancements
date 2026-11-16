@@ -12,9 +12,8 @@ import { existsSync } from 'node:fs'
 import { mkdir, readdir, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { readJsonBody, sendJson } from './serve.mjs'
 
-/** Request bodies are tiny; anything larger is a mistake. */
-const MAX_REQUEST_BYTES = 64 * 1024
 /** The companion window host shipped with this plugin. */
 const EXECUTABLE = fileURLToPath(new URL('../native/OveWindow.exe', import.meta.url))
 /** WebView2 profile fallback: some sandboxes deny %LOCALAPPDATA% to children. */
@@ -25,28 +24,6 @@ const WINDOW_PAGE = '/plugins/original-version-enhancements/window'
 const MAX_WINDOWS = 8
 /** Every window polls this file, so appearance edits reach open windows. */
 const APPEARANCE_FILE = join(DATA_DIRECTORY, 'appearance.json')
-const sendJson = (res, status, body) => {
-  res.writeHead(status, {
-    'content-type': 'application/json; charset=utf-8',
-    'cache-control': 'no-store',
-    'x-content-type-options': 'nosniff',
-  })
-  res.end(JSON.stringify(body))
-}
-
-const readJsonBody = async (req) => {
-  const chunks = []
-  let size = 0
-  for await (const chunk of req) {
-    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
-    size += buffer.length
-    if (size > MAX_REQUEST_BYTES) throw new Error('request-too-large')
-    chunks.push(buffer)
-  }
-  if (chunks.length === 0) return {}
-  return JSON.parse(Buffer.concat(chunks).toString('utf8'))
-}
-
 const clampSize = (value, fallback, min) => {
   const number = Number(value)
   if (!Number.isFinite(number)) return fallback
@@ -217,7 +194,7 @@ export function createNativeWindows({ origin, authenticatedUrl, isTrustedRequest
       if (!isTrustedRequest(req)) { sendJson(res, 403, { ok: false, error: 'forbidden' }); return }
       let body
       try {
-        body = await readJsonBody(req)
+        body = await readJsonBody(req, 64 * 1024, { empty: {} })
       } catch {
         sendJson(res, 400, { ok: false, error: 'invalid-body' })
         return
@@ -232,7 +209,7 @@ export function createNativeWindows({ origin, authenticatedUrl, isTrustedRequest
       if (!isTrustedRequest(req)) { sendJson(res, 403, { ok: false, error: 'forbidden' }); return }
       let body
       try {
-        body = await readJsonBody(req)
+        body = await readJsonBody(req, 64 * 1024, { empty: {} })
       } catch {
         sendJson(res, 400, { ok: false, error: 'invalid-body' })
         return
@@ -247,7 +224,7 @@ export function createNativeWindows({ origin, authenticatedUrl, isTrustedRequest
       if (!isTrustedRequest(req)) { sendJson(res, 403, { ok: false, error: 'forbidden' }); return }
       let body
       try {
-        body = await readJsonBody(req)
+        body = await readJsonBody(req, 64 * 1024, { empty: {} })
       } catch {
         sendJson(res, 400, { ok: false, error: 'invalid-body' })
         return
@@ -260,7 +237,7 @@ export function createNativeWindows({ origin, authenticatedUrl, isTrustedRequest
       if (!isTrustedRequest(req)) { sendJson(res, 403, { ok: false, error: 'forbidden' }); return }
       let body
       try {
-        body = await readJsonBody(req)
+        body = await readJsonBody(req, 64 * 1024, { empty: {} })
       } catch {
         sendJson(res, 400, { ok: false, error: 'invalid-body' })
         return

@@ -625,8 +625,8 @@ host/archive-manager.mjs  归档内容搜索（改编自 dsh-chat-manager）
 host/delete-session.mjs   已归档会话的安全删除、删除后的归属/缓存清理、移动前的目录隔离（改编自 dsh-chat-manager）
 host/transfer.mjs         会话移动（保持会话 id）与复制（新建 id）
 host/automation.mjs       自动化任务增强（批量删除、多会话绑定、投递后清理、立即投递、间隔回退与编辑保护）
-host/lang.mjs             语言文件路由：每次请求现读磁盘、no-store 应答
-host/css.mjs              样式文件路由：每次请求现读磁盘、no-store 应答
+host/serve.mjs            HTTP 公共部分：语言/样式文件路由（每次请求现读磁盘、no-store 应答）与各 POST 路由
+                          共用的 JSON 读取/应答（统一 8 KB 上限，个别路由按需放宽）
 test/delete-session.test.mjs 永久删除与删除清理的回归测试
 test/transfer.test.mjs    移动保持会话 id / 失败回滚 / 复制新建 id 的回归测试
 test/automation.test.mjs  立即投递（宿主优先 / 间隔回退 / 正在投递）、编辑保护、绑定去重与运行记录计数的回归测试
@@ -648,7 +648,7 @@ LICENSE                   MIT 许可（含改编自 dsh-chat-manager 的版权�
 1. 编辑 `locale/lang.json`；
 2. 刷新页面。
 
-Host 半侧由 `host/lang.mjs` 通过 `/plugins/original-version-enhancements/lang` 每次请求现读这个文件并带
+Host 半侧由 `host/serve.mjs`（`createLangHandler`）通过 `/plugins/original-version-enhancements/lang` 每次请求现读这个文件并带
 `cache-control: no-store`，所以不需要重新构建、也不需要重启 DeepSeek Harness。两种语言的键集合必须一致；
 删掉一个键会让界面直接显示键名，而 JSON 语法错误会让 Host 返回 500、客户端在控制台说明原因。
 
@@ -660,7 +660,7 @@ Host 半侧由 `host/lang.mjs` 通过 `/plugins/original-version-enhancements/la
 1. 编辑 `css/style.css`；
 2. 刷新页面。
 
-Host 半侧由 `host/css.mjs` 通过 `/plugins/original-version-enhancements/style` 现读文件、带
+Host 半侧由 `host/serve.mjs`（`createStyleHandler`）通过 `/plugins/original-version-enhancements/style` 现读文件、带
 `cache-control: no-store` 与 `content-disposition: inline` 应答（路由故意不带 `.css` 后缀：IDM 这类
 下载器会按后缀嗅探页面子资源，带后缀时每次刷新都会弹出下载框）；客户端在注册任何插槽之前先取回样式，
 所以首屏不会出现无样式闪烁。每个面板各自渲染一个 `<style>`（`data-plugin-css` 标记），这样在只有某一块
@@ -673,6 +673,21 @@ Host 半侧由 `host/css.mjs` 通过 `/plugins/original-version-enhancements/sty
 看到被拦截的真实地址，据此定位是哪个插件。
 
 测试用 Node 内置 runner：`node --test test/*.test.mjs`（或 `npm test`）。
+
+## 更新记录（v1.37.53）
+
+- **合并重复的 Host HTTP 代码**：`host/css.mjs` 与 `host/lang.mjs` 合并成 `host/serve.mjs`，两个文件
+  路由共用一个「只允许 GET/HEAD、大小上限、失败给诊断 500」的实装；`sendJson` / `readJsonBody`
+  原本在 6 个 Host 模块里各抄一份（上限分别是 8/32/64 KB），现在统一由 `host/serve.mjs` 提供，
+  各路由只传自己的上限。删掉 2 个文件、去掉约 500 行重复/死代码。
+- **删除不再被引用的代码**：客户端 5 个没人调用的函数/变量（`useHistory`、`getSessionHistories`、
+  `clearSentHistory`、`localDate`、`targetLabel`）、11 条没有对应元素的 CSS 规则、以及 19 条中英文
+  都没有代码使用的界面文案（中英各 382 → 363 条键）；Host 侧 5 个只在本模块内部使用的 `export`
+  收回成内部实现。
+- 测试同步合并：`test/css.test.mjs` + `test/lang.test.mjs` 合并为 `test/serve.test.mjs`，并补上
+  JSON 读取器（长度上限、空 body、按路由放宽上限）的用例。
+- 删除没有任何引用、也不随插件发布的图标生成脚本 `native/make-icon.ps1`（成品 `native/app.ico` 仍在，
+  需要时会从 git 历史里取回脚本）；本插件跟踪的文件数由 50 个减到 46 个。
 
 ## 更新记录（v1.37.52）
 

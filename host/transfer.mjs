@@ -11,36 +11,15 @@ import { randomUUID } from 'node:crypto'
 import { lstat, mkdtemp, readdir, realpath, rename, rm, stat } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { deleteSessionWithoutReservation, quarantineSessionForMove } from './delete-session.mjs'
+import { readJsonBody, sendJson } from './serve.mjs'
 
-const MAX_REQUEST_BYTES = 8 * 1024
 /** Request header that must accompany every transfer; a link or form cannot set it. */
-export const TRANSFER_CONFIRMATION = 'transfer-session'
+const TRANSFER_CONFIRMATION = 'transfer-session'
 
 const failure = (code, message, extra) => ({
   ok: false,
   error: { code, message, ...(extra === undefined ? {} : extra) },
 })
-
-const sendJson = (res, status, body) => {
-  res.writeHead(status, {
-    'content-type': 'application/json; charset=utf-8',
-    'cache-control': 'no-store',
-    'x-content-type-options': 'nosniff',
-  })
-  res.end(JSON.stringify(body))
-}
-
-const readJsonBody = async (req) => {
-  const chunks = []
-  let size = 0
-  for await (const chunk of req) {
-    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
-    size += buffer.length
-    if (size > MAX_REQUEST_BYTES) throw new Error('request-too-large')
-    chunks.push(buffer)
-  }
-  return JSON.parse(Buffer.concat(chunks).toString('utf8'))
-}
 
 /**
  * Whether a log ends inside an open turn.
