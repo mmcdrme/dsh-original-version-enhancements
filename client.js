@@ -1970,12 +1970,6 @@ window.__ModuleLoader__.load({
     const FOLD_TOP_GAP = 12;
 
     /**
-     * One pending correction per box, run once its fold has finished opening.
-     * A quick close/reopen replaces the old one, so only the latest matters.
-     */
-    const revealSettleTimers = new WeakMap();
-
-    /**
      * The scrollable ancestor of a settings element (the dialog's option list).
      * @param node - element inside the list.
      * @returns that list, or null when the page is not scrollable.
@@ -1996,9 +1990,8 @@ window.__ModuleLoader__.load({
      * jumping after the animation has already finished.
      * @param scroller - the option list that overflows.
      * @param to - target scroll offset in pixels.
-     * @param duration - how long to take; shorter for the post-open correction.
      */
-    const animateScrollTo = (scroller, to, duration = FOLD_DURATION_MS) => {
+    const animateScrollTo = (scroller, to) => {
       const from = scroller.scrollTop;
       const delta = to - from;
       if (Math.abs(delta) < 1) return;
@@ -2013,13 +2006,53 @@ window.__ModuleLoader__.load({
       const clock = () => (typeof performance?.now === 'function' ? performance.now() : Date.now());
       const started = clock();
       const step = () => {
-        const progress = Math.min(1, (clock() - started) / duration);
+        const progress = Math.min(1, (clock() - started) / FOLD_DURATION_MS);
         // Same `ease` feel as the CSS transition: fast start, soft landing.
         const eased = progress * progress * (3 - 2 * progress);
         scroller.scrollTop = from + delta * eased;
         if (progress < 1) window.requestAnimationFrame(step);
       };
       window.requestAnimationFrame(step);
+    };
+
+    /**
+     * How much taller a fold grows when it opens, measured instead of guessed.
+     * The folded body is clipped by its wrapper, and a clipped scroll box
+     * leaves the last row's margin and the body's own bottom padding out of
+     * `scrollHeight`, so the scroll target used to come out a few pixels short
+     * — a tall box then landed with its bottom border on the list's clip edge.
+     * Opening the wrapper for one synchronous layout pass gives the real
+     * height; the browser never paints between the two style writes, so
+     * nothing flickers, and the reveal itself stays a single scroll (no
+     * second, short correction after the fold, which read as a stutter).
+     * @param node - the box (or folded row) being opened.
+     * @param body - its body element; the clipping wrapper is its parent.
+     * @param foldedHeight - the box height measured while still folded.
+     * @returns the height the box is about to gain.
+     */
+    const measureFoldGrowth = (node, body, foldedHeight) => {
+      const estimated = Math.max(0, body.scrollHeight - body.clientHeight);
+      const wrapper = body.parentElement;
+      if (wrapper === null || wrapper === undefined) return estimated;
+      const style = wrapper.style;
+      const previousTransition = style.transition;
+      const previousRows = style.gridTemplateRows;
+      try {
+        style.transition = 'none';
+        style.gridTemplateRows = '1fr';
+        return Math.max(0, node.getBoundingClientRect().height - foldedHeight);
+      } catch {
+        return estimated;
+      } finally {
+        // Put the rows back to their folded value while transitions are still
+        // off, and make that folded layout the current computed state before
+        // handing the transition back: restoring the transition in the same
+        // batch otherwise animated the box from the measured open height back
+        // to folded, which is exactly the stutter the reveal used to show.
+        style.gridTemplateRows = previousRows;
+        node.getBoundingClientRect();
+        style.transition = previousTransition;
+      }
     };
 
     /**
@@ -2032,18 +2065,12 @@ window.__ModuleLoader__.load({
      * sitting just above the gap instead of touching the dialog edge. A box
      * taller than the list is lined up by its top edge at the content top.
      * The body is clipped rather than collapsed in layout while folded, so its
-     * full height is readable up front and the scroll can start immediately.
-     * That estimate is a few pixels short (a clipped scroll box leaves out the
-     * last row's margin and the body's own bottom padding), so the box is
-     * measured once more after the fold has finished opening and nudged into
-     * place: without that, a tall box's bottom border used to land exactly on
-     * the list's clip edge and disappear.
+     * full height can be measured up front (see measureFoldGrowth) and the
+     * scroll runs in step with the fold, in one motion.
      * @param node - the box (or folded row) element that opened.
-     * @param body - the body element whose content is being revealed; null for
-     *   the post-open correction, which measures the real height instead.
-     * @param final - true for that second pass, which must not reschedule.
+     * @param body - the body element whose content is being revealed.
      */
-    const revealFoldedBox = (node, body, final = false) => {
+    const revealFoldedBox = (node, body) => {
       if (node === null || node === undefined) return;
       try {
         if (!node.isConnected) return;
@@ -2057,18 +2084,10 @@ window.__ModuleLoader__.load({
         const contentBottom = area.bottom - padBottom;
         if (area.height === 0 || contentBottom - contentTop <= 0) return;
         const box = node.getBoundingClientRect();
-        const grow = body === null || body === undefined || final === true
+        const grow = body === null || body === undefined
           ? 0
-          : Math.max(0, body.scrollHeight - body.clientHeight);
+          : measureFoldGrowth(node, body, box.height);
         const bottom = box.bottom + grow;
-        if (!final) {
-          const pending = revealSettleTimers.get(node);
-          if (pending !== undefined) window.clearTimeout(pending);
-          revealSettleTimers.set(node, window.setTimeout(() => {
-            revealSettleTimers.delete(node);
-            revealFoldedBox(node, null, true);
-          }, FOLD_DURATION_MS + 80));
-        }
         // Already readable in full: leave the list where it is.
         if (box.top >= contentTop && bottom <= area.bottom) return;
         const fits = bottom - box.top <= contentBottom - contentTop;
@@ -2097,7 +2116,7 @@ window.__ModuleLoader__.load({
         const max = Math.max(0, scroller.scrollHeight + grow - scroller.clientHeight);
         const next = Math.min(max, Math.max(0, Math.round(target)));
         if (Math.abs(next - scroller.scrollTop) < 2) return;
-        animateScrollTo(scroller, next, final ? 140 : FOLD_DURATION_MS);
+        animateScrollTo(scroller, next);
       } catch { /* a settings page that went away needs no scrolling */ }
     };
 

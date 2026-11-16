@@ -38,14 +38,6 @@ const harness = (area = AREA, options = {}) => {
       frames += 1
       callback(clock)
     },
-    setTimeout: (callback, delay) => {
-      timers.push({ callback, delay, live: true })
-      return timers.length
-    },
-    clearTimeout: (id) => {
-      const entry = timers[id - 1]
-      if (entry !== undefined) entry.live = false
-    },
   }
   const document = { body: bodySentinel }
   const getComputedStyle = () => ({
@@ -62,27 +54,26 @@ const harness = (area = AREA, options = {}) => {
 return { revealFoldedBox, settleFoldedBox, FOLD_DURATION_MS, FOLD_TOP_GAP }`,
   )
   const api = factory(window, document, getComputedStyle, performance, globalThisStub)
+  /** The clipping wrapper: reveal measures the opened height through it. */
+  const wrapper = { style: { transition: '', gridTemplateRows: '' } }
   const node = (box, nextTop) => ({
     isConnected: true,
     parentElement: scroller,
     nextElementSibling: nextTop === undefined
       ? null
       : { getBoundingClientRect: () => ({ top: nextTop }) },
-    getBoundingClientRect: () => box,
+    // The real box grows while the wrapper is forced open for measurement.
+    getBoundingClientRect: () => (wrapper.style.gridTemplateRows === '1fr'
+      ? (options.expanded ?? box)
+      : box),
   })
   return {
     api,
     scroller,
     node,
+    wrapper,
     frames: () => frames,
     timers,
-    runTimers: () => {
-      for (const entry of timers) {
-        if (!entry.live) continue
-        entry.live = false
-        entry.callback()
-      }
-    },
   }
 }
 
@@ -92,12 +83,13 @@ const revealWith = (box, area, options = {}) => {
   const body = options.body === undefined
     ? null
     : {
+      parentElement: run.wrapper,
       scrollHeight: options.body.scrollHeight,
       clientHeight: options.body.clientHeight,
       getBoundingClientRect: () => options.body.rect ?? { height: 0 },
     }
   run.api.revealFoldedBox(run.node(box, options.nextTop), body)
-  return { scrollTop: run.scroller.scrollTop, frames: run.frames(), api: run.api }
+  return { scrollTop: run.scroller.scrollTop, frames: run.frames(), api: run.api, wrapper: run.wrapper }
 }
 
 /** Close a box whose body is `bodyRect` high at `bodyRect.top` on screen. */
@@ -141,10 +133,16 @@ test('the last box has no section below, so it stops above the list padding', ()
 })
 
 test('the rows a folded body is about to reveal count towards its height', () => {
+  // Opening the wrapper for one layout pass reports the real opened height:
+  // the folded box is 60 px tall and grows to 360 px (300 px of rows).
   const result = revealWith(
     { top: 700, bottom: 760, height: 60 },
     AREA,
-    { nextTop: 770, body: { scrollHeight: 300, clientHeight: 0 } },
+    {
+      nextTop: 770,
+      expanded: { top: 700, bottom: 1060, height: 360 },
+      body: { scrollHeight: 300, clientHeight: 0 },
+    },
   )
   // 770 (next box, collapsed) + 300 (rows) - 900 - 1
   assert.equal(result.scrollTop, 169)
@@ -157,6 +155,7 @@ test('the clamp counts the rows that are still opening', () => {
     {
       nextTop: 770,
       scrollHeight: 600,
+      expanded: { top: 700, bottom: 1060, height: 360 },
       body: { scrollHeight: 300, clientHeight: 0 },
     },
   )
@@ -172,28 +171,42 @@ test('the open scroll runs for the fold duration and lands on the target', () =>
   assert.equal(result.scrollTop, 209)
 })
 
-test('opening a fold schedules one correction for after it has grown', () => {
-  const run = harness(AREA, { nextTop: 1110 })
-  run.api.revealFoldedBox(run.node({ top: 700, bottom: 1100, height: 400 }), null)
-  assert.equal(run.timers.length, 1)
-  assert.equal(run.timers[0].delay, run.api.FOLD_DURATION_MS + 80)
+test('the measured height keeps an opened box off the clip edge in one scroll', () => {
+  // The recall box as it really is: 88 px folded, 474 px opened (386 px of
+  // rows). The old `scrollHeight` estimate was 10 px short, which left its
+  // bottom border sitting exactly on the list's clip edge — and it used to be
+  // corrected by a second, delayed scroll, which read as a stutter. The real
+  // measurement gets there in the fold's own single scroll.
+  const result = revealWith(
+    { top: 526, bottom: 614, height: 88 },
+    AREA,
+    {
+      nextTop: 624,
+      expanded: { top: 526, bottom: 1000, height: 474 },
+      body: { scrollHeight: 380, clientHeight: 4 },
+    },
+  )
+  // next top after growing: 624 + 386 = 1010; view stops one pixel past 900.
+  assert.equal(result.scrollTop, 109)
+  // One animated scroll only, and the wrapper is handed back untouched.
+  assert.equal(result.frames, 2)
+  assert.equal(result.wrapper.style.transition, '')
+  assert.equal(result.wrapper.style.gridTemplateRows, '')
 })
 
-test('the post-open correction pulls the bottom border off the clip edge', () => {
-  // Real geometry after opening the recall box: the pre-open estimate left it
-  // 10 px too low, so its bottom border sat exactly on the list's clip edge and
-  // vanished. The second pass measures the true height and stops the view on
-  // the next section's border, one pixel past the edge.
-  const run = harness(AREA, { scrollTop: 99, nextTop: 911 })
-  run.api.revealFoldedBox(run.node({ top: 427, bottom: 901, height: 474 }, 911), null, true)
-  assert.equal(run.scroller.scrollTop, 109)
-})
-
-test('the correction leaves a box that ended up fully readable alone', () => {
-  const run = harness(AREA, { scrollTop: 500, nextTop: 410 })
-  run.api.revealFoldedBox(run.node({ top: 200, bottom: 400, height: 200 }, 410), null, true)
-  assert.equal(run.scroller.scrollTop, 500)
-  assert.equal(run.frames(), 0)
+test('measuring a fold that stays fully readable does not scroll', () => {
+  const result = revealWith(
+    { top: 200, bottom: 400, height: 200 },
+    AREA,
+    {
+      scrollTop: 500,
+      nextTop: 410,
+      expanded: { top: 200, bottom: 400, height: 200 },
+      body: { scrollHeight: 196, clientHeight: 0 },
+    },
+  )
+  assert.equal(result.scrollTop, 500)
+  assert.equal(result.frames, 0)
 })
 
 test('closing a fold that sits in the view moves nothing', () => {
@@ -232,6 +245,22 @@ test('reduced motion jumps to the target without animation', () => {
   })
   assert.equal(result.frames, 0)
   assert.equal(result.scrollTop, 209)
+})
+
+test('the opened height is measured without animating the wrapper back', () => {
+  const start = clientSource.indexOf("    /** The fold's own animation length")
+  const end = clientSource.indexOf('    /**\n     * One "big setting" box:')
+  const source = clientSource.slice(start, end)
+  assert.match(source, /const measureFoldGrowth = \(node, body, foldedHeight\) => \{/u)
+  assert.match(source, /style\.transition = 'none';\n\s+style\.gridTemplateRows = '1fr';/u)
+  // The rows are folded again while transitions are still off, the folded
+  // layout is made current, and only then is the transition handed back: the
+  // other order animated the box from its measured open height back to folded
+  // before it opened, which is exactly what read as a stutter.
+  assert.match(
+    source,
+    /style\.gridTemplateRows = previousRows;\n\s+node\.getBoundingClientRect\(\);\n\s+style\.transition = previousTransition;/u,
+  )
 })
 
 test('the fold clips on its wrapper, not on the body that holds the switch', () => {
