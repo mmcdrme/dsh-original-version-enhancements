@@ -78,6 +78,51 @@ window.__ModuleLoader__.load({
     const useFlags = () => React.useSyncExternalStore(subscribeFlags, getFlags, getFlags);
 
     /* ------------------------------------------------------------------ */
+    /* Popup entrance style (the switch itself lives in the flags)         */
+    /* ------------------------------------------------------------------ */
+
+    /**
+     * Which entrance the popup surfaces play. The switch above decides whether
+     * anything plays at all; this only picks the shape of the motion, and each
+     * style is a root class the stylesheet keys off, so switching is instant
+     * and needs no re-render of the surfaces themselves.
+     */
+    const MOTION_KEY = 'original-version-enhancements.motion.v1';
+    const MOTION_STYLES = ['jelly', 'soft', 'slide', 'snap'];
+    const DEFAULT_MOTION = { style: 'jelly' };
+    const motionListeners = new Set();
+
+    const readMotion = () => {
+      try {
+        const raw = JSON.parse(globalThis.localStorage?.getItem(MOTION_KEY) ?? '{}');
+        const saved = raw !== null && typeof raw === 'object' ? raw : {};
+        return { style: MOTION_STYLES.includes(saved.style) ? saved.style : DEFAULT_MOTION.style };
+      } catch {
+        return { ...DEFAULT_MOTION };
+      }
+    };
+
+    let motionState = readMotion();
+
+    const subscribeMotion = (listener) => {
+      motionListeners.add(listener);
+      return () => { motionListeners.delete(listener); };
+    };
+
+    const getMotion = () => motionState;
+
+    const setMotion = (patch) => {
+      const style = MOTION_STYLES.includes(patch?.style) ? patch.style : motionState.style;
+      motionState = { style };
+      try {
+        globalThis.localStorage?.setItem(MOTION_KEY, JSON.stringify(motionState));
+      } catch { /* a blocked storage keeps the style for this page only */ }
+      for (const listener of motionListeners) listener();
+    };
+
+    const useMotion = () => React.useSyncExternalStore(subscribeMotion, getMotion, getMotion);
+
+    /* ------------------------------------------------------------------ */
     /* Subagent tree settings (its own settings page)                      */
     /* ------------------------------------------------------------------ */
 
@@ -2221,6 +2266,7 @@ window.__ModuleLoader__.load({
       const flags = useFlags();
       const recall = useRecall();
       const appearance = useWindow();
+      const motion = useMotion();
       const count = useSentHistoryCount();
       const settingsOpen = useSettingsOpen();
       /** The pending scope switch, which must confirm that history is dropped. */
@@ -2487,7 +2533,21 @@ window.__ModuleLoader__.load({
 
               // Newest feature last: the list below the boxes follows the order
               // features were added in, never their importance.
-              feature('switch.motion', flags.motion, () => toggle('motion'), null),
+              feature('switch.motion', flags.motion, () => toggle('motion'),
+                  [
+                  // The switch decides whether anything plays; this picks the
+                  // shape of the motion. Same segmented control as the window
+                  // options, so switching is one click.
+                  settingRow(tr('motion.style'), tr('motion.style.desc'),
+                    h('div', { className: 'ove-size-group', role: 'group', 'aria-label': tr('motion.style') },
+                      MOTION_STYLES.map(id => h('button', {
+                        key: id,
+                        type: 'button',
+                        className: `ove-size${motion.style === id ? ' is-on' : ''}`,
+                        'aria-pressed': motion.style === id,
+                        onClick: () => setMotion({ style: id }),
+                      }, tr(`motion.${id}`))))),
+                  ]),
             )),
 
           h('p', { className: 'ove-hint' }, tr('pageHint')),
@@ -9295,21 +9355,29 @@ window.__ModuleLoader__.load({
         ctx.effect(() => ctx.locale.register(NS, catalogue), 'original-version-enhancements: dictionaries');
 
         // Entrance motion is one page-level switch: dialogs, receipts and
-        // in-page windows all key off this class, so the flag does not have to
-        // be threaded through every component that can pop up. The stylesheet
-        // animates them by default; the class only turns the motion off.
+        // in-page windows all key off these classes, so neither the flag nor
+        // the picked style has to be threaded through every component that
+        // can pop up. The stylesheet animates them by default; the classes
+        // only choose the shape and turn the motion off.
         ctx.effect(() => {
           const root = globalThis.document?.documentElement;
           if (root === null || root === undefined) return undefined;
           const sync = () => {
             const motion = getFlags().motion !== false;
+            const style = getMotion().style;
             root.classList.toggle('ove-motion-off', !motion);
+            for (const id of MOTION_STYLES) {
+              root.classList.toggle(`ove-motion-${id}`, motion && id === style);
+            }
           };
-          const unsubscribe = subscribeFlags(sync);
+          const unsubscribeFlags = subscribeFlags(sync);
+          const unsubscribeMotion = subscribeMotion(sync);
           sync();
           return () => {
-            unsubscribe();
+            unsubscribeFlags();
+            unsubscribeMotion();
             root.classList.remove('ove-motion-off');
+            for (const id of MOTION_STYLES) root.classList.remove(`ove-motion-${id}`);
           };
         }, 'original-version-enhancements: entrance motion switch');
 

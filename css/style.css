@@ -1096,6 +1096,64 @@
 .ove-notice-danger { color: var(--dsw-alias-state-error-primary); background: color-mix(in srgb, #ef4444 12%, transparent); }
 .ove-notice-info { color: var(--dsw-alias-label-secondary); background: var(--dsw-alias-bg-layer-1); }
 .ove-overlay-portal { z-index: 2147483000; }
+/* Alternate entrance styles, picked under the 「弹窗动效」 switch. Only the
+   shape and the timing change: the backdrop blur is still painted once and
+   every variant still animates transform/opacity (scale for the in-page
+   window) only, so all of them stay on the compositor. */
+@keyframes ove-dialog-soft {
+  0% { opacity: 0; transform: translateY(8px) scale(.988); }
+  100% { opacity: 1; transform: none; }
+}
+@keyframes ove-toast-soft {
+  0% { opacity: 0; transform: translate(-50%, -8px) scale(.99); }
+  100% { opacity: 1; transform: translate(-50%, 0); }
+}
+@keyframes ove-panel-soft {
+  0% { scale: .99; }
+  100% { scale: 1; }
+}
+html.ove-motion-soft .ove-overlay { animation-duration: .3s; }
+html.ove-motion-soft .ove-dialog { animation: ove-dialog-soft .28s cubic-bezier(.2, .8, .3, 1); }
+html.ove-motion-soft .ove-toast,
+html.ove-motion-soft .ove-detached-toast { animation: ove-toast-soft .28s cubic-bezier(.2, .8, .3, 1); }
+html.ove-motion-soft .ove-detached-panel { animation: ove-panel-soft .26s ease-out; }
+
+@keyframes ove-dialog-slide {
+  0% { opacity: 0; transform: translateY(28px); }
+  100% { opacity: 1; transform: none; }
+}
+@keyframes ove-toast-slide {
+  0% { opacity: 0; transform: translate(-50%, -18px); }
+  100% { opacity: 1; transform: translate(-50%, 0); }
+}
+@keyframes ove-panel-slide {
+  0% { translate: 0 18px; }
+  100% { translate: 0 0; }
+}
+html.ove-motion-slide .ove-overlay { animation-duration: .26s; }
+html.ove-motion-slide .ove-dialog { animation: ove-dialog-slide .3s cubic-bezier(.16, .84, .3, 1); }
+html.ove-motion-slide .ove-toast,
+html.ove-motion-slide .ove-detached-toast { animation: ove-toast-slide .3s cubic-bezier(.16, .84, .3, 1); }
+html.ove-motion-slide .ove-detached-panel { animation: ove-panel-slide .3s cubic-bezier(.16, .84, .3, 1); }
+
+@keyframes ove-dialog-snap {
+  0% { opacity: 0; transform: scale(.972); }
+  100% { opacity: 1; transform: none; }
+}
+@keyframes ove-toast-snap {
+  0% { opacity: 0; transform: translate(-50%, -4px) scale(.985); }
+  100% { opacity: 1; transform: translate(-50%, 0); }
+}
+@keyframes ove-panel-snap {
+  0% { scale: .988; }
+  100% { scale: 1; }
+}
+html.ove-motion-snap .ove-overlay { animation-duration: .11s; }
+html.ove-motion-snap .ove-dialog { animation: ove-dialog-snap .13s ease-out; }
+html.ove-motion-snap .ove-toast,
+html.ove-motion-snap .ove-detached-toast { animation: ove-toast-snap .13s ease-out; }
+html.ove-motion-snap .ove-detached-panel { animation: ove-panel-snap .12s ease-out; }
+
 /* The plugin page's motion switch and the OS reduced-motion preference both
    silence the entrances: the surfaces then simply appear. */
 html.ove-motion-off .ove-overlay,
