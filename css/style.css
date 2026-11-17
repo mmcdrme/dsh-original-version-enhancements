@@ -1073,9 +1073,35 @@
   padding: 4px 12px; border-radius: 999px; cursor: pointer; font-size: 12px; line-height: 18px;
   border: 1px solid color-mix(in srgb, var(--dsw-alias-label-primary) 18%, transparent);
   background: transparent; color: var(--dsw-alias-label-secondary);
+  /* Fill changes ease instead of snapping, so a picked chip never flashes. */
+  transition: background-color .12s ease, border-color .12s ease, color .12s ease;
 }
-.ove-size:hover { background: color-mix(in srgb, var(--dsw-alias-label-primary) 8%, transparent); }
+.ove-size:hover:not(:disabled) { background: color-mix(in srgb, var(--dsw-alias-label-primary) 8%, transparent); }
 .ove-size.is-on { background: #3b82f6; border-color: #3b82f6; color: #fff; }
+/* The motion chips lay out four to a row: eight entrance picks take two tidy
+   rows and the exit picks one, instead of a single line that would have to
+   squeeze the explanation beside it. */
+.ove-size-group.ove-motion-styles {
+  display: grid;
+  grid-template-columns: repeat(4, auto);
+  justify-content: end;
+  flex: 0 1 auto;
+}
+/* The chips under a switched-off setting (the exit picks while closing is
+   off) stay readable but take no input. */
+.ove-size:disabled { opacity: .45; cursor: default; }
+/* A picked chip used to fall back to the un-picked hover tint — a wash of the
+   label colour over nothing — so its dark fill vanished under the pointer and
+   flicked back on the way out. It now keeps the fill and only lifts a hair,
+   along the same easing as every other chip. */
+.ove-setting-window .ove-size.is-on:hover,
+.ove-motion-styles .ove-size.is-on:hover,
+.ove-setting-window .ove-size.is-on:focus-visible,
+.ove-motion-styles .ove-size.is-on:focus-visible {
+  background: color-mix(in srgb, var(--dsw-alias-label-primary) 86%, var(--dsw-alias-bg-base));
+  border-color: color-mix(in srgb, var(--dsw-alias-label-primary) 86%, var(--dsw-alias-bg-base));
+  color: var(--dsw-alias-bg-base);
+}
 .ove-notice {
   margin: 0 0 8px; padding: 6px 10px; border-radius: 8px;
   font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-secondary);
@@ -1147,12 +1173,167 @@ html.ove-motion-snap .ove-toast,
 html.ove-motion-snap .ove-detached-toast { animation: ove-toast-snap .13s ease-out; }
 html.ove-motion-snap .ove-detached-panel { animation: ove-panel-snap .12s ease-out; }
 
+/* The second group of entrance styles. Same contract as the first: transform
+   and opacity only (the in-page window animates its own `scale`/`translate`
+   properties so a drag keeps `transform`), nothing touches a filter, so the
+   compositor owns every frame. */
+@keyframes ove-dialog-drift {
+  0% { opacity: 0; transform: translateX(44px); }
+  100% { opacity: 1; transform: none; }
+}
+@keyframes ove-toast-drift {
+  0% { opacity: 0; transform: translate(calc(-50% + 34px), 0); }
+  100% { opacity: 1; transform: translate(-50%, 0); }
+}
+@keyframes ove-panel-drift {
+  0% { translate: 34px 0; }
+  100% { translate: 0 0; }
+}
+html.ove-motion-drift .ove-overlay { animation-duration: .3s; }
+html.ove-motion-drift .ove-dialog { animation: ove-dialog-drift .34s cubic-bezier(.16, .84, .3, 1); }
+html.ove-motion-drift .ove-toast,
+html.ove-motion-drift .ove-detached-toast { animation: ove-toast-drift .32s cubic-bezier(.16, .84, .3, 1); }
+html.ove-motion-drift .ove-detached-panel { animation: ove-panel-drift .32s cubic-bezier(.16, .84, .3, 1); }
+
+@keyframes ove-dialog-drop {
+  0% { opacity: 0; transform: translateY(-38px); }
+  100% { opacity: 1; transform: none; }
+}
+@keyframes ove-toast-drop {
+  0% { opacity: 0; transform: translate(-50%, -30px); }
+  100% { opacity: 1; transform: translate(-50%, 0); }
+}
+@keyframes ove-panel-drop {
+  0% { translate: 0 -28px; }
+  100% { translate: 0 0; }
+}
+html.ove-motion-drop .ove-overlay { animation-duration: .28s; }
+html.ove-motion-drop .ove-dialog { animation: ove-dialog-drop .32s cubic-bezier(.16, .84, .3, 1); }
+html.ove-motion-drop .ove-toast,
+html.ove-motion-drop .ove-detached-toast { animation: ove-toast-drop .3s cubic-bezier(.16, .84, .3, 1); }
+html.ove-motion-drop .ove-detached-panel { animation: ove-panel-drop .3s cubic-bezier(.16, .84, .3, 1); }
+
+@keyframes ove-dialog-zoom {
+  0% { opacity: 0; transform: scale(1.09); }
+  100% { opacity: 1; transform: none; }
+}
+@keyframes ove-toast-zoom {
+  0% { opacity: 0; transform: translate(-50%, 0) scale(1.07); }
+  100% { opacity: 1; transform: translate(-50%, 0) scale(1); }
+}
+@keyframes ove-panel-zoom {
+  0% { opacity: 0; scale: 1.04; }
+  100% { opacity: 1; scale: 1; }
+}
+html.ove-motion-zoom .ove-overlay { animation-duration: .26s; }
+html.ove-motion-zoom .ove-dialog { animation: ove-dialog-zoom .3s cubic-bezier(.2, .8, .3, 1); }
+html.ove-motion-zoom .ove-toast,
+html.ove-motion-zoom .ove-detached-toast { animation: ove-toast-zoom .28s cubic-bezier(.2, .8, .3, 1); }
+html.ove-motion-zoom .ove-detached-panel { animation: ove-panel-zoom .28s cubic-bezier(.2, .8, .3, 1); }
+
+/* Flip: the card tips up from below its own top edge. The perspective lives on
+   the overlay (the receipts and the in-page window carry it inside their own
+   transform), so the 3D reads as a hinge instead of a squash. */
+@keyframes ove-dialog-flip {
+  0% { opacity: 0; transform: rotateX(-24deg) translateY(-6px); }
+  100% { opacity: 1; transform: none; }
+}
+@keyframes ove-toast-flip {
+  0% { opacity: 0; transform: translate(-50%, 0) perspective(900px) rotateX(-24deg); }
+  100% { opacity: 1; transform: translate(-50%, 0); }
+}
+@keyframes ove-panel-flip {
+  0% { opacity: 0; transform: perspective(900px) rotateX(-20deg); }
+  100% { opacity: 1; transform: none; }
+}
+html.ove-motion-flip .ove-overlay { perspective: 1000px; animation-duration: .3s; }
+html.ove-motion-flip .ove-dialog { animation: ove-dialog-flip .36s cubic-bezier(.2, .8, .3, 1); }
+html.ove-motion-flip .ove-toast,
+html.ove-motion-flip .ove-detached-toast { animation: ove-toast-flip .32s cubic-bezier(.2, .8, .3, 1); }
+html.ove-motion-flip .ove-detached-panel { animation: ove-panel-flip .32s cubic-bezier(.2, .8, .3, 1); }
+
 /* The backdrop blur is its own switch, independent of the entrances: with it
    off the overlay only dims the page behind the dialog. */
 html.ove-blur-off .ove-overlay {
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
+/* Exit motion. A closed surface is unmounted, so the client puts a frozen copy
+   back for one animation — the copy carries `ove-exit` and the picked exit
+   name, and only that copy moves: the live surfaces keep their entrance. The
+   dimmed backdrop always fades out, so the page behind is free at once; the
+   card and the receipts stop at the picked opacity. */
+@keyframes ove-overlay-out {
+  from { opacity: 1; }
+  to { opacity: var(--ove-exit-overlay-opacity, 0); }
+}
+@keyframes ove-dialog-out {
+  from { opacity: 1; transform: none; }
+  to {
+    opacity: var(--ove-exit-opacity, 0);
+    transform: translateY(var(--ove-exit-shift, 0px)) scale(var(--ove-exit-scale, 1));
+  }
+}
+@keyframes ove-toast-out {
+  from { opacity: 1; transform: translate(-50%, 0); }
+  to {
+    opacity: var(--ove-exit-opacity, 0);
+    transform: translate(-50%, var(--ove-exit-shift, 0px)) scale(var(--ove-exit-scale, 1));
+  }
+}
+@keyframes ove-panel-out {
+  from { opacity: 1; scale: 1; }
+  to { opacity: var(--ove-exit-opacity, 0); scale: var(--ove-exit-scale, 1); }
+}
+.ove-exit.ove-overlay {
+  animation: ove-overlay-out var(--ove-exit-duration, .24s) ease-in both !important;
+}
+/* Every nested entrance on the copy is silenced, or the frozen dialog would
+   play its arrival again on top of the leave; its own exit is put back below. */
+.ove-exit.ove-overlay > * { animation: none !important; }
+.ove-exit.ove-overlay > .ove-dialog {
+  animation: ove-dialog-out var(--ove-exit-duration, .24s) ease-in both !important;
+}
+.ove-exit.ove-toast,
+.ove-exit.ove-detached-toast {
+  animation: ove-toast-out var(--ove-exit-duration, .24s) ease-in both !important;
+}
+.ove-exit.ove-detached-panel {
+  animation: ove-panel-out var(--ove-exit-duration, .24s) ease-in both !important;
+}
+/* The four exit shapes: fade to nothing, the gentle one that stops at 30%,
+   a small sink and a small shrink. In the ghost shape the dim behind the card
+   stays put: a parent at opacity 0 would take the card's last 30% down with it,
+   so only the card fades and the whole copy is dropped when it ends. */
+.ove-exit-fade {
+  --ove-exit-opacity: 0; --ove-exit-shift: 0px; --ove-exit-scale: 1;
+  --ove-exit-overlay-opacity: 0; --ove-exit-duration: .24s;
+}
+.ove-exit-ghost {
+  --ove-exit-opacity: .3; --ove-exit-shift: 0px; --ove-exit-scale: 1;
+  --ove-exit-overlay-opacity: 1; --ove-exit-duration: .22s;
+}
+.ove-exit-sink {
+  --ove-exit-opacity: 0; --ove-exit-shift: 12px; --ove-exit-scale: 1;
+  --ove-exit-overlay-opacity: 0; --ove-exit-duration: .26s;
+}
+.ove-exit-shrink {
+  --ove-exit-opacity: 0; --ove-exit-shift: 0px; --ove-exit-scale: .96;
+  --ove-exit-overlay-opacity: 0; --ove-exit-duration: .24s;
+}
+
+/* The undo receipts have their own switch: with it off they appear and vanish
+   without a move, and the undo button loses its press feedback too. */
+html.ove-toast-motion-off .ove-toast,
+html.ove-toast-motion-off .ove-detached-toast { animation: none !important; }
+html.ove-toast-motion-off .ove-toast-action { transition: none; }
+html.ove-toast-motion-off .ove-toast-action:active { transform: none; box-shadow: none; }
+/* Pressing undo answers: the pill's action dips and rings for the moment the
+   click lasts, instead of only changing colour. */
+.ove-toast-action { transition: transform .12s ease, background .14s ease, box-shadow .16s ease; }
+.ove-toast-action:active { transform: scale(.9); box-shadow: 0 0 0 3px rgba(110, 231, 160, .4); }
+.ove-toast-warning .ove-toast-action:active { box-shadow: 0 0 0 3px rgba(252, 211, 77, .4); }
+
 /* The plugin page's motion switch and the OS reduced-motion preference both
    silence the entrances: the surfaces then simply appear. */
 html.ove-motion-off .ove-overlay,

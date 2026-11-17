@@ -82,15 +82,17 @@ window.__ModuleLoader__.load({
     /* ------------------------------------------------------------------ */
 
     /**
-     * Which entrance the popup surfaces play, and whether the backdrop behind
-     * them is blurred. The switch above decides whether anything plays at all;
-     * these two pick the shape of the motion and the blur, each stored as a
-     * root class the stylesheet keys off, so switching is instant and needs no
-     * re-render of the surfaces themselves.
+     * Which entrance the popup surfaces play, whether the backdrop behind them
+     * is blurred, whether they animate out when they close, how that exit
+     * looks, and whether the undo receipts keep their own motion. The switch
+     * above decides whether anything plays at all; these pick the shapes, each
+     * stored as a root class (or a clone class) the stylesheet keys off, so
+     * switching is instant and needs no re-render of the surfaces themselves.
      */
     const MOTION_KEY = 'original-version-enhancements.motion.v1';
-    const MOTION_STYLES = ['jelly', 'soft', 'slide', 'snap'];
-    const DEFAULT_MOTION = { style: 'jelly', blur: true };
+    const MOTION_STYLES = ['jelly', 'soft', 'slide', 'snap', 'drift', 'drop', 'zoom', 'flip'];
+    const MOTION_EXITS = ['fade', 'ghost', 'sink', 'shrink'];
+    const DEFAULT_MOTION = { style: 'jelly', blur: true, close: true, exit: 'fade', toast: true, toastExit: 'fade' };
     const motionListeners = new Set();
 
     const readMotion = () => {
@@ -100,6 +102,16 @@ window.__ModuleLoader__.load({
         return {
           style: MOTION_STYLES.includes(saved.style) ? saved.style : DEFAULT_MOTION.style,
           blur: saved.blur !== false,
+          // Closing used to be instant: these turn the exit on (default) and
+          // pick how it looks.
+          close: saved.close !== false,
+          exit: MOTION_EXITS.includes(saved.exit) ? saved.exit : DEFAULT_MOTION.exit,
+          // The undo receipts (and the press feedback on their button) have
+          // their own switch, so they can stay quiet while dialogs still move,
+          // and their own exit shape: a receipt is a different surface from a
+          // dialog and may want a calmer leave.
+          toast: saved.toast !== false,
+          toastExit: MOTION_EXITS.includes(saved.toastExit) ? saved.toastExit : DEFAULT_MOTION.toastExit,
         };
       } catch {
         return { ...DEFAULT_MOTION };
@@ -118,7 +130,11 @@ window.__ModuleLoader__.load({
     const setMotion = (patch) => {
       const style = MOTION_STYLES.includes(patch?.style) ? patch.style : motionState.style;
       const blur = patch?.blur === undefined ? motionState.blur : patch.blur !== false;
-      motionState = { style, blur };
+      const close = patch?.close === undefined ? motionState.close : patch.close !== false;
+      const exit = MOTION_EXITS.includes(patch?.exit) ? patch.exit : motionState.exit;
+      const toast = patch?.toast === undefined ? motionState.toast : patch.toast !== false;
+      const toastExit = MOTION_EXITS.includes(patch?.toastExit) ? patch.toastExit : motionState.toastExit;
+      motionState = { style, blur, close, exit, toast, toastExit };
       try {
         globalThis.localStorage?.setItem(MOTION_KEY, JSON.stringify(motionState));
       } catch { /* a blocked storage keeps the picks for this page only */ }
@@ -1219,6 +1235,123 @@ window.__ModuleLoader__.load({
         ? ReactDOM.createPortal(node, document.body)
         : node
     );
+
+    /* ------------------------------------------------------------------ */
+    /* Exit motion for the popup surfaces                                  */
+    /* ------------------------------------------------------------------ */
+
+    /**
+     * The entrances above play while a surface is mounting; closing is React
+     * unmounting it, so there is no node left to animate. The removals are
+     * watched instead: when one of these surfaces leaves the document while
+     * the page was showing it, a frozen copy is put back for the length of one
+     * exit animation and then dropped. The copy is inert — pointer events off,
+     * no tab stops, hidden from assistive tech — so it can only be seen.
+     */
+    const EXIT_SURFACES = '.ove-overlay, .ove-toast, .ove-detached-toast, .ove-detached-panel';
+
+    /** The surface root in a removal list, or null for anything else. */
+    const exitSurfaceOf = (node) => {
+      if (node === null || node === undefined || node.nodeType !== 1) return null;
+      if (typeof node.matches !== 'function' || node.classList.contains('ove-exit')) return null;
+      // A surface that was only moved (React re-inserts it in the same update)
+      // is still connected when the observer runs: it did not close.
+      if (node.isConnected === true) return null;
+      return node.matches(EXIT_SURFACES) ? node : null;
+    };
+
+    /** Longest animation on the copy, in milliseconds. */
+    const exitDurationOf = (element) => {
+      const style = globalThis.getComputedStyle?.(element);
+      if (style === undefined || style === null) return 0;
+      const seconds = (value) => {
+        const text = String(value ?? '0').trim();
+        const number = Number.parseFloat(text);
+        return Number.isFinite(number) ? (text.endsWith('ms') ? number / 1000 : number) : 0;
+      };
+      const durations = String(style.animationDuration ?? '').split(',');
+      const delays = String(style.animationDelay ?? '').split(',');
+      let longest = 0;
+      for (let index = 0; index < Math.max(durations.length, delays.length); index += 1) {
+        longest = Math.max(longest, seconds(durations[index]) + seconds(delays[index]));
+      }
+      return Math.round(longest * 1000);
+    };
+
+    /** Play one exit on a copy of a surface that just left the document. */
+    const playExitMotion = (surface) => {
+      if (getFlags().motion === false) return;
+      // The stylesheet's reduced-motion block cannot beat the more specific
+      // exit rule, so the preference is honoured here instead.
+      if (globalThis.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches === true) return;
+      const motion = getMotion();
+      const receipt = surface.classList.contains('ove-toast') || surface.classList.contains('ove-detached-toast');
+      // The receipt switch silences the undo pills, the close switch the rest.
+      if (receipt ? motion.toast === false : motion.close === false) return;
+      const body = globalThis.document?.body;
+      if (body === null || body === undefined) return;
+      const clone = surface.cloneNode(true);
+      // An in-page window hosts a second client document in an iframe; a copy
+      // of it on screen would boot that page again. The frames go before the
+      // copy is attached, so only the window's own chrome plays out.
+      for (const frame of clone.querySelectorAll('iframe')) frame.remove();
+      // The receipts carry their own exit pick; everything else uses the
+      // closing-motion pick.
+      clone.classList.add('ove-exit', `ove-exit-${receipt ? motion.toastExit : motion.exit}`);
+      clone.setAttribute('aria-hidden', 'true');
+      clone.style.pointerEvents = 'none';
+      clone.removeAttribute('id');
+      // An in-page window lives wherever its slot put it, and a fixed panel
+      // under a transformed ancestor would land somewhere else once the copy
+      // is attached to the body. Pin the copy to the rectangle it just had.
+      if (clone.classList.contains('ove-detached-panel')) {
+        const box = surface.getBoundingClientRect?.();
+        if (box !== undefined && box !== null && box.width > 0) {
+          clone.style.position = 'fixed';
+          clone.style.left = `${box.left}px`;
+          clone.style.top = `${box.top}px`;
+          clone.style.width = `${box.width}px`;
+          clone.style.height = `${box.height}px`;
+          clone.style.transform = 'none';
+        }
+      }
+      for (const control of clone.querySelectorAll('button, input, select, textarea, a, [tabindex]')) {
+        control.setAttribute('tabindex', '-1');
+      }
+      body.appendChild(clone);
+      const duration = exitDurationOf(clone);
+      // No animation (reduced motion, or a stylesheet that never loaded): drop
+      // the copy instead of leaving a frozen popup over the page.
+      if (duration <= 0) {
+        clone.remove();
+        return;
+      }
+      window.setTimeout(() => clone.remove(), duration + 40);
+    };
+
+    /**
+     * Watch the document for popup surfaces leaving it, and return its teardown
+     * so the plugin's effect can stop watching when it unloads.
+     */
+    const watchExitMotion = () => {
+      const body = globalThis.document?.body;
+      if (body === null || body === undefined || typeof globalThis.MutationObserver !== 'function') {
+        return () => undefined;
+      }
+      const observer = new globalThis.MutationObserver((records) => {
+        for (const record of records) {
+          if (record.type !== 'childList') continue;
+          for (const node of record.removedNodes) {
+            const surface = exitSurfaceOf(node);
+            if (surface !== null) playExitMotion(surface);
+          }
+        }
+      });
+      // Subtree on purpose: the dialogs and receipts are portalled straight to
+      // the body, but the in-page windows stay in the slot that owns them.
+      observer.observe(body, { childList: true, subtree: true });
+      return () => observer.disconnect();
+    };
 
     const refreshStores = async (ctx) => {
       const tasks = [];
@@ -2578,8 +2711,9 @@ window.__ModuleLoader__.load({
               feature('switch.motion', flags.motion, () => toggle('motion'),
                   [
                   // The switch decides whether anything plays; this picks the
-                  // shape of the motion. Same segmented control as the window
-                  // options, so switching is one click.
+                  // shape of the entrance. The chips lay out as a 4-wide grid,
+                  // so eight of them take two rows instead of squeezing the
+                  // explanation beside them.
                   settingRow(tr('motion.style'), tr('motion.style.desc'),
                     h('div', {
                       className: 'ove-size-group ove-motion-styles',
@@ -2600,6 +2734,53 @@ window.__ModuleLoader__.load({
                     () => setMotion({ blur: motion.blur === false }),
                     tr('motion.blur'),
                   )),
+                  // Closing is a second, independent switch: it decides whether
+                  // a surface plays an exit at all, and its own pick below
+                  // decides how that exit looks.
+                  settingRow(tr('motion.close'), tr('motion.close.desc'), switchOf(
+                    motion.close !== false,
+                    () => setMotion({ close: motion.close === false }),
+                    tr('motion.close'),
+                  )),
+                  // The exit shape. The chips lock while closing is off, since
+                  // they would have nothing to change.
+                  settingRow(tr('motion.exit'), tr('motion.exit.desc'),
+                    h('div', {
+                      className: 'ove-size-group ove-motion-styles',
+                      role: 'group',
+                      'aria-label': tr('motion.exit'),
+                    },
+                      MOTION_EXITS.map(id => h('button', {
+                        key: id,
+                        type: 'button',
+                        className: `ove-size${motion.exit === id ? ' is-on' : ''}`,
+                        'aria-pressed': motion.exit === id,
+                        disabled: motion.close === false,
+                        onClick: () => setMotion({ exit: id }),
+                      }, tr(`motion.exit.${id}`))))),
+                  // The undo receipts keep their own switch, including the
+                  // press feedback of their undo button.
+                  settingRow(tr('motion.toast'), tr('motion.toast.desc'), switchOf(
+                    motion.toast !== false,
+                    () => setMotion({ toast: motion.toast === false }),
+                    tr('motion.toast'),
+                  )),
+                  // The receipts pick their own exit shape, independent of the
+                  // dialog one; the chips lock with the switch that owns them.
+                  settingRow(tr('motion.toastExit'), tr('motion.toastExit.desc'),
+                    h('div', {
+                      className: 'ove-size-group ove-motion-styles',
+                      role: 'group',
+                      'aria-label': tr('motion.toastExit'),
+                    },
+                      MOTION_EXITS.map(id => h('button', {
+                        key: id,
+                        type: 'button',
+                        className: `ove-size${motion.toastExit === id ? ' is-on' : ''}`,
+                        'aria-pressed': motion.toastExit === id,
+                        disabled: motion.toast === false,
+                        onClick: () => setMotion({ toastExit: id }),
+                      }, tr(`motion.exit.${id}`))))),
                   ]),
             )),
 
@@ -9406,7 +9587,9 @@ window.__ModuleLoader__.load({
         // can pop up. The stylesheet animates them by default; the classes
         // only choose the shape and turn the motion off. The backdrop blur is
         // its own class and its own switch, so it can stay on while the
-        // entrance does not play at all.
+        // entrance does not play at all. The receipt switch is a third class:
+        // with it off the undo pills appear and vanish without a move, while
+        // the dialogs keep theirs.
         ctx.effect(() => {
           const root = globalThis.document?.documentElement;
           if (root === null || root === undefined) return undefined;
@@ -9414,8 +9597,10 @@ window.__ModuleLoader__.load({
             const motion = getFlags().motion !== false;
             const style = getMotion().style;
             const blur = getMotion().blur !== false;
+            const toast = getMotion().toast !== false;
             root.classList.toggle('ove-motion-off', !motion);
             root.classList.toggle('ove-blur-off', !blur);
+            root.classList.toggle('ove-toast-motion-off', !toast);
             for (const id of MOTION_STYLES) {
               root.classList.toggle(`ove-motion-${id}`, motion && id === style);
             }
@@ -9428,9 +9613,14 @@ window.__ModuleLoader__.load({
             unsubscribeMotion();
             root.classList.remove('ove-motion-off');
             root.classList.remove('ove-blur-off');
+            root.classList.remove('ove-toast-motion-off');
             for (const id of MOTION_STYLES) root.classList.remove(`ove-motion-${id}`);
           };
         }, 'original-version-enhancements: entrance motion switch');
+
+        // Closing is a removal, not an animation, so the copy that plays the
+        // exit is watched for here rather than inside every component.
+        ctx.effect(() => watchExitMotion(), 'original-version-enhancements: exit motion');
 
         ctx.effect(() => ctx.slots.inject('settings.section', () => ctx.slots.register({
           name: 'settings.section',
