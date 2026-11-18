@@ -18,6 +18,11 @@ using System.Text.RegularExpressions;
 using System.Windows.Forms;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.WinForms;
+// The window owns a few worker threads, but `Timer` here always means the
+// WinForms one (System.Threading also defines a Timer and the bare name would
+// be ambiguous).
+using Thread = System.Threading.Thread;
+using ManualResetEventSlim = System.Threading.ManualResetEventSlim;
 
 namespace OveWindow
 {
@@ -33,6 +38,9 @@ namespace OveWindow
         public string DataDir = "";
         public int ParentPid = 0;
         public string AppearanceFile = "";
+        /** How long the embedded browser may take to come up before the window
+            closes itself instead of hanging on screen. */
+        public int StartupTimeoutSeconds = 30;
     }
 
     internal static class Program
@@ -53,6 +61,18 @@ namespace OveWindow
 
         [DllImport("kernel32.dll", SetLastError = true)]
         internal static extern bool CloseHandle(IntPtr handle);
+
+        /**
+         * End this process from any thread. A window whose UI thread stopped
+         * pumping messages can no longer be closed from the inside, and Windows
+         * would leave a frozen frame in Alt+Tab until Explorer restarts; killing
+         * the process is the only thing that removes it.
+         */
+        internal static void HardExit(int code)
+        {
+            try { Environment.Exit(code); } catch { }
+            try { System.Diagnostics.Process.GetCurrentProcess().Kill(); } catch { }
+        }
 
         /** True while the process behind `pid` is still alive. */
         internal static bool ProcessAlive(int pid)
@@ -102,6 +122,13 @@ namespace OveWindow
             {
                 MessageBox.Show(error.Message, "独立窗口", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
+            finally
+            {
+                // WebView2 keeps worker threads and a browser process of its own;
+                // a closed window must take this process with it, or a headless
+                // husk stays behind with nothing on screen to end it.
+                HardExit(0);
+            }
         }
 
         private static void EnableDpiAwareness()
@@ -136,6 +163,7 @@ namespace OveWindow
                     case "--data-dir": options.DataDir = value; break;
                     case "--parent-pid": int.TryParse(value, out options.ParentPid); break;
                     case "--appearance": options.AppearanceFile = value; break;
+                    case "--startup-timeout": int.TryParse(value, out options.StartupTimeoutSeconds); break;
                 }
             }
             if (options.BootUrl.Length == 0) throw new ArgumentException("缺少 --url 参数。");
@@ -143,6 +171,8 @@ namespace OveWindow
             if (options.Height < 360) options.Height = 360;
             if (options.Opacity < 30) options.Opacity = 100;
             if (options.Opacity > 100) options.Opacity = 100;
+            if (options.StartupTimeoutSeconds < 5) options.StartupTimeoutSeconds = 5;
+            if (options.StartupTimeoutSeconds > 120) options.StartupTimeoutSeconds = 120;
             return options;
         }
     }
@@ -161,6 +191,8 @@ namespace OveWindow
         private bool revealed;
         private bool retried;
         private Timer splashTimer;
+        /** Set once the embedded browser started or definitively failed. */
+        private readonly ManualResetEventSlim startupDone = new ManualResetEventSlim(false);
 
         public Window(Options options)
         {
@@ -225,6 +257,12 @@ namespace OveWindow
         {
             base.OnLoad(e);
             Stage("启动中…");
+            // Both checks run on their own threads. A window whose UI thread is
+            // the thing that is stuck can neither close itself nor show an error,
+            // and Windows would keep a frozen frame in Alt+Tab until Explorer
+            // restarts — ending the process is the only way out.
+            StartStartupWatchdog();
+            StartLivenessWatch();
             // WinForms here runs at 96 DPI while the window is per-monitor
             // aware, so the requested size is DIPs: grow it to device pixels or
             // the window would look shrunken on a scaled display.
@@ -252,45 +290,120 @@ namespace OveWindow
             catch
             {
             }
+
             try
             {
                 explicitDataDir = options.DataDir;
                 var dataFolder = PrepareDataFolder();
                 var environment = await CoreWebView2Environment.CreateAsync(null, dataFolder);
                 await view.EnsureCoreWebView2Async(environment);
+
+                var core = view.CoreWebView2;
+                // A detached conversation must not chime on its own: notification
+                // and error sounds belong to the main window, if anywhere.
+                core.IsMuted = options.Mute;
+                core.Settings.IsStatusBarEnabled = false;
+                core.Settings.AreBrowserAcceleratorKeysEnabled = true;
+                core.Settings.IsZoomControlEnabled = false;
+                core.DocumentTitleChanged += (sender, args) =>
+                {
+                    var title = TitleSuffix.Replace(core.DocumentTitle ?? "", "").Trim();
+                    if (title.Length > 0 && title != "DeepSeek Harness") Text = title;
+                };
+
+                core.NavigationCompleted += OnNavigationCompleted;
+                core.WebMessageReceived += OnWebMessage;
+                core.ProcessFailed += OnProcessFailed;
+                StartParentWatch();
+                StartAppearanceWatch(core);
+                Stage("载入会话…");
+                // One loading state only: this splash (label + marquee) stays on
+                // top of the view until the conversation page reports that it is
+                // ready, so neither the token hop nor the page's own boot flashes.
+                splashTimer = new Timer { Interval = 10000 };
+                splashTimer.Tick += (sender, args) => Reveal();
+                splashTimer.Start();
+                core.Navigate(options.BootUrl);
             }
             catch (Exception error)
             {
+                // The browser will not come up: keep the error state readable and
+                // release the startup watchdog, which would otherwise end the
+                // process from under the message.
+                startupDone.Set();
                 ShowStartupError(error);
                 return;
             }
+            startupDone.Set();
+        }
 
-            var core = view.CoreWebView2;
-            // A detached conversation must not chime on its own: notification
-            // and error sounds belong to the main window, if anywhere.
-            core.IsMuted = options.Mute;
-            core.Settings.IsStatusBarEnabled = false;
-            core.Settings.AreBrowserAcceleratorKeysEnabled = true;
-            core.Settings.IsZoomControlEnabled = false;
-            core.DocumentTitleChanged += (sender, args) =>
+        /**
+         * A WebView2 start can hang (a profile lock, the runtime updater holding
+         * a file, a loaded security product) and the loading state would then
+         * stay on screen forever. Ask the window to close; if even that is not
+         * processed, the process ends so Windows drops the frozen frame.
+         */
+        private void StartStartupWatchdog()
+        {
+            var timeout = Math.Max(5, Math.Min(120, options.StartupTimeoutSeconds));
+            var watchdog = new Thread(() =>
             {
-                var title = TitleSuffix.Replace(core.DocumentTitle ?? "", "").Trim();
-                if (title.Length > 0 && title != "DeepSeek Harness") Text = title;
+                if (startupDone.Wait(timeout * 1000)) return;
+                try
+                {
+                    BeginInvoke(new Action(() =>
+                    {
+                        try { Close(); } catch { }
+                    }));
+                }
+                catch
+                {
+                    // The handle is gone; the liveness probe owns this case.
+                }
+                if (startupDone.Wait(4000)) return;
+                Program.HardExit(3);
+            })
+            {
+                IsBackground = true,
+                Name = "ove-startup-watchdog",
             };
+            watchdog.Start();
+        }
 
-            core.NavigationCompleted += OnNavigationCompleted;
-            core.WebMessageReceived += OnWebMessage;
-            core.ProcessFailed += OnProcessFailed;
-            StartParentWatch();
-            StartAppearanceWatch(core);
-            Stage("载入会话…");
-            // One loading state only: this splash (label + marquee) stays on
-            // top of the view until the conversation page reports that it is
-            // ready, so neither the token hop nor the page's own boot flashes.
-            splashTimer = new Timer { Interval = 10000 };
-            splashTimer.Tick += (sender, args) => Reveal();
-            splashTimer.Start();
-            core.Navigate(options.BootUrl);
+        /**
+         * The last line of defence while the window is up: a probe posted every
+         * few seconds must be answered by the UI thread. When it is not, nothing
+         * on screen can close the window any more, so the process ends itself
+         * before Windows turns it into a ghost window.
+         */
+        private void StartLivenessWatch()
+        {
+            var probe = new Thread(() =>
+            {
+                while (true)
+                {
+                    Thread.Sleep(3000);
+                    if (IsDisposed) return;
+                    var answered = new ManualResetEventSlim(false);
+                    try
+                    {
+                        BeginInvoke(new Action(() => answered.Set()));
+                    }
+                    catch
+                    {
+                        answered.Dispose();
+                        return;
+                    }
+                    var ok = answered.Wait(5000);
+                    answered.Dispose();
+                    if (!ok) Program.HardExit(4);
+                }
+            })
+            {
+                IsBackground = true,
+                Name = "ove-liveness-watchdog",
+            };
+            probe.Start();
         }
 
         private void OnNavigationCompleted(object sender, CoreWebView2NavigationCompletedEventArgs args)

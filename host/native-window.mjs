@@ -22,6 +22,8 @@ const DATA_DIRECTORY = fileURLToPath(new URL('../.webview-data', import.meta.url
 const WINDOW_PAGE = '/plugins/original-version-enhancements/window'
 /** One Chromium instance per window is not cheap; this keeps it bounded. */
 const MAX_WINDOWS = 8
+/** A window that never reports ready is a frozen one; close it instead. */
+const STARTUP_TIMEOUT_MS = 45_000
 /** Every window polls this file, so appearance edits reach open windows. */
 const APPEARANCE_FILE = join(DATA_DIRECTORY, 'appearance.json')
 const clampSize = (value, fallback, min) => {
@@ -61,7 +63,16 @@ export function windowArguments({ bootUrl, appUrl, title, width, height, opacity
  * @param options.warn - logger for a window that could not start.
  * @returns route handlers plus a shutdown hook.
  */
-export function createNativeWindows({ origin, authenticatedUrl, isTrustedRequest, warn = console.warn }) {
+export function createNativeWindows({
+  origin,
+  authenticatedUrl,
+  isTrustedRequest,
+  warn = console.warn,
+  // Test seams: the lifecycle rules below can be exercised without a real
+  // child process, and a shortened grace period keeps the tests quick.
+  spawnWindow = spawn,
+  startupTimeoutMs = STARTUP_TIMEOUT_MS,
+}) {
   /** sessionId -> { child, openedAt, ready, title } */
   const windows = new Map()
   /** Profiles already scheduled for removal (close + exit both fire). */
@@ -104,15 +115,23 @@ export function createNativeWindows({ origin, authenticatedUrl, isTrustedRequest
     }
   }
 
+  const clearStartupTimer = (entry) => {
+    if (entry === undefined || entry.startupTimer === null || entry.startupTimer === undefined) return
+    clearTimeout(entry.startupTimer)
+    entry.startupTimer = null
+  }
+
   const forget = (sessionId, child) => {
     const entry = windows.get(sessionId)
     if (entry === undefined || entry.child !== child) return
+    clearStartupTimer(entry)
     windows.delete(sessionId)
   }
 
   const close = (sessionId) => {
     const entry = windows.get(sessionId)
     if (entry === undefined) return
+    clearStartupTimer(entry)
     windows.delete(sessionId)
     try { entry.child.kill() } catch { /* already gone */ }
     dropProfile(entry.dataDir)
@@ -132,7 +151,13 @@ export function createNativeWindows({ origin, authenticatedUrl, isTrustedRequest
     if (!supported) return { ok: false, error: 'unsupported' }
     if (typeof authenticatedUrl !== 'function') return { ok: false, error: 'unsupported' }
     // One window per conversation; several conversations may be open at once.
-    if (windows.has(sessionId)) return { ok: true, reused: true }
+    const existing = windows.get(sessionId)
+    if (existing !== undefined) {
+      // A window whose process already exited must not block a fresh one.
+      if (existing.child.exitCode === null && existing.child.killed !== true) return { ok: true, reused: true }
+      clearStartupTimer(existing)
+      windows.delete(sessionId)
+    }
     if (windows.size >= MAX_WINDOWS) return { ok: false, error: 'too-many-windows' }
     const base = String(typeof origin === 'function' ? origin() : origin)
     const bootUrl = authenticatedUrl(new URL('/', base).href)
@@ -149,7 +174,7 @@ export function createNativeWindows({ origin, authenticatedUrl, isTrustedRequest
     void publishAppearance({ opacity, mute })
     let child
     try {
-      child = spawn(EXECUTABLE, windowArguments({
+      child = spawnWindow(EXECUTABLE, windowArguments({
         bootUrl, appUrl, title, width, height, opacity, mute, dataDir,
         parentPid: process.pid,
         appearanceFile: APPEARANCE_FILE,
@@ -170,7 +195,19 @@ export function createNativeWindows({ origin, authenticatedUrl, isTrustedRequest
       forget(sessionId, child)
       dropProfile(dataDir)
     })
-    windows.set(sessionId, { child, openedAt: Date.now(), ready: false, title, dataDir })
+    const entry = { child, openedAt: Date.now(), ready: false, title, dataDir, startupTimer: null }
+    windows.set(sessionId, entry)
+    // A window that never reports ready is exactly the frozen window this
+    // feature must not leave behind: after a grace period close its process and
+    // drop the profile. The window host has its own shorter watchdog; this is
+    // the backstop for the case where even that watchdog did not run.
+    entry.startupTimer = setTimeout(() => {
+      const current = windows.get(sessionId)
+      if (current !== entry || entry.ready) return
+      warn(`original-version-enhancements: the window for ${sessionId} never reported ready; closing it`)
+      close(sessionId)
+    }, startupTimeoutMs)
+    if (typeof entry.startupTimer.unref === 'function') entry.startupTimer.unref()
     return { ok: true }
   }
 
@@ -178,6 +215,7 @@ export function createNativeWindows({ origin, authenticatedUrl, isTrustedRequest
     const entry = windows.get(sessionId)
     if (entry === undefined) return false
     entry.ready = true
+    clearStartupTimer(entry)
     return true
   }
 

@@ -131,3 +131,127 @@ test('the appearance route writes what every window polls', async () => {
   assert.deepEqual(payload, { opacity: 45, mute: false })
   await rm(file, { force: true })
 })
+
+/** A child-process stand-in with just what the window lifecycle touches. */
+const fakeChild = async () => {
+  const { EventEmitter } = await import('node:events')
+  const child = new EventEmitter()
+  child.killed = false
+  child.exitCode = null
+  child.kill = () => {
+    child.killed = true
+    child.exitCode = 0
+    child.emit('exit', 0, null)
+  }
+  return child
+}
+
+/** Drive the open route with a JSON body, the way the plugin page does. */
+const openWindow = async (windows, sessionId = 'session-s1') => {
+  const request = {
+    method: 'POST',
+    async *[Symbol.asyncIterator]() {
+      yield Buffer.from(JSON.stringify({
+        sessionId,
+        title: 't',
+        width: 900,
+        height: 700,
+        opacity: 100,
+        mute: true,
+      }))
+    },
+  }
+  return await new Promise((resolve, reject) => {
+    const res = { writeHead() {}, end(text) { resolve(JSON.parse(text)) } }
+    windows.handlers.open(request, res).catch(reject)
+  })
+}
+
+/** POST /ready for a window, resolving once the host answers. */
+const markReady = async (windows, sessionId = 'session-s1') => {
+  const request = {
+    method: 'POST',
+    async *[Symbol.asyncIterator]() {
+      yield Buffer.from(JSON.stringify({ sessionId }))
+    },
+  }
+  return await new Promise((resolve, reject) => {
+    const res = { writeHead() {}, end(text) { resolve(JSON.parse(text)) } }
+    windows.handlers.ready(request, res).catch(reject)
+  })
+}
+
+const windowState = async (windows) => await new Promise((resolve, reject) => {
+  const res = { writeHead() {}, end(text) { resolve(JSON.parse(text)) } }
+  windows.handlers.state({ method: 'GET' }, res).catch(reject)
+})
+
+test('a window that never reports ready is closed after the grace period', async () => {
+  const child = await fakeChild()
+  const windows = createNativeWindows({
+    origin: () => 'http://127.0.0.1:4850',
+    authenticatedUrl: url => `${url}?token=x`,
+    isTrustedRequest: () => true,
+    spawnWindow: () => child,
+    startupTimeoutMs: 30,
+  })
+  const result = await openWindow(windows)
+  assert.equal(result.ok, true)
+  assert.equal(child.killed, false, 'the window must be allowed to start')
+  await new Promise(resolve => setTimeout(resolve, 90))
+  assert.equal(child.killed, true, 'a window that never turns ready must be killed')
+  assert.deepEqual((await windowState(windows)).windows, [])
+})
+
+test('reporting ready keeps the window and stops the grace timer', async () => {
+  const child = await fakeChild()
+  const windows = createNativeWindows({
+    origin: () => 'http://127.0.0.1:4850',
+    authenticatedUrl: url => `${url}?token=x`,
+    isTrustedRequest: () => true,
+    spawnWindow: () => child,
+    startupTimeoutMs: 30,
+  })
+  await openWindow(windows, 'session-s2')
+  const ready = await markReady(windows, 'session-s2')
+  assert.equal(ready.ok, true)
+  await new Promise(resolve => setTimeout(resolve, 90))
+  assert.equal(child.killed, false, 'a ready window must stay open')
+  assert.equal((await windowState(windows)).windows.length, 1)
+  windows.closeAll()
+  assert.equal(child.killed, true)
+})
+
+test('a dead child does not block a fresh window for the same conversation', async () => {
+  const first = await fakeChild()
+  const second = await fakeChild()
+  const children = [first, second]
+  const windows = createNativeWindows({
+    origin: () => 'http://127.0.0.1:4850',
+    authenticatedUrl: url => `${url}?token=x`,
+    isTrustedRequest: () => true,
+    spawnWindow: () => children.shift(),
+    startupTimeoutMs: 5000,
+  })
+  await openWindow(windows, 'session-s3')
+  first.exitCode = 1
+  first.emit('exit', 1, null)
+  const again = await openWindow(windows, 'session-s3')
+  assert.equal(again.ok, true)
+  assert.notEqual(again.reused, true, 'a fresh process must be started')
+  windows.closeAll()
+})
+
+test('the window host can end itself when its UI thread wedges', async () => {
+  const { readFile } = await import('node:fs/promises')
+  const source = await readFile(new URL('../native/OveWindow.cs', import.meta.url), 'utf8')
+  // The failure this guards against: a window whose message pump stopped is
+  // left in Alt+Tab as a frozen frame that nothing can close.
+  assert.match(source, /internal static void HardExit\(int code\)/u)
+  assert.match(source, /Process\.GetCurrentProcess\(\)\.Kill\(\)/u)
+  assert.match(source, /private void StartStartupWatchdog\(\)/u)
+  assert.match(source, /private void StartLivenessWatch\(\)/u)
+  assert.match(source, /case "--startup-timeout"/u)
+  // A closed window takes its process with it instead of leaving a headless husk.
+  assert.match(source, /finally[\s\S]{0,400}?HardExit\(0\);/u)
+})
