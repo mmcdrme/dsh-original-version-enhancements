@@ -167,10 +167,16 @@ export function createNativeWindows({
     const height = clampSize(options.height, 800, 420)
     const opacity = clampSize(options.opacity, 100, 30)
     const mute = options.mute !== false
+    // Which client gesture asked for this window (menu, drag, unknown). Logged
+    // with the session, so a window nobody expected can be traced to its origin.
+    const reason = typeof options.reason === 'string' && options.reason.length > 0
+      ? options.reason.slice(0, 40)
+      : 'unknown'
     // Each window needs its own WebView2 profile: the Host grants one browser
     // session a single live connection, so a shared cookie jar would leave the
     // second window waiting on the welcome screen forever.
     const dataDir = join(DATA_DIRECTORY, `window-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`)
+    warn(`original-version-enhancements: opening a window for ${sessionId} (${reason})`)
     void publishAppearance({ opacity, mute })
     let child
     try {

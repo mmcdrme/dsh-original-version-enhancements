@@ -703,7 +703,7 @@ window.__ModuleLoader__.load({
     };
 
     /** Open one conversation in the companion window; false means unsupported. */
-    const openNativeWindow = async (sessionId, appearance) => {
+    const openNativeWindow = async (sessionId, appearance, reason = 'unknown') => {
       // A platform without the companion window must not cost a 12-second wait
       // before the in-app fallback: ask first.
       const state = await pullHostWindows();
@@ -715,6 +715,9 @@ window.__ModuleLoader__.load({
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({
             sessionId,
+            // Which gesture asked for this window. The Host logs it with the
+            // session id, so an unexpected window can be traced to its origin.
+            reason,
             // The window is the conversation alone; the preset size is the
             // reading width, plus the frame the title bar takes.
             width: size[0],
@@ -1005,7 +1008,7 @@ window.__ModuleLoader__.load({
       // its own minimise/restore, and keeps running while this window is
       // minimised. It is the normal outcome on Windows.
       if (appearance.mode !== 'panel') {
-        const opened = await openNativeWindow(sessionId, appearance);
+        const opened = await openNativeWindow(sessionId, appearance, labels?.reason ?? 'unknown');
         if (opened) {
           // A slow window is not a broken one: give it far longer than the old
           // 12 seconds, and never turn a window the user closed into an in-app
@@ -3052,6 +3055,9 @@ window.__ModuleLoader__.load({
       const [hiddenSort, setHiddenSort] = React.useState(readArchiveSort);
       const [hiddenBusy, setHiddenBusy] = React.useState(false);
       const [hiddenError, setHiddenError] = React.useState('');
+      // Clearing hidden conversations is destructive, so the button opens a
+      // confirmation that lists exactly what leaves before anything is deleted.
+      const [hiddenConfirm, setHiddenConfirm] = React.useState(false);
       // The Host keeps a loaded parent's subagent catalogue in memory, so a
       // deleted child can stay listed until the parent is reopened. Remember
       // what this page just removed and drop those rows immediately.
@@ -3059,8 +3065,13 @@ window.__ModuleLoader__.load({
       // Both confirmation dialogs are modals: Escape closes them, Tab stays in.
       const batchPanelRef = React.useRef(null);
       const hiddenPanelRef = React.useRef(null);
+      const hiddenConfirmRef = React.useRef(null);
       useModalKeyboard(batchPanelRef, () => setBatchKind(null), batchBusy, batchKind !== null);
       useModalKeyboard(hiddenPanelRef, () => setHiddenOpen(false), hiddenBusy, hiddenOpen);
+      useModalKeyboard(hiddenConfirmRef, () => setHiddenConfirm(false), hiddenBusy, hiddenOpen && hiddenConfirm);
+      React.useEffect(() => {
+        if (!hiddenOpen) setHiddenConfirm(false);
+      }, [hiddenOpen]);
       const deleteNotices = React.useSyncExternalStore(subscribeDeleteNotice, getDeleteNotices, getDeleteNotices);
       // Highest undo receipt already handled: the toast carries a structural
       // flag, so a language switch or a partial failure cannot confuse it.
@@ -3437,6 +3448,7 @@ window.__ModuleLoader__.load({
       const openHiddenManager = () => {
         setHiddenError('');
         setHiddenSelected(new Set());
+        setHiddenConfirm(false);
         setHiddenOpen(true);
       };
       const clearHidden = async () => {
@@ -3480,6 +3492,7 @@ window.__ModuleLoader__.load({
             .replace('{fail}', String(failures.length))
             .replace('{reason}', failures[0].error));
         } else {
+          setHiddenConfirm(false);
           setHiddenOpen(false);
         }
       };
@@ -3760,9 +3773,52 @@ window.__ModuleLoader__.load({
                 type: 'button',
                 className: 'ove-btn ove-btn-danger',
                 disabled: hiddenBusy || hiddenSelectedRows.length === 0,
-                onClick: () => { void clearHidden(); },
+                onClick: () => setHiddenConfirm(true),
               }, hiddenBusy ? tr('hiddenManageClearing') : tr('hiddenManageClear'))))
         )),
+
+        // Removing hidden conversations cannot be undone once the 10 second
+        // receipt is gone, so the button asks first and lists exactly what
+        // leaves; the archive page's batch dialogs behave the same way.
+        hiddenOpen && hiddenConfirm && overlayPortal(h('div', {
+          className: 'ove-overlay ove-overlay-top ove-overlay-nested',
+          onMouseDown: (event) => {
+            if (event.target === event.currentTarget && !hiddenBusy) setHiddenConfirm(false);
+          },
+        },
+          h('div', {
+            className: 'ove-dialog ove-dialog-wide ove-hidden-confirm',
+            role: 'dialog',
+            'aria-modal': 'true',
+            'aria-label': tr('hiddenManageConfirmTitle'),
+            ref: hiddenConfirmRef,
+            tabIndex: -1,
+          },
+            h('h2', { className: 'ove-dialog-title' }, tr('hiddenManageConfirmTitle')),
+            h('p', { className: 'ove-dialog-desc' },
+              tr('hiddenManageConfirmDesc').replace('{n}', String(hiddenSelectedRows.length))),
+            h('div', { className: 'ove-hidden-confirm-list' },
+              // Read-only: the list is the receipt of the current selection.
+              h(ArchivePicker, {
+                rows: hiddenSelectedRows,
+                sort: hiddenSort,
+                onSort: setHiddenSort,
+                tr,
+                repeatedTitles: repeatedHiddenTitles,
+              })),
+            h('div', { className: 'ove-dialog-actions' },
+              h('button', {
+                type: 'button',
+                className: 'ove-btn',
+                disabled: hiddenBusy,
+                onClick: () => setHiddenConfirm(false),
+              }, tr('cancel')),
+              h('button', {
+                type: 'button',
+                className: 'ove-btn ove-btn-danger',
+                disabled: hiddenBusy,
+                onClick: () => { void clearHidden(); },
+              }, hiddenBusy ? tr('hiddenManageClearing') : tr('hiddenManageConfirm')))))),
 
       );
     }
@@ -3870,7 +3926,7 @@ window.__ModuleLoader__.load({
           releaseDetached(sessionId);
           return;
         }
-        void detachSession(ctx, sessionId, { title: tr('detachedWindowTitle'), t: tr });
+        void detachSession(ctx, sessionId, { title: tr('detachedWindowTitle'), t: tr, reason: 'menu' });
       };
 
       if (uiPrimitives?.MenuItemButton) {
@@ -4184,28 +4240,83 @@ window.__ModuleLoader__.load({
           }
         };
         announce('boot');
-        // Bounded: a session that never becomes selectable must not be
-        // re-selected forever (the loop used to run for the window's lifetime).
+        // Neither of these is a formality:
+        //  - a selection in mainReference alone is not proof that the
+        //    conversation is on screen; the app can restore a reference before
+        //    the catalogue holds the session, and the window then sits on the
+        //    welcome screen while the Host has already been told it is ready;
+        //  - opening a session the catalogue does not know selects a reference
+        //    the app cannot resolve, so the open waits for the data.
+        const mounted = () => {
+          const doc = globalThis.document;
+          if (doc === undefined || doc === null) return false;
+          if (doc.querySelector('[data-slot="conversation.composer"], [data-composer-input]') === null) return false;
+          for (const el of doc.querySelectorAll('[data-content-phase]')) {
+            if (el.getAttribute('data-content-phase') === 'loading') return false;
+          }
+          return doc.querySelector('[data-chat-flow], [data-slot="conversation.view"]') !== null;
+        };
+        const catalogued = () => {
+          const snapshot = ctx?.sessions?.list?.getSnapshot?.();
+          if (snapshot === undefined || snapshot === null) return false;
+          if (snapshot.phase !== undefined && snapshot.phase !== 'ready') return false;
+          if (snapshot.byId !== null && typeof snapshot.byId === 'object') return Object.hasOwn(snapshot.byId, detachedId);
+          return Array.isArray(snapshot.ids) ? snapshot.ids.includes(detachedId) : true;
+        };
+        const reloadKey = 'ove-detached-reloaded';
+        let reloadedOnce = false;
+        try { reloadedOnce = globalThis.sessionStorage?.getItem(reloadKey) === detachedId; } catch { /* private mode */ }
+        let reloadTried = false;
         let tries = 0;
+        let matchedSince = 0;
+        let settled = 0;
+        let done = false;
         const timer = window.setInterval(() => {
+          if (done) return;
           const current = ctx?.uiWorkspace?.mainReference?.sessionId ?? '';
-          if (current === detachedId) {
-            if (ready) return;
-            ready = true;
+          if (current !== detachedId) {
+            matchedSince = 0;
+            settled = 0;
+            tries += 1;
+            if (tries > 90) {
+              done = true;
+              window.clearInterval(timer);
+              try { globalThis.sessionStorage?.removeItem(reloadKey); } catch { /* cosmetic */ }
+              announce('failed');
+              return;
+            }
+            if (catalogued()) {
+              try { ctx?.uiWorkspace?.openSession?.(detachedId); } catch { /* the catalogue is still loading */ }
+            }
+            return;
+          }
+          matchedSince = matchedSince === 0 ? Date.now() : matchedSince;
+          if (mounted()) {
+            settled += 1;
+            if (settled < 2) return;
+            done = true;
             window.clearInterval(timer);
+            try { globalThis.sessionStorage?.removeItem(reloadKey); } catch { /* cosmetic */ }
             announce('ready');
             return;
           }
-          tries += 1;
-          if (tries > 75) {
-            window.clearInterval(timer);
-            announce('failed');
+          settled = 0;
+          // The selection stuck but nothing painted: boot the document once
+          // more so the client restores the session from its own persisted
+          // selection (dsh.sessions.current), which is the path that renders.
+          if (reloadedOnce === false && reloadTried === false && Date.now() - matchedSince > 4000) {
+            reloadTried = true;
+            try { globalThis.sessionStorage?.setItem(reloadKey, detachedId); } catch { /* cosmetic */ }
+            try { globalThis.location?.reload?.(); } catch { /* keep waiting */ }
             return;
           }
-          try {
-            ctx?.uiWorkspace?.openSession?.(detachedId);
-          } catch { /* the catalogue may still be loading */ }
-        }, 400);
+          if (Date.now() - matchedSince > 14000) {
+            done = true;
+            window.clearInterval(timer);
+            try { globalThis.sessionStorage?.removeItem(reloadKey); } catch { /* cosmetic */ }
+            announce('failed');
+          }
+        }, 300);
         return () => { window.clearInterval(timer); };
       }, [ctx, detachedId]);
 
@@ -5104,6 +5215,9 @@ window.__ModuleLoader__.load({
           button.addEventListener('click', (event) => {
             event.preventDefault();
             event.stopPropagation();
+            // A row press shortly before this one may still have a fold queued;
+            // letting it fire after the arrow's own toggle flips the tree back.
+            cancelParentToggle();
             toggle(parentId);
           });
           row.dataset.oveSubagentHost = 'true';
@@ -5639,45 +5753,183 @@ window.__ModuleLoader__.load({
       // Dragging a conversation out of the window is the second way to make it
       // independent: the drop happens outside the page, so `dragend` with no
       // drop effect and a pointer that left the document is the signal.
+      //
+      // Every condition below exists because the first version of this detector
+      // also fired for ordinary in-app drags: `dragleave` carries a null
+      // relatedTarget while the pointer is still inside the page, so one drag
+      // across the sidebar could open an OS window nobody asked for. A drag now
+      // has to move, has to end outside the viewport, and must not be a drop
+      // any target accepted.
+      //
+      // The shipped sidebar reorders conversation rows with the same drag, and
+      // its `end()` commits whichever row was hovered last. Dragging a row out
+      // of the window therefore reordered the list on the way to opening a
+      // window. The fix below drops the conversation onto its own row first:
+      // the sidebar's commit ignores a self-target, which cancels the reorder
+      // while keeping its own drag bookkeeping intact.
       React.useEffect(() => {
         let dragging = null;
-        const rowIdOf = (target) => {
-          const element = target instanceof Element ? target.closest('[data-row-key^="session:"]') : null;
-          return element === null ? '' : String(element.getAttribute('data-row-key')).slice('session:'.length);
+        const rowOf = (target) => (target instanceof Element ? target.closest('[data-row-key^="session:"]') : null);
+        const idOfRow = (row) => (row === null ? '' : String(row.getAttribute('data-row-key')).slice('session:'.length));
+        // A drag that leaves through the OS window edge stops receiving mouse
+        // events, so "released outside" shows up as "last seen at the edge".
+        // The margin is what makes the gesture reliable in a real window.
+        const outsideOf = (event) => event.clientX <= 0 || event.clientY <= 0
+          || event.clientX >= window.innerWidth - 6 || event.clientY >= window.innerHeight - 6;
+        /** The sidebar's floating row clone while it reorders; the last one wins. */
+        const previewOf = () => {
+          const nodes = document.querySelectorAll('[class*="dragPreview"]');
+          return nodes.length === 0 ? null : nodes[nodes.length - 1];
+        };
+        /** Put the reorder preview back exactly as the sidebar drew it. */
+        const restorePreview = (state) => {
+          const preview = state === null || state === undefined ? null : state.preview;
+          if (!(preview instanceof HTMLElement) || !preview.isConnected) return;
+          preview.classList.remove('ove-detach-drag-preview');
+          if (state.previewHtml.length > 0) preview.innerHTML = state.previewHtml;
+          state.preview = null;
+          state.previewHtml = '';
+        };
+        /** The pill that replaces the row clone once releasing would open a window. */
+        const hintOf = (text) => {
+          const pill = document.createElement('div');
+          pill.className = 'ove-detach-drag-hint';
+          const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+          svg.setAttribute('viewBox', '0 0 16 16');
+          svg.setAttribute('width', '14');
+          svg.setAttribute('height', '14');
+          svg.setAttribute('aria-hidden', 'true');
+          const frame = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+          frame.setAttribute('d', 'M2.2 3.6h7.4a1 1 0 0 1 1 1v7.2a1 1 0 0 1-1 1H2.2a1 1 0 0 1-1-1V4.6a1 1 0 0 1 1-1Z');
+          frame.setAttribute('fill', 'none');
+          frame.setAttribute('stroke', 'currentColor');
+          frame.setAttribute('stroke-width', '1.3');
+          const arrow = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+          arrow.setAttribute('d', 'M9 2.4h4.4v4.2M13.1 2.7 8.6 7.2');
+          arrow.setAttribute('fill', 'none');
+          arrow.setAttribute('stroke', 'currentColor');
+          arrow.setAttribute('stroke-width', '1.3');
+          arrow.setAttribute('stroke-linecap', 'round');
+          arrow.setAttribute('stroke-linejoin', 'round');
+          svg.append(frame, arrow);
+          const label = document.createElement('span');
+          label.textContent = text;
+          pill.append(svg, label);
+          return pill;
+        };
+        /** Show the release hint under the cursor instead of the reorder clone. */
+        const hintPreview = (state) => {
+          const preview = state.preview;
+          if (!(preview instanceof HTMLElement) || !preview.isConnected) return;
+          if (state.previewHtml.length === 0) state.previewHtml = preview.innerHTML;
+          preview.classList.add('ove-detach-drag-preview');
+          preview.replaceChildren(hintOf(tr('detachDragHint')));
         };
         const onDragStart = (event) => {
-          const id = rowIdOf(event.target);
-          dragging = id.length > 0 ? { id, outside: false } : null;
-        };
-        const onDragLeave = (event) => {
+          const row = rowOf(event.target);
+          const id = idOfRow(row);
+          dragging = id.length > 0
+            ? {
+              id,
+              row,
+              outside: false,
+              dropped: false,
+              moved: false,
+              startX: event.clientX,
+              startY: event.clientY,
+              preview: null,
+              previewHtml: '',
+            }
+            : null;
           if (dragging === null) return;
-          // A null relatedTarget means the pointer left the document itself.
-          if (event.relatedTarget === null) dragging.outside = true;
+          // The shipped handler creates its clone later in this same event, so
+          // the preview can only be picked up on the next frame.
+          const state = dragging;
+          globalThis.requestAnimationFrame?.(() => {
+            if (dragging !== state) return;
+            state.preview = previewOf();
+          });
         };
         const onDragOver = (event) => {
           if (dragging === null) return;
-          if (event.clientX <= 0 || event.clientY <= 0
-            || event.clientX >= window.innerWidth || event.clientY >= window.innerHeight) {
-            dragging.outside = true;
+          if (Math.abs(event.clientX - dragging.startX) + Math.abs(event.clientY - dragging.startY) > 24) {
+            dragging.moved = true;
           }
+          const outside = outsideOf(event);
+          if (outside && dragging.outside !== true) {
+            dragging.outside = true;
+            hintPreview(dragging);
+          } else if (!outside && dragging.outside === true) {
+            dragging.outside = false;
+            restorePreview(dragging);
+          }
+        };
+        // Leaving the page is the moment the gesture becomes "release to open a
+        // window", so the hint switches here. This handler only paints: a
+        // pointer leaving one element for another also fires dragleave with a
+        // null relatedTarget, so the coordinates decide, and the detach itself
+        // still needs the checks in `dragend`.
+        const onDragLeave = (event) => {
+          if (dragging === null) return;
+          // The pointer can reach the window edge without another dragover, so
+          // the movement measure has to be taken here as well.
+          if (Math.abs(event.clientX - dragging.startX) + Math.abs(event.clientY - dragging.startY) > 24) {
+            dragging.moved = true;
+          }
+          if (event.clientX < 0 || event.clientY < 0
+            || event.clientX >= window.innerWidth - 6 || event.clientY >= window.innerHeight - 6) {
+            dragging.outside = true;
+            hintPreview(dragging);
+          }
+        };
+        const onDrop = () => {
+          if (dragging === null) return;
+          dragging.dropped = true;
+          // A real drop keeps the sidebar's own preview and commits its reorder.
+          restorePreview(dragging);
         };
         const onDragEnd = (event) => {
           const state = dragging;
           dragging = null;
-          if (state === null || state.outside !== true) return;
-          // A drop on a real target keeps its own meaning (reorder, file, …).
-          if (event.dataTransfer !== null && event.dataTransfer.dropEffect !== 'none') return;
+          if (state === null) return;
+          restorePreview(state);
+          if (Math.abs(event.clientX - state.startX) + Math.abs(event.clientY - state.startY) > 24) {
+            state.moved = true;
+          }
+          if (state.dropped || state.moved !== true) return;
+          if (state.outside !== true && !outsideOf(event)) return;
+          // A drop on a real target already fired `drop` (state.dropped): that
+          // keeps its own meaning, reorder or file. A release outside the window
+          // never reaches a target, so no drop fires and the drag is a detach.
           if (detachedSet.has(state.id)) return;
-          void detachSession(ctx, state.id, { title: tr('detachedWindowTitle'), t: tr });
+          // Cancel the reorder the sidebar would commit for the last hovered
+          // row: dropping the conversation onto its own row is a no-op there.
+          const row = state.row;
+          if (row instanceof HTMLElement && row.isConnected) {
+            try {
+              const rect = row.getBoundingClientRect();
+              row.dispatchEvent(new DragEvent('drop', {
+                bubbles: true,
+                cancelable: true,
+                clientX: rect.left + 4,
+                clientY: rect.top + 2,
+                dataTransfer: event.dataTransfer,
+              }));
+            } catch { /* the shipped drag already ended */ }
+          }
+          void detachSession(ctx, state.id, { title: tr('detachedWindowTitle'), t: tr, reason: 'drag' });
         };
         document.addEventListener('dragstart', onDragStart, true);
-        document.addEventListener('dragleave', onDragLeave, true);
         document.addEventListener('dragover', onDragOver, true);
+        document.addEventListener('dragleave', onDragLeave, true);
+        document.addEventListener('drop', onDrop, true);
         document.addEventListener('dragend', onDragEnd, true);
         return () => {
+          restorePreview(dragging);
           document.removeEventListener('dragstart', onDragStart, true);
-          document.removeEventListener('dragleave', onDragLeave, true);
           document.removeEventListener('dragover', onDragOver, true);
+          document.removeEventListener('dragleave', onDragLeave, true);
+          document.removeEventListener('drop', onDrop, true);
           document.removeEventListener('dragend', onDragEnd, true);
         };
       }, [ctx, tr]);
@@ -7794,12 +8046,35 @@ window.__ModuleLoader__.load({
       React.useEffect(() => {
         if (!open) return undefined;
         modalStack.push(token);
-        const focusable = panelRef.current?.querySelector(MODAL_FOCUSABLE);
-        if (focusable instanceof HTMLElement) focusable.focus();
-        else panelRef.current?.focus?.();
+        const panel = panelRef.current;
+        // Focus goes back here when the dialog closes: the opener is the only
+        // place a keyboard user can continue from.
+        const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+        const focusables = () => [...(panel?.querySelectorAll(MODAL_FOCUSABLE) ?? [])]
+          .filter((node) => node instanceof HTMLElement && node.offsetParent !== null);
+        const focusFirst = () => {
+          const first = focusables()[0];
+          if (first !== undefined) first.focus();
+          else if (panel !== null) panel.focus?.();
+        };
+        focusFirst();
+        // The settings sheet that hosts this dialog keeps a focus trap of its
+        // own, and the dialog is portalled outside it: focus that lands on the
+        // page behind is pulled back here instead of stranding the user there.
+        const onFocusIn = (event) => {
+          if (modalStack[modalStack.length - 1] !== token) return;
+          const target = event.target;
+          if (panel === null || !(target instanceof Node) || panel.contains(target)) return;
+          focusFirst();
+        };
+        document.addEventListener('focusin', onFocusIn, true);
         return () => {
+          document.removeEventListener('focusin', onFocusIn, true);
           const index = modalStack.indexOf(token);
           if (index >= 0) modalStack.splice(index, 1);
+          if (previous !== null && previous.isConnected && typeof previous.focus === 'function') {
+            try { previous.focus(); } catch { /* the opener is gone */ }
+          }
         };
       }, [open, panelRef, token]);
       React.useEffect(() => {
@@ -7817,19 +8092,24 @@ window.__ModuleLoader__.load({
             return;
           }
           if (event.key !== 'Tab') return;
-          const nodes = [...(panelRef.current?.querySelectorAll(MODAL_FOCUSABLE) ?? [])]
+          // Take every Tab press, not just the wrap at the ends: the shipped
+          // settings sheet behind the portal would otherwise receive the press
+          // and move focus out of the dialog on the first step.
+          event.preventDefault();
+          event.stopPropagation();
+          const panel = panelRef.current;
+          const nodes = [...(panel?.querySelectorAll(MODAL_FOCUSABLE) ?? [])]
             .filter((node) => node instanceof HTMLElement && node.offsetParent !== null);
-          if (nodes.length === 0) return;
-          const first = nodes[0];
-          const last = nodes[nodes.length - 1];
-          const active = document.activeElement;
-          if (event.shiftKey && (active === first || active === panelRef.current)) {
-            event.preventDefault();
-            last.focus();
-          } else if (!event.shiftKey && active === last) {
-            event.preventDefault();
-            first.focus();
+          if (nodes.length === 0) {
+            panel?.focus?.();
+            return;
           }
+          const active = document.activeElement;
+          const index = nodes.indexOf(active);
+          const next = event.shiftKey
+            ? (index <= 0 ? nodes[nodes.length - 1] : nodes[index - 1])
+            : (index === -1 || index === nodes.length - 1 ? nodes[0] : nodes[index + 1]);
+          next.focus();
         };
         window.addEventListener('keydown', onKey, true);
         return () => window.removeEventListener('keydown', onKey, true);

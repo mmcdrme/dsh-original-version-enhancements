@@ -327,10 +327,10 @@ namespace OveWindow
             }
             catch (Exception error)
             {
-                // The browser will not come up: keep the error state readable and
-                // release the startup watchdog, which would otherwise end the
-                // process from under the message.
-                startupDone.Set();
+                // The browser will not come up. Record the real exception and
+                // show it, but leave the startup watchdog armed: it closes this
+                // window on the startup deadline (ending the process if even
+                // that is stuck) instead of leaving a dead window on screen.
                 ShowStartupError(error);
                 return;
             }
@@ -438,7 +438,7 @@ namespace OveWindow
             view.CoreWebView2.Navigate(options.AppUrl);
         }
 
-        private void ShowLoadFailure()
+        private void ShowLoadFailure(string message = "无法连接本机服务，请稍后重试")
         {
             try
             {
@@ -447,11 +447,11 @@ namespace OveWindow
             catch { }
             try
             {
-                splashLabel.Text = "无法连接本机服务，请稍后重试";
+                splashLabel.Text = message;
                 splashBar.Visible = false;
                 splash.Visible = true;
                 splash.BringToFront();
-                Stage("连接失败");
+                Stage("加载失败");
             }
             catch { }
         }
@@ -550,26 +550,77 @@ namespace OveWindow
 
         private void ShowStartupError(Exception error)
         {
-            var message = error == null ? "" : (error.Message ?? "");
-            var missingRuntime = message.IndexOf("WebView2 Runtime", StringComparison.OrdinalIgnoreCase) >= 0
-                || message.IndexOf("WebView2", StringComparison.OrdinalIgnoreCase) >= 0;
+            // The real exception is the only thing that can be diagnosed later:
+            // the window itself is about to be closed by the startup watchdog.
+            var logPath = WriteStartupLog(error);
+            var missingRuntime = MissingWebView2Runtime();
             Stage(missingRuntime ? "需要 WebView2 运行时" : "内置浏览器启动失败");
             try
             {
                 splashLabel.Text = missingRuntime
-                    ? "缺少 Microsoft Edge WebView2 运行时，请安装后重试"
-                    : "内置浏览器启动失败，请查看日志后重试";
+                    ? "缺少 Microsoft Edge WebView2 运行时，请安装后重新打开窗口。"
+                    : "内置浏览器启动失败：" + SummarizeError(error)
+                        + Environment.NewLine + "详情见日志：" + logPath;
                 splashBar.Visible = false;
                 splash.Visible = true;
                 splash.BringToFront();
             }
             catch { }
-            if (!missingRuntime) return;
-            MessageBox.Show(
-                "独立窗口需要 Microsoft Edge WebView2 运行时。\n请从 Microsoft 官网安装“WebView2 Runtime”后重新打开窗口。",
-                "独立窗口",
-                MessageBoxButtons.OK,
-                MessageBoxIcon.Information);
+        }
+
+        /**
+         * Whether the WebView2 runtime is really absent. The old test matched the
+         * word "WebView2" anywhere in the exception text, and the data-folder
+         * probe reports its own path (…\dsh-ove-window\webview2): a plain
+         * permission error was then announced as a missing runtime and sent the
+         * user off to reinstall it. Ask the loader, which knows.
+         */
+        private static bool MissingWebView2Runtime()
+        {
+            try
+            {
+                var version = CoreWebView2Environment.GetAvailableBrowserVersionString();
+                return string.IsNullOrEmpty(version);
+            }
+            catch
+            {
+                return true;
+            }
+        }
+
+        /** First line of an exception, short enough for the loading label. */
+        private static string SummarizeError(Exception error)
+        {
+            if (error == null) return "未知错误";
+            var text = (error.Message ?? "").Trim();
+            if (text.Length == 0) text = error.GetType().Name;
+            var line = text.Split('\n')[0].Trim();
+            return line.Length <= 160 ? line : line.Substring(0, 160) + "…";
+        }
+
+        /**
+         * Append one startup failure to %LOCALAPPDATA%\dsh-ove-window\startup-error.log
+         * and return its path for the error label.
+         * @param error - the exception that stopped the embedded browser.
+         * @returns the log path (also when writing failed, so the label can point at it).
+         */
+        private static string WriteStartupLog(Exception error)
+        {
+            var folder = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "dsh-ove-window");
+            var path = Path.Combine(folder, "startup-error.log");
+            try
+            {
+                Directory.CreateDirectory(folder);
+                var text = new System.Text.StringBuilder();
+                text.Append('[').Append(DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss")).Append("] ");
+                text.Append(error == null ? "unknown startup error" : error.ToString());
+                text.AppendLine();
+                File.AppendAllText(path, text.ToString(), System.Text.Encoding.UTF8);
+            }
+            catch { }
+            return path;
         }
 
         /** The conversation page says it finished mounting; lift the cover. */
@@ -578,9 +629,17 @@ namespace OveWindow
             string message;
             try { message = args.TryGetWebMessageAsString(); }
             catch { return; }
-            // `ove-timeout` means the page gave up waiting: still lift the cover
-            // so the user sees what is there instead of a marquee forever.
-            if (message == "ove-ready" || message == "ove-timeout") Reveal();
+            if (message == "ove-ready")
+            {
+                Reveal();
+                return;
+            }
+            // `ove-timeout` means the page gave up waiting. Lifting the cover
+            // here used to reveal the app's welcome screen, which reads as a
+            // window that silently opened the wrong conversation. Keep a clear
+            // failure state instead; the Host's startup grace period closes a
+            // window that never reports ready.
+            if (message == "ove-timeout") ShowLoadFailure("无法加载会话，请稍后重试。");
         }
 
         private void Reveal()
