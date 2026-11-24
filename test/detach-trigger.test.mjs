@@ -23,24 +23,25 @@ const between = (text, start, end) => {
 }
 
 test('a drag must move, end outside and not be an accepted drop to detach', () => {
-  const effect = between(client, 'let dragging = null;', '}, [ctx, tr]);')
+  const effect = between(client, 'let dragging = null;', '}, [ctx, tr, windowAppearance.mode]);')
   assert.match(effect, /moved: false/u)
-  assert.match(effect, /dragging\.moved = true/u)
+  assert.match(effect, /state\.moved = true/u)
   assert.match(effect, /dropped = true/u)
-  assert.match(effect, /state\.dropped \|\| state\.moved !== true/u)
-  assert.match(effect, /state\.outside !== true && !outsideOf\(event\)/u)
+  assert.match(effect, /if \(state\.moved !== true\) return;/u)
+  assert.match(effect, /const zone = zoneOf\(point\)/u)
+  assert.match(effect, /if \(state\.zone === 'workspace' && !rawOutside\) return;/u)
   // Only a real drop event separates "reorder" from "detach"; the dropEffect a
   // hovered row left behind must not be mistaken for one.
-  assert.match(effect, /if \(state\.dropped/u)
+  assert.match(effect, /dragging\.dropped = true/u)
   assert.doesNotMatch(effect, /dropEffect !== 'none'/u)
-  assert.match(effect, /window\.innerWidth - 6/u)
+  assert.match(effect, /window\.innerWidth - 2/u)
   // `dragleave` with a null relatedTarget is what misfired before: it must
   // not decide the detach. It may only paint the hint, and only for
   // coordinates that are really outside the viewport.
   assert.doesNotMatch(effect, /if \(event\.relatedTarget === null\) dragging\.outside = true;/u)
   const leave = between(effect, 'const onDragLeave = (event) => {', 'const onDrop = () => {')
-  assert.match(leave, /event\.clientX < 0/u)
-  assert.match(leave, /hintPreview\(dragging\)/u)
+  assert.match(leave, /if \(zone === 'outside'\)/u)
+  assert.match(leave, /hintPreview\(dragging, labelFor\('detachDragHint'/u)
   assert.match(effect, /addEventListener\('drop', onDrop, true\)/u)
 })
 

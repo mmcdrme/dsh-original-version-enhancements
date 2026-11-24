@@ -789,7 +789,7 @@ window.__ModuleLoader__.load({
     const WINDOW_KEY = 'original-version-enhancements.window.v1';
     const WINDOW_SIZE_IDS = ['compact', 'standard', 'wide'];
     const WINDOW_MODES = ['native', 'panel'];
-    const DEFAULT_WINDOW = { opacity: 100, size: 'standard', mute: true, mode: 'native' };
+    const DEFAULT_WINDOW = { opacity: 100, size: 'standard', mute: true, mode: 'native', split: false };
 
     const readWindow = () => {
       try {
@@ -801,6 +801,7 @@ window.__ModuleLoader__.load({
           size: WINDOW_SIZE_IDS.includes(saved.size) ? saved.size : DEFAULT_WINDOW.size,
           mute: saved.mute !== false,
           mode: WINDOW_MODES.includes(saved.mode) ? saved.mode : DEFAULT_WINDOW.mode,
+          split: saved.split === true,
         };
       } catch {
         return { ...DEFAULT_WINDOW };
@@ -825,6 +826,7 @@ window.__ModuleLoader__.load({
         size: WINDOW_SIZE_IDS.includes(next.size) ? next.size : windowState.size,
         mute: next.mute !== false,
         mode: WINDOW_MODES.includes(next.mode) ? next.mode : windowState.mode,
+        split: next.split === true,
       };
       try {
         globalThis.localStorage?.setItem(WINDOW_KEY, JSON.stringify(windowState));
@@ -983,7 +985,12 @@ window.__ModuleLoader__.load({
       };
       if (typeof sessionId !== 'string' || sessionId.length === 0) return false;
       const already = readDetachedBeat(sessionId) > 0;
-      const appearance = getWindow();
+      // A caller may pick the shape for this one action: the split setting sends
+      // a drag past the window edge to a real window and an in-page drop to the
+      // in-page frame, whatever the "window kind" setting says.
+      const baseAppearance = getWindow();
+      const wantedMode = WINDOW_MODES.includes(labels?.mode) ? labels.mode : baseAppearance.mode;
+      const appearance = { ...baseAppearance, mode: wantedMode };
       // In-page windows can live side by side: each one is its own document.
       // The native companion is the one that moves, because an OS window per
       // conversation is not what this switch promises.
@@ -2682,6 +2689,9 @@ window.__ModuleLoader__.load({
                         'aria-pressed': appearance.mode === id,
                         onClick: () => setWindow({ mode: id }),
                       }, tr(`window.mode.${id}`))))),
+                  // Split mode: the drop position picks the window kind, so
+                  // one drag can mean "in-page" or "real OS window".
+                  switchRow('window.split', appearance.split === true, () => setWindow({ split: appearance.split !== true })),
                   settingRow(tr('window.opacity'), tr('window.opacity.desc'),
                     h('div', { className: 'ove-window-opacity' },
                       h('input', {
@@ -3881,6 +3891,17 @@ window.__ModuleLoader__.load({
     /* Detached conversations: menu row and the cross-window bridge        */
     /* ------------------------------------------------------------------ */
 
+    /**
+     * The window-and-outgoing-arrow glyph for "send it to its own window".
+     * Shared by the session-menu row and the drag pill, so the gesture and the
+     * menu entry that does the same thing wear the same icon.
+     */
+    const DETACH_ICON_PATHS = [
+      'M6.5 3.2H3.6a1.1 1.1 0 0 0-1.1 1.1v8.1a1.1 1.1 0 0 0 1.1 1.1h8.1a1.1 1.1 0 0 0 1.1-1.1V9.5',
+      'M9.6 2.4h4v4',
+      'M13.4 2.6 7.6 8.4',
+    ];
+
     /** A window with an arrow leaving it. */
     function DetachIcon() {
       return h('svg', {
@@ -3896,9 +3917,7 @@ window.__ModuleLoader__.load({
         focusable: 'false',
         style: { display: 'block', pointerEvents: 'none' },
       },
-      h('path', { d: 'M6.5 3.2H3.6a1.1 1.1 0 0 0-1.1 1.1v8.1a1.1 1.1 0 0 0 1.1 1.1h8.1a1.1 1.1 0 0 0 1.1-1.1V9.5' }),
-      h('path', { d: 'M9.6 2.4h4v4' }),
-      h('path', { d: 'M13.4 2.6 7.6 8.4' }));
+      DETACH_ICON_PATHS.map((d) => h('path', { key: d, d })));
     }
 
     /**
@@ -5599,6 +5618,7 @@ window.__ModuleLoader__.load({
       const detached = useDetached();
       const panels = usePanels();
       const panelOrder = usePanelOrder();
+      const windowAppearance = useWindow();
 
       // The Host owns the independent OS windows, so its report is the only
       // place their liveness can come from: mirror it while this page lives.
@@ -5771,18 +5791,102 @@ window.__ModuleLoader__.load({
         let dragging = null;
         const rowOf = (target) => (target instanceof Element ? target.closest('[data-row-key^="session:"]') : null);
         const idOfRow = (row) => (row === null ? '' : String(row.getAttribute('data-row-key')).slice('session:'.length));
+        // The hint names the place the conversation will actually open. With the
+        // "split" option the drop position decides: past the window edge opens a
+        // real OS window, anywhere else in the page opens the in-page frame.
+        const splitWindows = windowAppearance.split === true;
+        const modeForZone = (zone) => (splitWindows
+          ? (zone === 'outside' ? 'native' : 'panel')
+          : windowAppearance.mode);
+        const labelFor = (base, zone) => {
+          const mode = modeForZone(zone);
+          return tr(mode === 'panel' ? `${base}Panel` : base);
+        };
+        /**
+         * The pointer's client position. Some desktop WebViews report (0,0) for
+         * drag events; then fall back to the screen coordinates minus the window
+         * origin (frame borders are the only error, which is plenty for a pill).
+         */
+        const pointerOf = (event) => {
+          if (Number.isFinite(event.clientX) && Number.isFinite(event.clientY)
+            && !(event.clientX === 0 && event.clientY === 0)) {
+            return { x: event.clientX, y: event.clientY };
+          }
+          const screenX = Number.isFinite(event.screenX) ? event.screenX : NaN;
+          const screenY = Number.isFinite(event.screenY) ? event.screenY : NaN;
+          if (!Number.isFinite(screenX) || !Number.isFinite(screenY) || (screenX === 0 && screenY === 0)) return null;
+          const originX = Number.isFinite(window.screenX) ? window.screenX : 0;
+          const originY = Number.isFinite(window.screenY) ? window.screenY : 0;
+          const borderX = Math.max(0, window.outerWidth - window.innerWidth) / 2;
+          const chromeY = Math.max(0, window.outerHeight - window.innerHeight);
+          return { x: screenX - originX - borderX, y: screenY - originY - chromeY };
+        };
         // A drag that leaves through the OS window edge stops receiving mouse
-        // events, so "released outside" shows up as "last seen at the edge".
-        // The margin is what makes the gesture reliable in a real window.
-        const outsideOf = (event) => event.clientX <= 0 || event.clientY <= 0
-          || event.clientX >= window.innerWidth - 6 || event.clientY >= window.innerHeight - 6;
+        // events, so "released outside" shows up as "last seen at (or past) the
+        // edge". Only the very edge counts: a row dragged near the boundary is
+        // still a reorder, and hinting "release to open a window" there was the
+        // false positive users saw while the pointer never left the window.
+        const atOutside = (point) => point !== null && (point.x <= 0 || point.y <= 0
+          || point.x >= window.innerWidth - 2 || point.y >= window.innerHeight - 2);
+        /**
+         * The sortable workspace: the block the session rows live in. Sorting is
+         * only allowed there; anywhere else the drag means "open in its own
+         * window" (a pill inside the window, a large blurred drop card once the
+         * pointer leaves the window itself).
+         */
+        let workspaceRect = null;
+        const workspaceOf = () => {
+          const boxes = [...document.querySelectorAll('[data-row-key^="session:"]')]
+            .map((node) => node.getBoundingClientRect())
+            .filter((box) => box.width > 0 && box.height > 0);
+          if (boxes.length === 0) return null;
+          return {
+            left: Math.min(...boxes.map((box) => box.left)) - 12,
+            top: Math.min(...boxes.map((box) => box.top)) - 8,
+            right: Math.max(...boxes.map((box) => box.right)) + 12,
+            bottom: Math.max(...boxes.map((box) => box.bottom)) + 8,
+          };
+        };
+        const insideWorkspace = (point) => workspaceRect !== null && point !== null
+          && point.x >= workspaceRect.left && point.x <= workspaceRect.right
+          && point.y >= workspaceRect.top && point.y <= workspaceRect.bottom;
+        // The desktop frame hides the real page edge: the last drag event before
+        // the pointer leaves can still report a position tens of pixels inside,
+        // so a band along the frame also counts as "leaving" for the big card.
+        const FRAME_BAND_PX = 56;
+        const nearFrame = (point) => point !== null && (point.x <= FRAME_BAND_PX || point.y <= FRAME_BAND_PX
+          || point.x >= window.innerWidth - FRAME_BAND_PX
+          || point.y >= window.innerHeight - FRAME_BAND_PX);
+        const zoneOf = (point) => {
+          if (point === null) return 'workspace';
+          // Rows win over the band: dragging a row near the sidebar's edge is
+          // still a reorder, not a detach.
+          if (insideWorkspace(point)) return 'workspace';
+          if (atOutside(point) || nearFrame(point)) return 'outside';
+          return 'window';
+        };
         /** The sidebar's floating row clone while it reorders; the last one wins. */
         const previewOf = () => {
           const nodes = document.querySelectorAll('[class*="dragPreview"]');
           return nodes.length === 0 ? null : nodes[nodes.length - 1];
         };
+        /**
+         * Hide the sidebar's reorder insertion line while the drag means "release
+         * opens a window". The line would still be sitting on the last row the
+         * pointer crossed, which reads as a pending reorder that will not happen.
+         */
+        const intentMark = (on) => {
+          try { document.documentElement.classList.toggle('ove-detach-intent', on === true); } catch { /* cosmetic */ }
+        };
         /** Put the reorder preview back exactly as the sidebar drew it. */
         const restorePreview = (state) => {
+          intentMark(false);
+          hidePill();
+          hideOverlay();
+          if (state !== null && state !== undefined) {
+            state.hinted = false;
+            state.hintText = '';
+          }
           const preview = state === null || state === undefined ? null : state.preview;
           if (!(preview instanceof HTMLElement) || !preview.isConnected) return;
           preview.classList.remove('ove-detach-drag-preview');
@@ -5790,40 +5894,162 @@ window.__ModuleLoader__.load({
           state.preview = null;
           state.previewHtml = '';
         };
-        /** The pill that replaces the row clone once releasing would open a window. */
-        const hintOf = (text) => {
-          const pill = document.createElement('div');
-          pill.className = 'ove-detach-drag-hint';
+        /** The window-and-arrow glyph, shared with the session menu. */
+        const iconSvg = () => {
           const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
           svg.setAttribute('viewBox', '0 0 16 16');
-          svg.setAttribute('width', '14');
-          svg.setAttribute('height', '14');
+          svg.setAttribute('width', '15');
+          svg.setAttribute('height', '15');
+          svg.setAttribute('fill', 'none');
+          svg.setAttribute('stroke', 'currentColor');
+          svg.setAttribute('stroke-width', '1.4');
+          svg.setAttribute('stroke-linecap', 'round');
+          svg.setAttribute('stroke-linejoin', 'round');
           svg.setAttribute('aria-hidden', 'true');
-          const frame = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-          frame.setAttribute('d', 'M2.2 3.6h7.4a1 1 0 0 1 1 1v7.2a1 1 0 0 1-1 1H2.2a1 1 0 0 1-1-1V4.6a1 1 0 0 1 1-1Z');
-          frame.setAttribute('fill', 'none');
-          frame.setAttribute('stroke', 'currentColor');
-          frame.setAttribute('stroke-width', '1.3');
-          const arrow = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-          arrow.setAttribute('d', 'M9 2.4h4.4v4.2M13.1 2.7 8.6 7.2');
-          arrow.setAttribute('fill', 'none');
-          arrow.setAttribute('stroke', 'currentColor');
-          arrow.setAttribute('stroke-width', '1.3');
-          arrow.setAttribute('stroke-linecap', 'round');
-          arrow.setAttribute('stroke-linejoin', 'round');
-          svg.append(frame, arrow);
-          const label = document.createElement('span');
-          label.textContent = text;
-          pill.append(svg, label);
-          return pill;
+          for (const d of DETACH_ICON_PATHS) {
+            const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+            path.setAttribute('d', d);
+            svg.append(path);
+          }
+          return svg;
         };
-        /** Show the release hint under the cursor instead of the reorder clone. */
-        const hintPreview = (state) => {
+        /**
+         * The hint is its own fixed-position element rather than a rewrite of the
+         * sidebar's drag preview: the desktop client's WebView does not position
+         * that clone inside the page, so a pill placed inside it was invisible
+         * there. This one only depends on the coordinates the drag reports.
+         */
+        let pill = null;
+        const pillNode = () => {
+          if (pill !== null && pill.isConnected) return pill;
+          const node = document.createElement('div');
+          node.className = 'ove-detach-drag-hint ove-detach-drag-floater';
+          node.setAttribute('aria-hidden', 'true');
+          const label = document.createElement('span');
+          node.append(iconSvg(), label);
+          document.body.appendChild(node);
+          pill = node;
+          return node;
+        };
+        /**
+         * Keep the pill right next to the pointer: a small offset below-right,
+         * sliding back only as far as needed to stay on screen. The earlier
+         * version flipped it to the opposite side at an edge, which put it far
+         * away from the cursor the moment the drag reached the boundary.
+         */
+        const placePill = (node, x, y) => {
+          const width = node.offsetWidth || 190;
+          const height = node.offsetHeight || 34;
+          const left = Math.min(
+            Math.max(x + 12, 6),
+            Math.max(6, window.innerWidth - width - 6),
+          );
+          const top = Math.min(
+            Math.max(y + 14, 6),
+            Math.max(6, window.innerHeight - height - 6),
+          );
+          node.style.left = `${Math.round(left)}px`;
+          node.style.top = `${Math.round(top)}px`;
+        };
+        const hidePill = () => {
+          globalThis.clearTimeout(pillTimer);
+          pillTimer = 0;
+          if (pill === null) return;
+          try { pill.remove(); } catch { /* already gone */ }
+          pill = null;
+        };
+        let pillTimer = 0;
+        const showPill = (text, x, y) => {
+          const node = pillNode();
+          const label = node.lastElementChild;
+          if (label !== null && label.textContent !== text) label.textContent = text;
+          node.style.display = 'inline-flex';
+          placePill(node, x, y);
+          // Safety net: if a desktop drag ends without dragend (releasing over
+          // another app can swallow it), the pill must not stay on screen.
+          globalThis.clearTimeout(pillTimer);
+          pillTimer = globalThis.setTimeout(() => {
+            hidePill();
+            intentMark(false);
+          }, 12000);
+        };
+        /**
+         * Show the detach hint next to the cursor.
+         * Position comes from the last *valid* pointer sample: the dragleave
+         * that reports the exit often carries (0, 0), which would otherwise
+         * park the pill in the top-left corner instead of at the mouse.
+         */
+        const hintPreview = (state, text) => {
+          if (state.hinted === true) {
+            state.hintText = text;
+            showPill(text, state.lastX, state.lastY);
+            return;
+          }
+          state.hinted = true;
+          state.hintText = text;
+          // The insertion line stops meaning anything the moment releasing would
+          // open a window, whether or not the sidebar drew a preview clone.
+          intentMark(true);
           const preview = state.preview;
-          if (!(preview instanceof HTMLElement) || !preview.isConnected) return;
-          if (state.previewHtml.length === 0) state.previewHtml = preview.innerHTML;
-          preview.classList.add('ove-detach-drag-preview');
-          preview.replaceChildren(hintOf(tr('detachDragHint')));
+          if (preview instanceof HTMLElement && preview.isConnected) {
+            if (state.previewHtml.length === 0) state.previewHtml = preview.innerHTML;
+            preview.classList.add('ove-detach-drag-preview');
+            // The row clone would sit under the cursor next to this pill.
+            preview.replaceChildren();
+          }
+          showPill(text, state.lastX, state.lastY);
+        };
+        /**
+         * The large drop card: the pointer is outside the desktop window, so a
+         * pill cannot follow it any more. The main window shows a blurred sheet
+         * with a big card in the centre instead.
+         */
+        let overlay = null;
+        const overlayNode = () => {
+          if (overlay !== null && overlay.isConnected) return overlay;
+          const node = document.createElement('div');
+          node.className = 'ove-detach-drop-overlay';
+          node.setAttribute('aria-hidden', 'true');
+          const card = document.createElement('div');
+          card.className = 'ove-detach-drop-card';
+          const icon = iconSvg();
+          icon.setAttribute('width', '44');
+          icon.setAttribute('height', '44');
+          const label = document.createElement('span');
+          label.textContent = labelFor('detachDropLabel', 'outside');
+          card.append(icon, label);
+          node.append(card);
+          document.body.appendChild(node);
+          overlay = node;
+          return node;
+        };
+        const showOverlay = () => {
+          hidePill();
+          intentMark(true);
+          overlayNode().classList.add('is-visible');
+        };
+        const hideOverlay = () => {
+          if (overlay === null) return;
+          overlay.classList.remove('is-visible');
+        };
+        /**
+         * A drag released over another app can lose its dragend, and a
+         * right-click cancel may only reach the page just after it. Opening the
+         * window therefore waits a moment, and a right click cancels the wait.
+         */
+        let pendingDetach = null;
+        const cancelPendingDetach = () => {
+          if (pendingDetach === null) return false;
+          globalThis.clearTimeout(pendingDetach);
+          pendingDetach = null;
+          return true;
+        };
+        const scheduleDetach = (id, mode) => {
+          cancelPendingDetach();
+          pendingDetach = globalThis.setTimeout(() => {
+            pendingDetach = null;
+            void detachSession(ctx, id, { title: tr('detachedWindowTitle'), t: tr, reason: 'drag', mode });
+          }, 350);
         };
         const onDragStart = (event) => {
           const row = rowOf(event.target);
@@ -5839,9 +6065,20 @@ window.__ModuleLoader__.load({
               startY: event.clientY,
               preview: null,
               previewHtml: '',
+              hinted: false,
+              hintText: '',
+              zone: 'workspace',
+              cancelled: false,
+              lastRow: null,
+              lastX: event.clientX,
+              lastY: event.clientY,
+              lastEvent: Date.now(),
+              timer: 0,
             }
             : null;
           if (dragging === null) return;
+          workspaceRect = workspaceOf();
+          hideOverlay();
           // The shipped handler creates its clone later in this same event, so
           // the preview can only be picked up on the next frame.
           const state = dragging;
@@ -5849,20 +6086,143 @@ window.__ModuleLoader__.load({
             if (dragging !== state) return;
             state.preview = previewOf();
           });
+          // A fast exit can stop delivering drag events before any of them says
+          // "outside"; the line then stays frozen at the last row. Silence with
+          // the pointer last seen near an edge means the pointer left.
+          state.timer = globalThis.setInterval(() => {
+            const live = dragging;
+            if (live !== state || live.hinted !== false || live.moved !== true) return;
+            if (Date.now() - live.lastEvent < 220) return;
+            // Only a last position at/over the edge counts; a pointer merely
+            // near the boundary still means a reorder.
+            const atFrame = live.lastX <= 64 || live.lastY <= 64
+              || live.lastX >= window.innerWidth - 64 || live.lastY >= window.innerHeight - 64;
+            if (!atFrame) return;
+            live.outside = true;
+            live.zone = 'outside';
+            hintPreview(live, labelFor('detachDragHint', 'outside'));
+            showOverlay();
+          }, 90);
+        };
+        const rowUnder = (event, point) => {
+          const fromTarget = rowOf(event.target);
+          if (fromTarget !== null) return fromTarget;
+          if (point === null) return null;
+          const under = typeof document.elementFromPoint === 'function'
+            ? document.elementFromPoint(point.x, point.y)
+            : null;
+          return rowOf(under);
         };
         const onDragOver = (event) => {
           if (dragging === null) return;
-          if (Math.abs(event.clientX - dragging.startX) + Math.abs(event.clientY - dragging.startY) > 24) {
-            dragging.moved = true;
-          }
-          const outside = outsideOf(event);
-          if (outside && dragging.outside !== true) {
+          if (dragging.cancelled === true) return;
+          const point = pointerOf(event);
+          notePosition(dragging, event, point);
+          const zone = zoneOf(point);
+          dragging.zone = zone;
+          if (zone === 'outside') {
             dragging.outside = true;
-            hintPreview(dragging);
-          } else if (!outside && dragging.outside === true) {
-            dragging.outside = false;
-            restorePreview(dragging);
+            hintPreview(dragging, labelFor('detachDragHint', 'outside'));
+            showOverlay();
+            return;
           }
+          dragging.outside = false;
+          hideOverlay();
+          const row = rowUnder(event, point);
+          if (row !== null) dragging.lastRow = row;
+          if (zone === 'window') {
+            // Outside the sortable workspace but inside the page: with the split
+            // option this is the in-page window.
+            hintPreview(dragging, labelFor('detachDragHint', 'window'));
+            return;
+          }
+          // Back in the workspace: hand the reorder preview back at the row
+          // under the pointer, or at once when it is over empty space.
+          if (dragging.hinted !== false) {
+            if (row !== null) restoreOverRow(dragging, event, row);
+            else restorePreview(dragging);
+          }
+        };
+        /** Remember where the pointer was last seen; the pill and watchdog use it. */
+        const notePosition = (state, event, point) => {
+          if (Math.abs(event.clientX - state.startX) + Math.abs(event.clientY - state.startY) > 24) {
+            state.moved = true;
+          }
+          if (point !== null) {
+            state.lastX = Math.min(Math.max(point.x, 0), window.innerWidth);
+            state.lastY = Math.min(Math.max(point.y, 0), window.innerHeight);
+          }
+          state.lastEvent = Date.now();
+        };
+        /** Ask the shipped row to recompute its insertion line at this position. */
+        const nudgeRow = (state, event, row) => {
+          if (state.lastRow === row) return;
+          state.lastRow = row;
+          try {
+            row.dispatchEvent(new DragEvent('dragover', {
+              bubbles: true,
+              cancelable: true,
+              clientX: event.clientX,
+              clientY: event.clientY,
+              dataTransfer: event.dataTransfer,
+            }));
+          } catch { /* the shipped row may be gone */ }
+        };
+        /**
+         * Put the reorder preview back as soon as the pointer is over a row
+         * again, and ask the sidebar to move its insertion line there: it only
+         * recomputes that line on `dragover`, which Chrome throttles, so after
+         * a dragenter the line would otherwise stay where it was.
+         */
+        const restoreOverRow = (state, event, row) => {
+          restorePreview(state);
+          state.lastRow = row;
+          try {
+            row.dispatchEvent(new DragEvent('dragover', {
+              bubbles: true,
+              cancelable: true,
+              clientX: event.clientX,
+              clientY: event.clientY,
+              dataTransfer: event.dataTransfer,
+            }));
+          } catch { /* the shipped row may be gone */ }
+        };
+        // Chrome throttles `dragover` but fires `dragenter` for every element
+        // entered, so the pointer coming back from the edge can show up only as
+        // a dragenter. Both handlers keep the intent state honest.
+        const onDragEnter = (event) => {
+          if (dragging === null) return;
+          if (dragging.cancelled === true) return;
+          const point = pointerOf(event);
+          notePosition(dragging, event, point);
+          const zone = zoneOf(point);
+          dragging.zone = zone;
+          if (zone === 'outside') {
+            dragging.outside = true;
+            hintPreview(dragging, labelFor('detachDragHint', 'outside'));
+            showOverlay();
+            return;
+          }
+          dragging.outside = false;
+          hideOverlay();
+          const row = rowUnder(event, point);
+          if (row !== null) dragging.lastRow = row;
+          if (zone === 'window') {
+            hintPreview(dragging, labelFor('detachDragHint', 'window'));
+            return;
+          }
+          if (row === null) {
+            if (dragging.hinted !== false) restorePreview(dragging);
+            return;
+          }
+          if (dragging.hinted !== false) {
+            restoreOverRow(dragging, event, row);
+            return;
+          }
+          // Chrome throttles dragover, so during a fast sweep the shipped
+          // insertion line lags behind (or stops at the row it saw last). Enter
+          // is delivered for every row, so ask that row for the line now.
+          nudgeRow(dragging, event, row);
         };
         // Leaving the page is the moment the gesture becomes "release to open a
         // window", so the hint switches here. This handler only paints: a
@@ -5871,36 +6231,58 @@ window.__ModuleLoader__.load({
         // still needs the checks in `dragend`.
         const onDragLeave = (event) => {
           if (dragging === null) return;
+          if (dragging.cancelled === true) return;
           // The pointer can reach the window edge without another dragover, so
           // the movement measure has to be taken here as well.
-          if (Math.abs(event.clientX - dragging.startX) + Math.abs(event.clientY - dragging.startY) > 24) {
-            dragging.moved = true;
-          }
-          if (event.clientX < 0 || event.clientY < 0
-            || event.clientX >= window.innerWidth - 6 || event.clientY >= window.innerHeight - 6) {
+          const point = pointerOf(event);
+          notePosition(dragging, event, point);
+          const zone = zoneOf(point);
+          dragging.zone = zone;
+          if (zone === 'outside') {
             dragging.outside = true;
-            hintPreview(dragging);
+            hintPreview(dragging, labelFor('detachDragHint', 'outside'));
+            showOverlay();
+            return;
+          }
+          hideOverlay();
+          if (zone === 'window') {
+            hintPreview(dragging, labelFor('detachDragHint', 'window'));
+          } else if (dragging.hinted !== false) {
+            restorePreview(dragging);
           }
         };
         const onDrop = () => {
           if (dragging === null) return;
           dragging.dropped = true;
-          // A real drop keeps the sidebar's own preview and commits its reorder.
+          hideOverlay();
+          // A drop inside the workspace keeps the sidebar's reorder; the dragend
+          // handler decides what a release outside the workspace means.
           restorePreview(dragging);
         };
         const onDragEnd = (event) => {
           const state = dragging;
           dragging = null;
           if (state === null) return;
+          try { globalThis.clearInterval(state.timer); } catch { /* already gone */ }
           restorePreview(state);
           if (Math.abs(event.clientX - state.startX) + Math.abs(event.clientY - state.startY) > 24) {
             state.moved = true;
           }
-          if (state.dropped || state.moved !== true) return;
-          if (state.outside !== true && !outsideOf(event)) return;
-          // A drop on a real target already fired `drop` (state.dropped): that
-          // keeps its own meaning, reorder or file. A release outside the window
-          // never reaches a target, so no drop fires and the drag is a detach.
+          hideOverlay();
+          workspaceRect = null;
+          // A right-click during the drag cancels the detach gesture entirely.
+          // (The window check also catches engines that cancel the native drag
+          // on right-click and only report the gesture after dragend; the button
+          // mask catches engines that keep the drag going with the right held.)
+          if (state.cancelled === true || Date.now() - lastRightDown < 600) return;
+          if ((event.buttons & 2) !== 0) return;
+          if (state.moved !== true) return;
+          const rawOutside = event.clientX <= 0 || event.clientY <= 0
+            || event.clientX >= window.innerWidth - 2 || event.clientY >= window.innerHeight - 2;
+          // Sorting is only allowed inside the workspace. A release anywhere
+          // else — another part of the window, or past its edge — opens the
+          // conversation in its own window.
+          if (state.zone === 'workspace' && !rawOutside) return;
           if (detachedSet.has(state.id)) return;
           // Cancel the reorder the sidebar would commit for the last hovered
           // row: dropping the conversation onto its own row is a no-op there.
@@ -5917,22 +6299,103 @@ window.__ModuleLoader__.load({
               }));
             } catch { /* the shipped drag already ended */ }
           }
-          void detachSession(ctx, state.id, { title: tr('detachedWindowTitle'), t: tr, reason: 'drag' });
+          // The split option decides the shape by where the drag was released.
+          scheduleDetach(state.id, modeForZone(state.zone));
         };
+        // A drag that ends outside the desktop window can lose its dragend;
+        // any pointer/key activity with no drag in flight clears the leftovers.
+        const clearStalePill = () => {
+          if (dragging === null) {
+            hidePill();
+            hideOverlay();
+            intentMark(false);
+            return;
+          }
+          // A mouseup that is not accompanied by drag events means the drag
+          // ended outside this page and its dragend never made it back: drop
+          // the bookkeeping so the pill cannot stay on screen.
+          if (Date.now() - dragging.lastEvent < 200) return;
+          try { globalThis.clearInterval(dragging.timer); } catch { /* gone */ }
+          const state = dragging;
+          dragging = null;
+          workspaceRect = null;
+          restorePreview(state);
+        };
+        const onStaleKey = (event) => { if (event.key === 'Escape') clearStalePill(); };
+        const onStaleVisibility = () => { if (document.visibilityState === 'hidden') clearStalePill(); };
+        /**
+         * Right-clicking while dragging cancels the detach effect: the card and
+         * the pill disappear, the reorder preview comes back, and releasing no
+         * longer opens a window.
+         */
+        // Kept even outside a drag: some engines cancel the native drag on a
+        // right-click and only then deliver the context menu, after dragend.
+        let lastRightDown = 0;
+        const noteRightDown = (event) => {
+          if (event.button === 2 || event.type === 'contextmenu') lastRightDown = Date.now();
+        };
+        window.addEventListener('pointerdown', noteRightDown, true);
+        window.addEventListener('mousedown', noteRightDown, true);
+        window.addEventListener('contextmenu', noteRightDown, true);
+        const cancelDetach = (event) => {
+          const rightButton = event.button === 2 || event.type === 'contextmenu';
+          if (rightButton && cancelPendingDetach()) return;
+          if (dragging === null) return;
+          if (rightButton !== true) return;
+          dragging.cancelled = true;
+          hideOverlay();
+          hidePill();
+          intentMark(false);
+          restorePreview(dragging);
+          try { event.preventDefault(); } catch { /* not cancelable */ }
+        };
+        window.addEventListener('mousedown', cancelDetach, true);
+        window.addEventListener('mouseup', cancelDetach, true);
+        window.addEventListener('pointerup', cancelDetach, true);
+        window.addEventListener('auxclick', cancelDetach, true);
+        window.addEventListener('contextmenu', cancelDetach, true);
+        window.addEventListener('mouseup', clearStalePill, true);
+        window.addEventListener('pointerup', clearStalePill, true);
+        window.addEventListener('mousedown', clearStalePill, true);
+        window.addEventListener('blur', clearStalePill);
+        window.addEventListener('keydown', onStaleKey, true);
+        document.addEventListener('visibilitychange', onStaleVisibility);
         document.addEventListener('dragstart', onDragStart, true);
+        document.addEventListener('dragenter', onDragEnter, true);
         document.addEventListener('dragover', onDragOver, true);
         document.addEventListener('dragleave', onDragLeave, true);
         document.addEventListener('drop', onDrop, true);
         document.addEventListener('dragend', onDragEnd, true);
         return () => {
+          try { globalThis.clearInterval(dragging?.timer); } catch { /* already gone */ }
+          hidePill();
+          hideOverlay();
+          cancelPendingDetach();
+          workspaceRect = null;
+          intentMark(false);
+          window.removeEventListener('pointerdown', noteRightDown, true);
+          window.removeEventListener('mousedown', noteRightDown, true);
+          window.removeEventListener('contextmenu', noteRightDown, true);
+          window.removeEventListener('mousedown', cancelDetach, true);
+          window.removeEventListener('mouseup', cancelDetach, true);
+          window.removeEventListener('pointerup', cancelDetach, true);
+          window.removeEventListener('auxclick', cancelDetach, true);
+          window.removeEventListener('contextmenu', cancelDetach, true);
+          window.removeEventListener('mouseup', clearStalePill, true);
+          window.removeEventListener('pointerup', clearStalePill, true);
+          window.removeEventListener('mousedown', clearStalePill, true);
+          window.removeEventListener('blur', clearStalePill);
+          window.removeEventListener('keydown', onStaleKey, true);
+          document.removeEventListener('visibilitychange', onStaleVisibility);
           restorePreview(dragging);
           document.removeEventListener('dragstart', onDragStart, true);
+          document.removeEventListener('dragenter', onDragEnter, true);
           document.removeEventListener('dragover', onDragOver, true);
           document.removeEventListener('dragleave', onDragLeave, true);
           document.removeEventListener('drop', onDrop, true);
           document.removeEventListener('dragend', onDragEnd, true);
         };
-      }, [ctx, tr]);
+      }, [ctx, tr, windowAppearance.mode]);
 
       // This surface renders no markup of its own beyond the stylesheet and the
       // in-app windows: without a slot that paints it, a page with no other
