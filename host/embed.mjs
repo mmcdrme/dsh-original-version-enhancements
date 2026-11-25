@@ -22,6 +22,9 @@ const EMBED_CSS = [
   '[data-shell-overlay]{position:absolute !important}',
 ].join('')
 
+/** Third-party widget suppression, applied only when the window asks for it. */
+const CLEAN_CSS = '[class*="whale-balance"],[class*="whale-widget"]{display:none !important}'
+
 /**
  * The app owns the window frame's column template and rewrites it whenever the
  * right rail opens, closes or resizes, so the left track cannot be pinned in
@@ -259,6 +262,55 @@ const QUIET_POLL_SCRIPT = `(() => {
   }
 })()`
 
+/**
+ * The detached window is a conversation, not a second copy of the shell's
+ * third-party furniture. A plugin widget that mounts from a script tag (the
+ * balance whale is the one here) is dropped before it runs, and desktop
+ * notifications are silenced: a window left in the background must not pop the
+ * system's notification area. Polling surfaces are already handled by the
+ * quiet polls above.
+ */
+const THIRD_PARTY_QUIET_SCRIPT = `(() => {
+  const BLOCKED = ['/dsh-whale/']
+  const blocked = (url) => typeof url === 'string' && BLOCKED.some((part) => url.indexOf(part) >= 0)
+  const disarm = (node) => {
+    if (node === null || node === undefined || node.nodeType !== 1) return
+    if (node.tagName === 'SCRIPT') {
+      try {
+        if (blocked(node.getAttribute('src') || '')) {
+          node.removeAttribute('src')
+          node.setAttribute('type', 'javascript/blocked')
+        }
+      } catch { /* keep going */ }
+    }
+    if (typeof node.querySelectorAll === 'function') {
+      for (const inner of node.querySelectorAll('script[src]')) disarm(inner)
+    }
+  }
+  const wrap = (proto, name) => {
+    const original = proto[name]
+    if (typeof original !== 'function') return
+    proto[name] = function (first, ...rest) {
+      disarm(first)
+      for (const arg of rest) disarm(arg)
+      return original.call(this, first, ...rest)
+    }
+  }
+  wrap(Node.prototype, 'appendChild')
+  wrap(Node.prototype, 'insertBefore')
+  wrap(Element.prototype, 'append')
+  try { for (const script of document.querySelectorAll('script[src]')) disarm(script) } catch { /* best effort */ }
+  try {
+    const Native = window.Notification
+    if (typeof Native === 'function') {
+      const Silent = function () { return { close() {} } }
+      Silent.permission = 'denied'
+      Silent.requestPermission = () => Promise.resolve('denied')
+      window.Notification = Silent
+    }
+  } catch { /* frozen in some browsers */ }
+})()`
+
 /** Spinner chrome; the palette follows the shell's own boot background. */
 const LOADING_CSS = [
   'html.ove-embed-loading{overflow:hidden !important}',
@@ -295,14 +347,19 @@ const send = (res, status, body, method, type = 'text/html; charset=utf-8') => {
  * Render the index document with the pieces a standalone document needs.
  * @param html - the Host's own injected index document.
  * @param baseUrl - this Host's origin, used for the socket and asset base.
+ * @param clean - hide third-party plugin furniture (the window page decides).
  * @returns the embeddable document.
  */
-export function renderEmbed(html, baseUrl) {
+export function renderEmbed(html, baseUrl, clean = false) {
   const transport = JSON.stringify({ ownsHost: true, streamBaseUrl: baseUrl })
   const head = [
     '<base href="/">',
     `<script>window.__DSH_TRANSPORT__=${transport};window.__OVE_EMBED__=true;</script>`,
     `<script data-ove-embed-quiet>${QUIET_POLL_SCRIPT}</script>`,
+    ...(clean ? [
+      `<style data-ove-embed-clean>${CLEAN_CSS}</style>`,
+      `<script data-ove-embed-third-party-quiet>${THIRD_PARTY_QUIET_SCRIPT}</script>`,
+    ] : []),
     `<style data-ove-embed>${EMBED_CSS}${LOADING_CSS}</style>`,
     `<script data-ove-embed-boot>${LOADING_SCRIPT}</script>`,
     `<script data-ove-embed-track>${SIDEBAR_TRACK_SCRIPT}</script>`,
@@ -327,6 +384,8 @@ export function createEmbedHandler({ origin, warn = console.warn }) {
       send(res, 405, '只支持 GET 与 HEAD。', method, 'text/plain; charset=utf-8')
       return
     }
+    const query = new URL(typeof req.url === 'string' ? req.url : '/', 'http://ove.local')
+    const clean = query.searchParams.get('clean') === '1'
     let baseUrl
     try {
       baseUrl = String(typeof origin === 'function' ? origin() : origin)
@@ -355,6 +414,6 @@ export function createEmbedHandler({ origin, warn = console.warn }) {
       send(res, 500, '应用页面过大。', method, 'text/plain; charset=utf-8')
       return
     }
-    send(res, 200, renderEmbed(html, baseUrl), method)
+    send(res, 200, renderEmbed(html, baseUrl, clean), method)
   }
 }

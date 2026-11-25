@@ -161,7 +161,8 @@ export function createNativeWindows({
     if (windows.size >= MAX_WINDOWS) return { ok: false, error: 'too-many-windows' }
     const base = String(typeof origin === 'function' ? origin() : origin)
     const bootUrl = authenticatedUrl(new URL('/', base).href)
-    const appUrl = `${base.replace(/\/+$/u, '')}${WINDOW_PAGE}?session=${encodeURIComponent(sessionId)}`
+    const clean = options.clean !== false
+    const appUrl = `${base.replace(/\/+$/u, '')}${WINDOW_PAGE}?session=${encodeURIComponent(sessionId)}&clean=${clean ? 1 : 0}`
     const title = typeof options.title === 'string' ? options.title : '独立会话窗口'
     const width = clampSize(options.width, 1100, 560)
     const height = clampSize(options.height, 800, 420)
