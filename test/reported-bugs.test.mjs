@@ -112,6 +112,6 @@ test('M1: a startup failure is logged, real detection, and never released to han
 })
 
 test('the release metadata matches the fix', () => {
-  assert.equal(manifest.version, '1.37.73')
-  assert.match(readme, /## 更新记录（v1\.37\.73）/u)
+  assert.equal(manifest.version, '1.37.74')
+  assert.match(readme, /## 更新记录（v1\.37\.74）/u)
 })

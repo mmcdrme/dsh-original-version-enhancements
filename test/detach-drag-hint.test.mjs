@@ -236,6 +236,6 @@ test('the hint and its preview styling exist in both places', () => {
 })
 
 test('the release metadata matches the fix', () => {
-  assert.equal(manifest.version, '1.37.73')
-  assert.match(readme, /## 更新记录（v1\.37\.73）/u)
+  assert.equal(manifest.version, '1.37.74')
+  assert.match(readme, /## 更新记录（v1\.37\.74）/u)
 })

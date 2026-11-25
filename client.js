@@ -33,7 +33,7 @@ window.__ModuleLoader__.load({
     /* ------------------------------------------------------------------ */
 
     const FLAGS_KEY = 'original-version-enhancements.flags.v1';
-    const DEFAULT_FLAGS = { stepSwitcher: true, chatManager: true, automation: true, recall: true, detached: true, bindScopes: false, motion: true };
+    const DEFAULT_FLAGS = { stepSwitcher: true, chatManager: true, automation: true, recall: true, detached: true, bindScopes: false, motion: true, cleanWindow: true };
     const flagListeners = new Set();
 
     const readFlags = () => {
@@ -52,6 +52,9 @@ window.__ModuleLoader__.load({
           // Entrance motion for dialogs, receipts and in-page windows; a
           // profile that never touched the page keeps it on.
           motion: flags.motion !== false,
+          // The detached page hides third-party plugin furniture (widgets,
+          // notifications) unless the human turns this off.
+          cleanWindow: flags.cleanWindow !== false,
         };
       } catch {
         return { ...DEFAULT_FLAGS };
@@ -724,6 +727,8 @@ window.__ModuleLoader__.load({
             height: size[1] + 32,
             opacity: appearance?.opacity ?? 100,
             mute: appearance?.mute !== false,
+            // Hide third-party plugin furniture inside this window.
+            clean: getFlags().cleanWindow,
           }),
         });
         const data = await response.json().catch(() => ({}));
@@ -991,25 +996,19 @@ window.__ModuleLoader__.load({
       const baseAppearance = getWindow();
       const wantedMode = WINDOW_MODES.includes(labels?.mode) ? labels.mode : baseAppearance.mode;
       const appearance = { ...baseAppearance, mode: wantedMode };
-      // In-page windows can live side by side: each one is its own document.
-      // The native companion is the one that moves, because an OS window per
-      // conversation is not what this switch promises.
+      // In-page windows live side by side with OS windows: each in-page window
+      // is its own document and the OS window is its own process with its own
+      // connection, so opening one no longer closes the others. Only the same
+      // conversation moves: its in-page copy gives way to the OS window.
       if (appearance.mode === 'panel') {
         if (panelIds.has(sessionId)) {
           raiseDetachedPanel(sessionId);
           return true;
         }
-      } else {
-        // The OS windows are separate processes with their own connection, so
-        // they may stay open side by side; only in-app windows used to be
-        // limited, because every one of them shares this page's connections.
-        const others = [...panelIds].filter(id => id !== sessionId);
-        if (others.length > 0) {
-          for (const id of others) releaseDetached(id);
-          publishPanels(new Set());
-          refreshDetached();
-          await new Promise((resolve) => { window.setTimeout(resolve, 250); });
-        }
+      } else if (panelIds.has(sessionId)) {
+        dropDetachedPanel(sessionId);
+        try { globalThis.localStorage?.removeItem(detachedKeyOf(sessionId)); } catch { /* best effort */ }
+        refreshDetached();
       }
       // 1) A real OS window, owned by the Host: it has its own taskbar entry,
       // its own minimise/restore, and keeps running while this window is
@@ -2715,6 +2714,7 @@ window.__ModuleLoader__.load({
                         onClick: () => setWindow({ size: id }),
                       }, tr(`window.size.${id}`))))),
                     switchRow('window.mute', appearance.mute, () => setWindow({ mute: !appearance.mute })),
+                    switchRow('window.clean', flags.cleanWindow, () => toggle('cleanWindow')),
                   ], 'ove-setting-window'),
 
               h(SubagentTreeSettingsRows, { t: tr }),
@@ -3996,6 +3996,7 @@ window.__ModuleLoader__.load({
      */
     function DetachedPanel({ sessionId, tr, index, zIndex }) {
       const appearance = useWindow();
+      const flags = useFlags();
       const [place, setPlace] = React.useState(() => initialPanelPlace(index));
       const [minimized, setMinimized] = React.useState(false);
       const [loaded, setLoaded] = React.useState(false);
@@ -4201,7 +4202,7 @@ window.__ModuleLoader__.load({
           ref: frameRef,
           className: 'ove-detached-frame',
           title: title || tr('detachedWindowTitle'),
-          src: `${ROUTE_ROOT}/window?session=${encodeURIComponent(sessionId)}`,
+          src: `${ROUTE_ROOT}/window?session=${encodeURIComponent(sessionId)}&clean=${flags.cleanWindow ? 1 : 0}`,
           onLoad: onFrameLoad,
         }),
         loaded ? null : h('div', { className: `ove-detached-loading${failed ? ' is-failed' : ''}`, role: 'status' },

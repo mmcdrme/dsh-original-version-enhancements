@@ -92,3 +92,14 @@ test('every injected script parses on its own', () => {
   // `})()(() => {` — one script per concern keeps that from coming back.
   for (const body of bodies) assert.doesNotMatch(body, /\}\)\(\(\(\)/u)
 })
+
+test('the third-party surface quarantine is opt-in per window', () => {
+  const clean = renderEmbed(INDEX, 'http://127.0.0.1:4850', true)
+  const plain = renderEmbed(INDEX, 'http://127.0.0.1:4850', false)
+  assert.doesNotMatch(plain, /data-ove-embed-third-party-quiet/u)
+  assert.doesNotMatch(plain, /whale-balance/u)
+  assert.match(clean, /data-ove-embed-third-party-quiet/u)
+  assert.match(clean, /whale-balance/u)
+  assert.match(clean, /window\.Notification/u)
+  for (const body of scripts(clean)) assert.doesNotThrow(() => new Function(body))
+})
