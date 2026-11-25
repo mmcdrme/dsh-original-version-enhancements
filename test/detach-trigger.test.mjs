@@ -23,7 +23,7 @@ const between = (text, start, end) => {
 }
 
 test('a drag must move, end outside and not be an accepted drop to detach', () => {
-  const effect = between(client, 'let dragging = null;', '}, [ctx, tr, windowAppearance.mode]);')
+  const effect = between(client, 'let dragging = null;', '}, [ctx, tr, windowAppearance.mode, windowAppearance.split]);')
   assert.match(effect, /moved: false/u)
   assert.match(effect, /state\.moved = true/u)
   assert.match(effect, /dropped = true/u)

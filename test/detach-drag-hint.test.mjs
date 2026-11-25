@@ -28,7 +28,7 @@ const between = (text, start, end) => {
 }
 
 test('detaching cancels the sidebar reorder by dropping onto the dragged row', () => {
-  const end = between(client, 'const onDragEnd = (event) => {', '}, [ctx, tr, windowAppearance.mode]);')
+  const end = between(client, 'const onDragEnd = (event) => {', '}, [ctx, tr, windowAppearance.mode, windowAppearance.split]);')
   assert.match(end, /row\.dispatchEvent\(new DragEvent\('drop', \{/u)
   assert.match(end, /clientX: rect\.left \+ 4/u)
   assert.match(end, /dataTransfer: event\.dataTransfer/u)
@@ -236,6 +236,6 @@ test('the hint and its preview styling exist in both places', () => {
 })
 
 test('the release metadata matches the fix', () => {
-  assert.equal(manifest.version, '1.37.72')
-  assert.match(readme, /## 更新记录（v1\.37\.72）/u)
+  assert.equal(manifest.version, '1.37.73')
+  assert.match(readme, /## 更新记录（v1\.37\.73）/u)
 })
