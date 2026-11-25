@@ -6091,7 +6091,16 @@ window.__ModuleLoader__.load({
           // the pointer last seen near an edge means the pointer left.
           state.timer = globalThis.setInterval(() => {
             const live = dragging;
-            if (live !== state || live.hinted !== false || live.moved !== true) return;
+            // A drag that ended over another application never delivers its
+            // dragend, so nothing clears this watchdog. Once the gesture belongs
+            // to someone else (or to nobody), stop the timer instead of ticking
+            // for the lifetime of the page.
+            if (live !== state) {
+              globalThis.clearInterval(state.timer);
+              state.timer = 0;
+              return;
+            }
+            if (live.hinted !== false || live.moved !== true) return;
             if (Date.now() - live.lastEvent < 220) return;
             // Only a last position at/over the edge counts; a pointer merely
             // near the boundary still means a reorder.
@@ -6395,7 +6404,7 @@ window.__ModuleLoader__.load({
           document.removeEventListener('drop', onDrop, true);
           document.removeEventListener('dragend', onDragEnd, true);
         };
-      }, [ctx, tr, windowAppearance.mode]);
+      }, [ctx, tr, windowAppearance.mode, windowAppearance.split]);
 
       // This surface renders no markup of its own beyond the stylesheet and the
       // in-app windows: without a slot that paints it, a page with no other
